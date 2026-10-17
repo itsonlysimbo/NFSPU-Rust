@@ -9,6 +9,11 @@
 !STATUS.md
 !Cargo.toml
 !Cargo.lock
+!.cargo/
+!.cargo/config.toml
+!.mcp.json
+!.claude/
+!.claude/settings.json
 !*.rs
 !*.md
 
@@ -17,3 +22,5 @@ reference/
 target/
 logs/
 extracted/
+.claude/worktrees/
+.claude/settings.local.json

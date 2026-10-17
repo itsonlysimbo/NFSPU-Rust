@@ -7,3 +7,9 @@ description = "Bevy front end for the Porsche Unleashed rewrite"
 [dependencies]
 bevy = { version = "0.19", features = ["wav"] }
 nfspu-formats = { path = "../nfspu-formats" }
+
+[features]
+# `cargo run --features dev` links Bevy as a shared library: rebuilds after a code change only
+# relink our crate (much faster). Leave it off for builds run outside cargo (`run_*.bat`), which
+# would need the Bevy DLL next to the program.
+dev = ["bevy/dynamic_linking"]

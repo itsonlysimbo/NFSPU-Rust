@@ -1,0 +1,4 @@
+# Build speed (see AGENTS.md "Builds").
+# rust-lld ships with the Rust toolchain and links Bevy much faster than Microsoft's link.exe.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
