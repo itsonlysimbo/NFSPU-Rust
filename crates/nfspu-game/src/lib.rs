@@ -8,6 +8,8 @@ pub mod menu;
 pub mod menu_canvas;
 pub mod menu_movie;
 pub mod menu_music;
+pub mod race;
+pub mod race_path;
 pub mod refbuild;
 pub mod sky;
 pub mod track;
