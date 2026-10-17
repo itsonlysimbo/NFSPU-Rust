@@ -1,3 +1,18 @@
+# Latest (2026-10-17): quick race end to end - first pass merged
+
+- Six parallel branches merged into master: menus, help tips, loading screen, race rules, HUD and ground fix. `main.rs` joins them into one loop: menu -> loading screen -> race -> results -> menu.
+- Verified by logs: the race starts behind the loading screen (0.8-1.0 s), the countdown runs 1 s apart, and GO comes at tick 448. A menu-made setup (coastal, 356_1) loads and starts. A scripted drive finishes all 15 tracks forward. All tests pass.
+- **Not tested**: a full quick race played by hand, through the live menus to the finish.
+- Known gaps:
+  - no opponents or traffic (the setup asks for 7 opponents; none are simulated);
+  - mirrored and reversed choices only change the loading picture and the race direction, and the track is not mirrored;
+  - garage and location show 2D pictures, not the 3D rooms;
+  - the car's roof style follows the default, not the menu choice;
+  - results are a placeholder panel, not the retail screen;
+  - industrial backward still gets stuck at a junction in the scripted drive.
+- Next: AI opponents (they need `race_path`), the retail results screen, and the one-window flow (no window close and reopen between menu and race).
+
+---
 # Latest (2026-10-16): menu music
 
 - Menu music plays: our own decoder for the music archive (`BIGF`) and its EA ADPCM streams. It matches FFmpeg in every sample of `menu01`. Each screen's `musicfile=` picks the songs, by the rules in `docs/provenance/music.md`. The recording check agrees: `menu05` on the main menu, a change on Options, then a different menu song.

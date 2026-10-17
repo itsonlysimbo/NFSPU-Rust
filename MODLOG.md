@@ -499,3 +499,14 @@
 - New `nfspu_game::menu_music::Jukebox`: each screen's `musicfile` pattern (new `Screen::music`) picks a random matching song (1.5 s fade on change, `NONE` = silence). Songs follow in archive order. The main menu re-picks after 60 s. 5 tests.
 - `menu_mode.rs`: plays the songs (decoded in ~45 ms), with fades. Volume = save's `Audio.MusicLevel` / 127 (curve a guess); `NFSPU_MUSIC_LEVEL` overrides it.
 - Live check: the log shows `menu05` starting at volume 1.00 on GameSetup, and silence on Options. **Not tested** by ear.
+
+## 2026-10-17 - Milestone: quick race end to end (first pass)
+Built in parallel sessions and merged here (branches `claude/qr-menus-*`, `fe-tooltips-*`, `loading-screen-*`, `race-rules-*`, `race-hud-*`, `ground-holes`).
+- **Menus** (`quick_race.rs`, `catalog.rs`, `race_setup.rs`): GameSetup -> single player -> quick race. Covers car choice from the catalogue and the save's owned cars, track/location choice with TrackArt pictures, laps, direction, traffic, opponents and car options. RACE writes `logs/race_setup.txt`.
+- **Help tips** (`menu_help.rs`): a control's help text appears after 1 s of hovering and fades in over 0.5 s.
+- **Loading screen** (`loading.rs`, `race_load.rs`): era background, then the track map/name/flag from stage 5, and the orange 10-stage bar. The track loads in the background.
+- **Race** (`race.rs`, `race_path.rs`, `race_mode.rs`, formats `keys`/`scn`/`sim`): road slices from the `.crp`, start grid, 64 Hz race clock, countdown 3-2-1 (GO at tick 448), laps with retail's "lap owed" rule, wrong way, finish, placeholder results.
+- **HUD** (`hud.rs`, `hud_plugin.rs`, `hud_render.rs`, formats `hudcfg`/`loc`/`cardash`): retail DashHud layout, dials and needles, lap/position/time, countdown. Fed from `RaceStatus`.
+- **Ground fix**: road on non-`RD` pieces, upside-down road faces, wall height test. A scripted drive now finishes all 15 tracks forward.
+- **Wiring** (`main.rs` `run_flow`): menu -> (exit code 10) -> race behind the loading screen with the HUD -> Enter on the results -> menu at quickrace. Each runs as its own program in turn.
+- Checks: all workspace tests pass. A live race run behind the loading screen logged the countdown 1 s apart and GO. The menu's setup (Cote d'Azur, '50 356) loaded and started. **Not tested**: a full race driven by hand, and clicking through the menus live.
