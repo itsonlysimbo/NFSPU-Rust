@@ -20,6 +20,7 @@
 # Always ignored, even though they match the allow rules above
 reference/
 target/
+target-*/
 logs/
 extracted/
 .claude/worktrees/
