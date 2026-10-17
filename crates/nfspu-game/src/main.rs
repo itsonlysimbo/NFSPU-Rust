@@ -117,6 +117,9 @@ fn main() {
         .insert_resource(Orbit { yaw: 0.6, pitch: 0.35, radius: 6.0 })
         .insert_resource(RetailFov::from_env())
         .add_systems(Startup, setup)
+        // In-race HUD, only with NFSPU_HUD=1 for now (see hud_plugin.rs).
+        .add_plugins(nfspu_game::hud_plugin::HudPlugin)
+        .add_systems(Update, feed_hud.after(drive_car))
         .add_systems(Last, visual_probe::update)
         .add_systems(Update, (console::handle_input, console::apply).chain())
         .add_systems(
@@ -1288,6 +1291,33 @@ fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, console: Res<console::Console>, 
             }
         }
     }
+}
+
+/// Gives the HUD (when `NFSPU_HUD=1`) the car's real speed. Rpm and gear are made up from the speed
+/// and the race fields are PLACEHOLDERS (a 3-second countdown at the start, lap 1/3, 1st of 6)
+/// until the race rules fill them.
+fn feed_hud(time: Res<Time>, car: Option<Res<CarRes>>, name: Res<CarName>, feed: Option<ResMut<nfspu_game::hud_plugin::HudFeed>>, mut start: Local<Option<f32>>) {
+    let (Some(car), Some(mut feed)) = (car, feed) else { return };
+    let now = time.elapsed_secs();
+    let since = now - *start.get_or_insert(now);
+    let speed_kmh = car.car.speed * 3.6;
+    let (rpm, gear) = nfspu_game::hud::placeholder_engine(speed_kmh);
+    let race_time = (since - 3.0).max(0.0);
+    feed.car_model = name.0.clone();
+    feed.input = nfspu_game::hud::HudInput {
+        speed_kmh,
+        rpm,
+        gear,
+        lap: 1,
+        total_laps: 3,
+        position: 1,
+        car_count: 6,
+        race_time,
+        lap_time: race_time,
+        best_lap: None,
+        countdown: (since < 3.0).then_some(3.0 - since),
+        finished: None,
+    };
 }
 
 fn drive_car(

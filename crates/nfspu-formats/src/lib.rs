@@ -3,9 +3,12 @@
 
 pub mod asf;
 pub mod bnk;
+pub mod cardash;
 pub mod crp;
 pub mod fe;
 pub mod ffn;
+pub mod hudcfg;
+pub mod loc;
 pub mod mad;
 pub mod refpack;
 pub mod shpi;
