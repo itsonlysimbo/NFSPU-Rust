@@ -12,7 +12,7 @@ pub struct Ground {
 }
 
 /// Height of the triangle's plane at (x, z), if that point lies inside it when seen from above.
-fn height_on_tri(t: &Tri, x: f32, z: f32) -> Option<f32> {
+pub fn height_on_tri(t: &Tri, x: f32, z: f32) -> Option<f32> {
     let (ax, az) = (t[0][0], t[0][2]);
     let (bx, bz) = (t[1][0], t[1][2]);
     let (cx, cz) = (t[2][0], t[2][2]);

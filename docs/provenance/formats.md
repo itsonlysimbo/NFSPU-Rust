@@ -72,6 +72,22 @@ Every article has a `Name` part (tag `emaN`, a zero-terminated string). In alps 
 - `OBJECT`, `MESH`, `SHRUB(S)`, `Box`, `OBJLCU` / `OBJRCU` etc.: small objects and scenery (a few hundred triangles each).
 - Monaco tracks use several route variants (`(1 PRIMARY)`, `(2 PRIMARY)`, `(5 PRIMARY)`, `(6 PRIMARY)`, `(20 PRIMARY)`); monaco2 has only 6 `(1 PRIMARY)` pieces, so the main-route rule is alps-specific. Not worked out.
 - **Winding:** all 8,846 alps road triangles have `(b - a) x (c - a)` pointing down (-Y), so up-facing triangles are the ones with a negative Y normal under this cross-product order (clockwise from above, the Direct3D convention).
+- **Road on other articles (found 2026-10-17):** the road does not always sit on `RD`/`CNK` articles. Checked by putting three points on every road slice (`SimD`: the centre and half way to each edge) and asking which article's drivable face is closest in height above or below each point (within 8 m):
+
+  | track | articles carrying road that are not `RD`/`CNK` |
+  |---|---|
+  | monaco1-4 | `CASINOENTRANCE_A_D`, `_B`, `_C`, `CASINOCOURTYARD` (the start grid of monaco2 sits on them) |
+  | industrial | 24 articles: `OBJECT01`-`07`, `MESH04`, `MESH30`, `Mesh01`, `STEELSIDE`, `STEELMILLFRONT`, `FACTORYFRONTSIDE`, `BIGWAREHOUSE16`, `ALLEYJUNCTION5`, `246246426` (street blocks; some names repeat) |
+  | castle | 9: `OBJECT02/04/34-37`, `MESH05/06`, `MESHA` |
+  | alps | `SECONDARY`, `SECONDARY01`, `SECONDARY04` (side roads) |
+  | forest | `CHUNK1`-`3` |
+  | autobahn, coastal | `TERRAIN_MID1_68`, `ALLYENTRANCE_SECONDARY` |
+  | canyon, farmland, foothills, monaco5, skidpad | none |
+
+  The loader now finds these articles this way and loads them like road pieces (their flat faces are ground, steep ones walls). Before, road slices with no ground within 3 m: autobahn 102, industrial 183, monaco1 32, monaco2 36, monaco3 65, monaco4 49 (race_audit). After: no slice on any of the 15 tracks lacks ground.
+- **Road slices are not always at road height.** Even with every article loaded, some slices sit 3-7 m above or below the nearest road face: autobahn 102 (ramps; e.g. slices 226-265 are about 3 m above `RD0032C`-`RD0064C (3 PRIMARY)`), industrial 58, farmland 17, forest 15 (a side-road stub, slices 1947-1961, dips up to 10.6 m under the terrain), castle 12, monaco1-4 3-11. Faces were searched at all four levels of detail and no surface exists at slice height there, so the slice heights simply do not follow the mesh in these places (why is not known; the slice `kind` bits there are often 0x3C000 / 0x7E000 rather than the usual 0x18000).
+- **Some road faces have the opposite winding.** Autobahn's `RD0016C (2 PRIMARY)` has flat road faces whose normal points up under the file's winding (facing down); `CNK0048E (2 ONOFFRAMPB_SECONDARY_LOD0)` and `CNK0264E (7 ONOFFRAMPD_...)` mix both windings in ramp surfaces. Treated as walls they made invisible walls across the road. Now a flat face that faces down is never a wall; inside an `RD` piece it counts as road. How many such faces exist was not counted.
+- **Ramp slices with the road on one side:** autobahn on/off-ramps have slices with left half-width 0 and right half-width 9 (`kind` 0x8000), so the slice line runs along the road's edge.
 - `.edg` (side file): a 4-byte header, then 28-byte records of a u32 and two 3D points (7,694 of them in alps), probably edge line segments. Not used yet. `.map` is a text file with 39 numbered sections (start/end slice, tints, texture ids). `.jnc` (216 bytes of floats) and `.dtx` (11 bytes) not understood.
 
 ## Car files (`GameData/CarModel/<car>.crp`)

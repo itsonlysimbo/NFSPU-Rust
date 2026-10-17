@@ -19,15 +19,28 @@ fn main() {
     let mut ground_notes = String::new();
     for n in &names {
         // How much of the road path has no drivable ground from our loader under it (a car there
-        // falls). This checks the ground loader, not the race data.
+        // falls). This checks the ground loader, not the race data. Slice heights differ from the
+        // road mesh by up to ~7 m in places (and side-road stubs dip ~10 m under the terrain), so
+        // ground 3-8 m below or up to 15 m above is counted separately as an offset, not a hole.
         if let (Ok(g), Ok(t)) = (track::load_ground(n), race_path::load(n, Direction::Forward)) {
+            let carriers = g.road_carriers;
             let ground = Ground::new(g.tris, 16.0);
-            let bad: Vec<usize> = (0..t.path.slices.len()).filter(|&i| {
+            let (mut holes, mut offset) = (Vec::new(), 0usize);
+            for i in 0..t.path.slices.len() {
                 let s = t.path.slices[i].pos;
-                ground.height_at(s.x, s.z, s.y + 2.0, 0.0).map_or(true, |h| (h - s.y).abs() > 3.0)
-            }).collect();
-            let _ = writeln!(ground_notes, "{n:<11} slices without ground within 3 m: {:>5} of {:>5}{}", bad.len(), t.path.slices.len(),
-                if bad.is_empty() { String::new() } else { format!("  (first {:?})", &bad[..bad.len().min(8)]) });
+                if ground.height_at(s.x, s.z, s.y + 2.0, 0.0).map_or(false, |h| (h - s.y).abs() <= 3.0) {
+                    continue;
+                }
+                // ground up to 8 m below or 15 m above (a slice under the mesh) still carries a car
+                if ground.surface_near(s.x, s.z, 0.0, s.y - 8.0, s.y + 15.0).is_some() {
+                    offset += 1;
+                } else {
+                    holes.push(i);
+                }
+            }
+            let _ = writeln!(ground_notes, "{n:<11} slices with no ground: {:>4} of {:>5}; ground 3+ m off: {offset:>4}; road-carrying articles: {carriers:>3}{}",
+                holes.len(), t.path.slices.len(),
+                if holes.is_empty() { String::new() } else { format!("  (first {:?})", &holes[..holes.len().min(8)]) });
         }
         for d in [Direction::Forward, Direction::Backward] {
             let t = match race_path::load(n, d) {
