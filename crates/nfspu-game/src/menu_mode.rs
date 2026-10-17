@@ -70,6 +70,9 @@ struct FrontEnd {
     last_hover: Option<Hit>,
     /// The selected player's `Audio.MusicLevel` (0-127; retail's default is 55).
     music_level: u32,
+    /// Help tips: the hover clock and the tip last drawn (`nfspu_game::menu_help`).
+    help: nfspu_game::menu_help::HelpTimer,
+    tip: Vec<Draw>,
 }
 
 impl FrontEnd {
@@ -450,6 +453,8 @@ pub fn run(game_dir: PathBuf, start: String) {
         combo_slide: None,
         last_hover: None,
         music_level: 55,
+        help: Default::default(),
+        tip: Vec::new(),
     };
     // Read the selected player's save first: screens built below show its settings, and the
     // start page (built before it) is rebuilt.
@@ -587,8 +592,15 @@ fn present(
     }
     state.last_hover = hovered;
     let state = &mut *state;
+    // Help tip for the control under the pointer on the topmost interactive layer, drawn above all.
+    let help = state.layers.iter().zip(&state.interactive).enumerate().rev().filter(|(_, (_, on))| **on).find_map(|(i, (s, _))| nfspu_game::menu_help::at(&s.help, [p.x, p.y]).map(|h| (i, h)));
+    let tip = state.help.update(help, [p.x, p.y], time.delta_secs() * 1000.0, menu_canvas::Art::font(&mut state.art, nfspu_game::menu_help::FONT));
+    state.dirty |= tip != state.tip;
+    state.tip = tip;
+    let tip_layer = Screen { draw: state.tip.clone(), ..Default::default() };
     let backdrop = state.backdrop();
-    let layers: Vec<(&Screen, bool)> = state.layers.iter().zip(state.interactive.iter().copied()).collect();
+    let mut layers: Vec<(&Screen, bool)> = state.layers.iter().zip(state.interactive.iter().copied()).collect();
+    layers.push((&tip_layer, false));
     let key = menu_canvas::hover_key(&layers, Some([p.x, p.y]));
     if !state.dirty && state.hover_key.as_ref() == Some(&key) {
         return;
@@ -730,22 +742,25 @@ fn quit_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppEx
 #[derive(Resource, Default)]
 struct Capture {
     enabled: bool,
+    /// `NFSPU_MENU_CAPTURE_SECS`: wait at least this long first (a help tip needs 1.5 s to fade in).
+    after: f32,
     frames: u32,
     waiting: bool,
 }
 
 impl Capture {
     fn from_env() -> Self {
-        Self { enabled: std::env::var("NFSPU_MENU_CAPTURE").as_deref() == Ok("1"), ..default() }
+        let after = std::env::var("NFSPU_MENU_CAPTURE_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
+        Self { enabled: std::env::var("NFSPU_MENU_CAPTURE").as_deref() == Ok("1"), after, ..default() }
     }
 }
 
-fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, mut commands: Commands) {
+fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, mut commands: Commands) {
     if !state.enabled || state.waiting {
         return;
     }
     state.frames += 1;
-    if state.frames < 60 {
+    if state.frames < 60 || time.elapsed_secs() < state.after {
         return;
     }
     let dir = crate::log_path().parent().map(PathBuf::from).unwrap_or_default();

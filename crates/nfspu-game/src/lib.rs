@@ -6,6 +6,7 @@ pub mod collision;
 pub mod ground;
 pub mod menu;
 pub mod menu_canvas;
+pub mod menu_help;
 pub mod menu_movie;
 pub mod menu_music;
 pub mod refbuild;
