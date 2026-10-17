@@ -73,6 +73,8 @@ struct FrontEnd {
     /// Help tips: the hover clock and the tip last drawn (`nfspu_game::menu_help`).
     help: nfspu_game::menu_help::HelpTimer,
     tip: Vec<Draw>,
+    /// The quick-race choices (cars, tracks, options), read from the catalogue and the save.
+    quick: nfspu_game::quick_race::QuickRace,
 }
 
 impl FrontEnd {
@@ -84,13 +86,38 @@ impl FrontEnd {
         menu::load_screen_with(&self.game_dir, name, &self.locale, self.language, &self.templates, &self.profiles, disabled, &self.session)
     }
 
+    /// Copies the quick-race choices into the session the screens are built from.
+    fn sync_quick(&mut self) {
+        self.quick.difficulty = self.session.difficulty;
+        self.session.choices = self.quick.choices(&self.locale, self.language);
+        self.session.hidden = self.quick.hidden();
+        self.session.watch = self.quick.watches(&self.locale, self.language);
+        self.session.car_logo = self.quick.car_logo();
+        self.session.track_art = self.quick.track_art();
+    }
+
     /// Reloads the page and popup, so controls that show the profiles pick up a change.
     fn reload(&mut self) {
+        self.sync_quick();
         if let Some(page) = self.load(&self.page.name) {
             self.page = page;
         }
         if let Some(name) = self.popup.as_ref().map(|p| p.name.clone()) {
             self.popup = self.load(&name);
+        }
+    }
+
+    /// Scrolls the open list by whole rows, kept within its rows (all quick-race lists are at most
+    /// 160 units tall, `selectionboxmaxheight`).
+    fn scroll_combo(&mut self, accessor: &str, rows: i32) {
+        let Some(choice) = self.session.choices.get(accessor) else { return };
+        let last = menu::max_scroll(&choice.rows, 160.0) as i32;
+        let next = (self.session.scroll as i32 + rows).clamp(0, last) as usize;
+        if next != self.session.scroll || rows == 0 {
+            self.session.scroll = next;
+            self.reload();
+            self.stack();
+            self.dirty = true;
         }
     }
 
@@ -137,6 +164,26 @@ impl FrontEnd {
         let forced = std::env::var("NFSPU_MUSIC_LEVEL").ok().and_then(|v| v.trim().parse().ok());
         self.music_level = forced.or_else(|| save.as_deref().and_then(|d| menu::save_value(d, "Audio.MusicLevel"))).unwrap_or(55).min(127);
         let progress = save.as_deref().and_then(nfspu_game::menu_movie::CareerProgress::from_save);
+        // Quick-race lists and last choices (tracks open with the career year; 1950 at the start).
+        let player = self.profiles.selected.and_then(|i| self.profiles.names.get(i)).cloned().unwrap_or_default();
+        self.quick = nfspu_game::quick_race::QuickRace::load(&self.game_dir, save.as_deref(), progress.map(|p| p.year).unwrap_or(1950), &player);
+        self.quick.difficulty = self.session.difficulty;
+        let q = &self.quick;
+        crate::log_line(&format!(
+            "front end: quick race for '{player}': {} owned + {} factory car(s), {} opponent car(s), {} track(s) {:?}, choices car {} track {} direction {} laps {} traffic {} opponents {} rule {}",
+            q.owned.len(),
+            q.factory.len(),
+            q.opponent_list.len(),
+            q.track_list.len(),
+            q.track_list.iter().map(|i| q.tracks[*i].file.as_str()).collect::<Vec<_>>(),
+            q.car,
+            q.track,
+            q.direction,
+            q.laps + 1,
+            q.traffic,
+            q.opponents,
+            q.opponent_car
+        ));
         crate::log_line(&format!("front end: career progress {progress:?}, demo loop {:?}, difficulty {}", nfspu_game::menu_movie::playlist("demoloop", progress), self.session.difficulty));
         self.art.set_progress(progress);
     }
@@ -146,6 +193,33 @@ impl FrontEnd {
     /// `singleplayer` opening over it).
     fn is_popup(screen: &Screen) -> bool {
         screen.room.eq_ignore_ascii_case("ID_NONE")
+    }
+
+    /// A page with a 3D room behind it (`ID_GARAGE`, `ID_TRACK`). The retail recording shows the
+    /// bottom bar on the quick-race garage page, which has no frame; drawing the bar on every room
+    /// page is a **guess** beyond that.
+    fn has_room(screen: &Screen) -> bool {
+        let room = screen.room.trim();
+        !room.is_empty() && !room.eq_ignore_ascii_case("ID_NONE")
+    }
+
+    /// The RACE button: builds the race from the quick-race choices, logs it and writes it to
+    /// `logs/race_setup.txt` for the loading screen. Returns the file written.
+    fn start_race(&self) -> Option<PathBuf> {
+        let setup = self.quick.setup(&self.locale, self.language);
+        let path = crate::log_path().parent().map(|d| d.join("race_setup.txt"))?;
+        let text = setup.to_text();
+        crate::log_line(&format!("front end: RACE pressed, setup: {}", text.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("; ")));
+        match std::fs::write(&path, text) {
+            Ok(()) => {
+                crate::log_line(&format!("front end: wrote {}", path.display()));
+                Some(path)
+            }
+            Err(e) => {
+                crate::log_line(&format!("front end: could not write {}: {e}", path.display()));
+                None
+            }
+        }
     }
 
     /// Rebuilds the layer list from the page and popup.
@@ -166,7 +240,7 @@ impl FrontEnd {
             layers.push(popup.clone());
             interactive.push(true);
         }
-        if self.page.frame.is_some() {
+        if self.page.frame.is_some() || FrontEnd::has_room(&self.page) {
             // "back" is grey at the root screen; RACE follows the top screen's `canplaygame`.
             let can_play = self.popup.as_ref().unwrap_or(&self.page).can_play;
             let session = menu::Session { can_go_back: !self.history.is_empty(), can_play, ..self.session.clone() };
@@ -398,7 +472,11 @@ fn play_music(
 }
 
 /// Runs the front end until the window closes.
-pub fn run(game_dir: PathBuf, start: String) {
+/// Exit code of the menu when RACE was pressed (the setup is in `logs/race_setup.txt`).
+pub const RACE_EXIT_CODE: u8 = 10;
+
+/// Runs the front end until the window closes.
+pub fn run(game_dir: PathBuf, start: String) -> AppExit {
     let locale = std::fs::read(game_dir.join("FEData").join("Locale").join("festrings.csv"))
         .map(|b| Locale::parse_csv_bytes(&b))
         .unwrap_or_default();
@@ -429,7 +507,7 @@ pub fn run(game_dir: PathBuf, start: String) {
     };
     let Some(screen) = menu::load_screen_with(&game_dir, &page_name, &locale, language, &templates, &profiles, false, &menu::Session::default()) else {
         eprintln!("could not load screen '{page_name}' (is NFSPU_GAME_DIR a game folder?)");
-        return;
+        return AppExit::error();
     };
 
     let mut state = FrontEnd {
@@ -455,6 +533,7 @@ pub fn run(game_dir: PathBuf, start: String) {
         music_level: 55,
         help: Default::default(),
         tip: Vec::new(),
+        quick: Default::default(),
     };
     // Read the selected player's save first: screens built below show its settings, and the
     // start page (built before it) is rebuilt.
@@ -472,6 +551,17 @@ pub fn run(game_dir: PathBuf, start: String) {
     // For captures: `NFSPU_MENU_COMBO=<accessor>` starts with that dropdown open.
     if let Ok(accessor) = std::env::var("NFSPU_MENU_COMBO") {
         state.session.open_combo = Some(accessor);
+        state.reload();
+    }
+    // For captures: `NFSPU_MENU_PICK=<accessor>=<item>[;...]` makes choices before the first
+    // frame (`zMergedList.Car=5;Track1.Track=2`).
+    if let Ok(picks) = std::env::var("NFSPU_MENU_PICK") {
+        for pick in picks.split(';') {
+            if let Some((accessor, item)) = pick.split_once('=') {
+                let ok = item.trim().parse().map(|i| state.quick.pick(accessor.trim(), i)).unwrap_or(false);
+                crate::log_line(&format!("front end: pick {pick}: {}", if ok { "ok" } else { "not a quick-race choice" }));
+            }
+        }
         state.reload();
     }
     state.stack();
@@ -506,6 +596,7 @@ pub fn run(game_dir: PathBuf, start: String) {
         .add_systems(Update, (click, present, play_music, capture, quit_on_escape).chain())
         .run();
     crate::log_line(&format!("front end finished with: {result:?}"));
+    result
 }
 
 fn to_color(rgba: [f32; 4]) -> Color {
@@ -632,6 +723,7 @@ fn click(
     mut audio: ResMut<Assets<AudioSource>>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut state: ResMut<FrontEnd>,
     mut clear: ResMut<ClearColor>,
@@ -639,6 +731,15 @@ fn click(
 ) {
     let Ok(window) = windows.single() else { return };
     let pointer = pointer(window);
+    // The mouse wheel scrolls an open list, three rows a notch (**guess**: the retail list scrolls
+    // by its arrows; wheel support is not traced).
+    if wheel.delta.y != 0.0 {
+        if let Some(accessor) = state.session.open_combo.clone() {
+            let rows = if wheel.delta.y > 0.0 { -3 } else { 3 };
+            state.scroll_combo(&accessor, rows);
+            return;
+        }
+    }
     let back = keys.just_pressed(KeyCode::Backspace);
     if !buttons.just_pressed(MouseButton::Left) && !back {
         return;
@@ -646,7 +747,7 @@ fn click(
 
     let action = if back { Some(Hit::Back) } else { state.hit_at(pointer.x, pointer.y) };
     // An open dropdown closes on any click that is not on it (the click then acts as usual).
-    if state.session.open_combo.is_some() && !matches!(action, Some(Hit::ComboToggle(_)) | Some(Hit::ComboPick(..))) {
+    if state.session.open_combo.is_some() && !matches!(action, Some(Hit::ComboToggle(_)) | Some(Hit::ComboPick(..)) | Some(Hit::ComboScroll(..))) {
         sounds.play(SOUND_CLOSE, &mut commands, &mut audio);
         state.slide_combo(false);
     }
@@ -656,6 +757,13 @@ fn click(
         Hit::Goto(name) => {
             if name.eq_ignore_ascii_case(&from) {
                 return;
+            }
+            // Choosing quick race puts the car list back at its first car (the game-type routine
+            // behind `SETTYPEQUICKRACE` sets `zMergedList.Car` to 0).
+            if name.eq_ignore_ascii_case("quickrace") && from.eq_ignore_ascii_case("singleplayer") {
+                state.quick.car = 0;
+                state.quick.pick(nfspu_game::quick_race::CAR, 0);
+                state.reload();
             }
             sounds.play(SOUND_SELECT, &mut commands, &mut audio);
             sounds.play(SOUND_SCREEN, &mut commands, &mut audio);
@@ -689,7 +797,10 @@ fn click(
             if open {
                 state.slide_combo(false);
             } else {
-                state.session.open_combo = Some(accessor);
+                // Open with the chosen item in view (a few rows from the top; **guess**).
+                state.session.scroll = state.session.choices.get(&accessor).map(|c| menu::item_row(&c.rows, c.selected).saturating_sub(3)).unwrap_or(0);
+                state.session.open_combo = Some(accessor.clone());
+                state.scroll_combo(&accessor, 0);
                 state.slide_combo(true);
             }
             return;
@@ -698,9 +809,35 @@ fn click(
         Hit::ComboPick(accessor, index) => {
             crate::log_line(&format!("menu: {accessor} = {index}"));
             sounds.play(SOUND_SELECT, &mut commands, &mut audio);
-            state.session.difficulty = index;
+            if accessor == nfspu_game::quick_race::DIFFICULTY {
+                state.session.difficulty = index;
+            }
+            state.quick.pick(&accessor, index);
             state.slide_combo(false);
             return;
+        }
+        Hit::ComboScroll(accessor, rows) => {
+            state.scroll_combo(&accessor, rows);
+            return;
+        }
+        Hit::Callback(name) => {
+            sounds.play(SOUND_SELECT, &mut commands, &mut audio);
+            match name.as_str() {
+                "PLAYGAME" => {
+                    if state.start_race().is_some() {
+                        crate::log_line("front end: leaving the menu for the race (hand-off file written)");
+                        exit.write(AppExit::from_code(RACE_EXIT_CODE));
+                    }
+                    return;
+                }
+                "TRACK1INC" | "LOOPEDINC" => state.quick.step_track(1),
+                "TRACK1DEC" | "LOOPEDDEC" => state.quick.step_track(-1),
+                other => {
+                    crate::log_line(&format!("menu: callback {other} not handled yet"));
+                    return;
+                }
+            }
+            state.reload();
         }
         Hit::Select(row) => {
             if state.profiles.selected == Some(row) {
@@ -764,7 +901,15 @@ fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, 
         return;
     }
     let dir = crate::log_path().parent().map(PathBuf::from).unwrap_or_default();
-    let safe: String = current.page.name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+    let shown = match &current.popup {
+        Some(p) => format!("{}_{}", current.page.name, p.name),
+        None => current.page.name.clone(),
+    };
+    let safe: String = shown.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+    // `NFSPU_MENU_PLAY=1` also presses RACE after the capture (writes `logs/race_setup.txt`).
+    if std::env::var("NFSPU_MENU_PLAY").as_deref() == Ok("1") && current.layers.iter().any(|l| l.name.eq_ignore_ascii_case(BOTTOM_BAR)) && current.popup.as_ref().unwrap_or(&current.page).can_play {
+        current.start_race();
+    }
     let path = dir.join(format!("menu_{safe}.png"));
     crate::log_line(&format!("front end: capture {}", path.display()));
     state.waiting = true;

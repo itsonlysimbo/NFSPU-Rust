@@ -68,8 +68,37 @@ pub enum Hit {
     Quit,
     /// Open or close the dropdown for this accessor.
     ComboToggle(String),
-    /// Choose option `index` of the dropdown for this accessor.
+    /// Choose item `index` of the dropdown for this accessor (headers are not counted).
     ComboPick(String, usize),
+    /// Scroll the open dropdown for this accessor by whole rows (its arrow buttons).
+    ComboScroll(String, i32),
+    /// A named script hook from a control's `callback=` (`PLAYGAME`, `TRACK1INC`, ...).
+    Callback(String),
+}
+
+/// One row of a dropdown list: a centred section title, or a choosable item with an optional
+/// lead column (the car list's two-digit year), colour swatch and divider after the lead.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Row {
+    Header(String),
+    Item { lead: Option<String>, text: String, swatch: Option<[u8; 3]>, divider: bool },
+}
+
+impl Row {
+    /// A plain item with only text.
+    pub fn item(text: String) -> Row {
+        Row::Item { lead: None, text, swatch: None, divider: false }
+    }
+}
+
+/// What a dropdown offers: its rows, the chosen item (counting items only), and what the closed
+/// control shows (text, or a colour swatch for a colour box).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Choice {
+    pub rows: Vec<Row>,
+    pub selected: usize,
+    pub closed: String,
+    pub closed_swatch: Option<[u8; 3]>,
 }
 
 /// One loaded screen.
@@ -95,6 +124,9 @@ pub struct Screen {
     pub music: String,
     /// Controls with a help tip (`helptext=`), topmost first; none on a disabled page.
     pub help: Vec<crate::menu_help::Help>,
+    /// Draws that go above every section (an open dropdown's list), topmost first; moved to the
+    /// front of `draw` once the screen is built.
+    pub top: Vec<Draw>,
 }
 
 /// The layout file a frame id names: `ID_MOVIEOVAL` is `screenmovieoval.lay`. `ID_SCREEN`,
@@ -237,7 +269,12 @@ pub enum ShapeError {
 
 /// Finds `FEData/Art/<file>` ignoring case (layouts write `MovieOval.fsh`, files vary).
 fn art_path(game_dir: &Path, file: &str) -> Option<PathBuf> {
-    let dir = game_dir.join("FEData").join("Art");
+    // `TrackArt/<name>.fsh` names a track picture in `FEData/TrackArt` (our own convention, for
+    // the location screen's stand-in picture).
+    let (dir, file) = match file.split_once('/') {
+        Some((folder, rest)) if folder.eq_ignore_ascii_case("TrackArt") => (game_dir.join("FEData").join("TrackArt"), rest),
+        _ => (game_dir.join("FEData").join("Art"), file),
+    };
     let exact = dir.join(file);
     if exact.is_file() {
         return Some(exact);
@@ -334,7 +371,7 @@ pub fn load_screen_with(
             screen.skipped.push(id.to_string());
             continue;
         };
-        let context = Context { profiles, game_dir: Some(game_dir), disabled, can_go_back: session.can_go_back, can_play: session.can_play, difficulty: session.difficulty, open_combo: session.open_combo.clone(), combo_reveal: session.combo_reveal };
+        let context = Context { profiles, game_dir: Some(game_dir), disabled, can_go_back: session.can_go_back, can_play: session.can_play, difficulty: session.difficulty, open_combo: session.open_combo.clone(), combo_reveal: session.combo_reveal, session: Some(session) };
         let drawn = screen.draw.len();
         if !append_control_with(&mut screen, block, template, locale, language, &context) {
             screen.skipped.push(id.to_string());
@@ -344,6 +381,17 @@ pub fn load_screen_with(
             screen.help.push(help);
         }
     }
+    // A stand-in for the track room (`room=ID_TRACK`, a 3D scene in retail): the chosen track's
+    // picture from `FEData/TrackArt`, centred under the controls.
+    if screen.room.eq_ignore_ascii_case("ID_TRACK") {
+        if let Some(file) = &session.track_art {
+            if let Some((w, h)) = shape_size(Some(game_dir), file, 0) {
+                screen.draw.push(Draw::Picture { file: file.clone(), index: 0, pos: [((640.0 - w) / 2.0).round(), ((480.0 - h) / 2.0).round()], flip: 0, alpha: 1.0 });
+            }
+        }
+    }
+    let top = std::mem::take(&mut screen.top);
+    screen.draw.splice(0..0, top);
     Some(screen)
 }
 
@@ -395,6 +443,8 @@ pub struct Context<'a> {
     pub difficulty: usize,
     pub open_combo: Option<String>,
     pub combo_reveal: f32,
+    /// The whole session, for controls that read dropdown choices, hidden names or watched text.
+    pub session: Option<&'a Session>,
 }
 
 /// Front-end state the layouts refer to but do not contain.
@@ -408,12 +458,43 @@ pub struct Session {
     pub open_combo: Option<String>,
     /// How far the open dropdown's list is revealed, 0..=1 (it slides over 16 ticks).
     pub combo_reveal: f32,
+    /// Dropdown contents by accessor (without a `(SHORT)` suffix). An accessor not listed here
+    /// falls back to the built-in lists (difficulty).
+    pub choices: BTreeMap<String, Choice>,
+    /// The first row shown of the open dropdown (it scrolls when taller than its maximum).
+    pub scroll: usize,
+    /// Control `name=`s not to draw (one of two controls sharing a place).
+    pub hidden: Vec<String>,
+    /// Text for `NFS5.AccessorWatch` labels, by accessor as the layout writes it.
+    pub watch: BTreeMap<String, String>,
+    /// `NFS5.CarLogo`: the chosen car's logo archive and logo number (entries `2n`, `2n + 1`).
+    pub car_logo: Option<(String, usize)>,
+    /// Picture drawn for a `room=ID_TRACK` screen (`TrackArt/<name>.fsh`).
+    pub track_art: Option<String>,
 }
 
 impl Default for Session {
     fn default() -> Self {
-        Session { can_go_back: true, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0 }
+        Session {
+            can_go_back: true,
+            can_play: true,
+            difficulty: 1,
+            open_combo: None,
+            combo_reveal: 1.0,
+            choices: BTreeMap::new(),
+            scroll: 0,
+            hidden: Vec::new(),
+            watch: BTreeMap::new(),
+            car_logo: None,
+            track_art: None,
+        }
     }
+}
+
+/// An accessor without its display suffix: `Track1.Track(SHORT)` is `Track1.Track`.
+pub fn accessor_key(accessor: &str) -> String {
+    let a = accessor.trim();
+    a.split_once('(').map(|(k, _)| k).unwrap_or(a).trim().to_string()
 }
 
 /// A named value in a `.sav`: the accessor name, a zero byte, then a 32-bit little-endian value
@@ -427,7 +508,7 @@ pub fn save_value(save: &[u8], name: &str) -> Option<u32> {
 
 impl<'a> Context<'a> {
     pub fn new(profiles: &'a Profiles) -> Context<'a> {
-        Context { profiles, game_dir: None, disabled: false, can_go_back: true, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0 }
+        Context { profiles, game_dir: None, disabled: false, can_go_back: true, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0, session: None }
     }
 }
 
@@ -462,6 +543,11 @@ fn append_control_with(
     // both stay hidden; they count as handled.
     if matches!(block.get("name").map(str::trim), Some(ACCOUNT_LABEL) | Some(CASH_BACKDROP)) {
         return true;
+    }
+    if let (Some(session), Some(name)) = (context.session, block.get("name").map(str::trim)) {
+        if session.hidden.iter().any(|h| h == name) {
+            return true;
+        }
     }
     let data = fields(block, template);
     let number = |k: &str| data.get(k).and_then(|v| eval_number(v, &data));
@@ -516,12 +602,16 @@ fn append_control_with(
             });
             if callback == "QUIT" {
                 screen.draw.push(Draw::Target { rect: [left, posy, total, height], hit: Hit::Quit });
+            } else if !off && !callback.is_empty() && callback != "GOBACK" {
+                // RACE (`PLAYGAME`), the location arrows (`TRACK1INC`, ...), options.
+                screen.draw.push(Draw::Target { rect: [left, posy, total, height], hit: Hit::Callback(callback.clone()) });
             }
             if let Some(text) = text {
                 screen.draw.push(Draw::Text { text, pos: [left + pic_w + space, posy + 8.0], size, colour: label_colour, font });
             }
             if let Some(file) = file {
-                screen.draw.push(Draw::Picture { file, index: frame, pos: [left, posy + number("picoffy").unwrap_or(0.0)], flip: 0, alpha: icon_alpha });
+                let flip = number("flip").unwrap_or(0.0).max(0.0) as u8;
+                screen.draw.push(Draw::Picture { file, index: frame, pos: [left, posy + number("picoffy").unwrap_or(0.0)], flip, alpha: icon_alpha });
             }
             true
         }
@@ -558,54 +648,40 @@ fn append_control_with(
             screen.draw.push(Draw::Movie { rect: [x, y, w, h], source, stencil });
             true
         }
-        // Dropdown, closed (`ComboBox.ctr`): red back rectangle (full size), the control's label at
-        // 5,2 (universC11b, white), the current value right-aligned 13 units before the right edge
-        // (universC11m, dark), and the down arrow (`weeicons.fsh` #14) 4 from the right edge.
-        // Gloss and drop shadow as on transition buttons: the combo class does not call those
-        // routines itself, but the retail recording shows the same styling (**guess** on source).
-        "NFS5.ComboBoxSlider" => {
+        // Dropdown (`ComboBox.ctr`, also the colour box): red back rectangle (full size), the
+        // control's label at 5,2 (universC11b, white), the current value right-aligned 13 units
+        // before the right edge (universC11m, dark), and the down arrow (`weeicons.fsh` #14) 4 from
+        // the right edge. Gloss and drop shadow as on transition buttons: the combo class does not
+        // call those routines itself, but the retail recording shows the same styling (**guess**
+        // on source).
+        "NFS5.ComboBoxSlider" | "NFS5.ColorBox" => {
             if hidden(&data) {
                 return true;
             }
             let (w, h) = (number("width").unwrap_or(100.0), number("height").unwrap_or(18.0));
             let rect = [x, y, w, h];
-            let accessor = data.get("accessor").map(|a| a.trim().to_string()).unwrap_or_default();
-            let options = combo_options(&accessor, locale, language);
-            // Open: the option list, topmost. Look and side are provisional until compared with
-            // retail (the executable slides it open over 16 ticks in `selectionboxslidedirection`;
-            // which way -1 points is not settled): rows like the user list, below the control.
-            let open = context.open_combo.as_deref() == Some(accessor.as_str()) && !options.is_empty() && !disabled;
+            let accessor = accessor_key(data.get("accessor").map(String::as_str).unwrap_or(""));
+            let choice = context.session.and_then(|s| s.choices.get(&accessor)).cloned().unwrap_or_else(|| {
+                let options = combo_options(&accessor, locale, language);
+                let selected = context.difficulty.min(options.len().saturating_sub(1));
+                Choice { closed: options.get(selected).cloned().unwrap_or_default(), rows: options.into_iter().map(Row::item).collect(), selected, closed_swatch: None }
+            });
+            let items = choice.rows.iter().filter(|r| matches!(r, Row::Item { .. })).count();
+            // Open: the list slides out downwards from under the control (retail recording, both
+            // for the difficulty list and the car list, whose `selectionboxslidedirection` is -1).
+            let open = context.open_combo.as_deref() == Some(accessor.as_str()) && items > 0 && !disabled;
             if open {
-                // Measured from a retail recording: the list starts right under the control, rows
-                // 14 units, flat yellow (~#E9B819), black outline at the control's own left/right
-                // edges, a drop shadow; the row under the pointer turns the list's selected red
-                // (0xBC0000) with white text. The current value is not marked. Font: the combo's
-                // `fontpath` (Univers8b).
-                const ROW: f32 = 14.0;
+                let list_w = number("selectionboxwidth").filter(|v| *v > 0.0).unwrap_or(w);
+                let max_h = number("selectionboxmaxheight").filter(|v| *v > 0.0).unwrap_or(160.0);
+                let scroll = context.session.map(|s| s.scroll).unwrap_or(0);
                 let font = data.get("fontpath").map(|s| s.trim().to_string()).unwrap_or_else(|| "Univers8b.ffn".to_string());
-                let list = [x, y + h, w, options.len() as f32 * ROW + 1.0];
-                // The list slides open downwards from the control (and back): only the revealed
-                // part is painted, and rows take clicks once it is fully open.
                 let reveal = context.combo_reveal.clamp(0.0, 1.0);
-                let ready = reveal >= 1.0;
-                let mut pieces = outline(list, [0.0, 0.0, 0.0, 1.0]);
-                for (i, option) in options.iter().enumerate() {
-                    let row = [x + 1.0, y + h + i as f32 * ROW, w - 2.0, ROW];
-                    let text = |colour| Draw::Text { text: option.clone(), pos: [row[0] + 2.0, row[1] + 1.0], size: point_size(&font), colour, font: font.clone() };
-                    if ready {
-                        screen.draw.push(Draw::Target { rect: row, hit: Hit::ComboPick(accessor.clone(), i) });
-                        pieces.push(Draw::Shown { when: Show::Hover(row), draw: Box::new(text([1.0; 4])) });
-                        pieces.push(Draw::Shown { when: Show::Idle(row), draw: Box::new(text([0.0, 0.0, 0.0, 1.0])) });
-                    } else {
-                        pieces.push(text([0.0, 0.0, 0.0, 1.0]));
-                    }
-                    pieces.push(Draw::Quad { rect: row, colour: COMBO_LIST_YELLOW, hover: ready.then_some([188.0 / 255.0, 0.0, 0.0, 1.0]), link: None, back: false });
-                }
-                pieces.extend(button_shadow(list, 4.0, 4.0));
-                let shown = [x, y + h, w + 4.0, (list[3] + 4.0) * reveal];
-                screen.draw.push(Draw::Clipped { rect: shown, draws: pieces });
+                let pieces = combo_list(&choice, [x, y + h, list_w, max_h], scroll, &accessor, &font, reveal >= 1.0, game_dir, &mut screen.top);
+                let full = list_height(&choice.rows).min(max_h);
+                let shown = [x, y + h, list_w + 4.0, (full + 5.0) * reveal];
+                screen.top.push(Draw::Clipped { rect: shown, draws: pieces });
             }
-            if !disabled && !options.is_empty() {
+            if !disabled && items > 0 {
                 screen.draw.push(Draw::Target { rect, hit: Hit::ComboToggle(accessor.clone()) });
             }
             if number("glintybox").map(|g| g as i32 != -1).unwrap_or(true) {
@@ -617,10 +693,19 @@ fn append_control_with(
             }
             let (arrow_w, _) = shape_size(game_dir, "weeicons.fsh", COMBO_ARROW).unwrap_or((10.0, 7.0));
             screen.draw.push(Draw::Picture { file: "weeicons.fsh".into(), index: COMBO_ARROW, pos: [x + w - arrow_w - 4.0, y + 4.0], flip: 0, alpha: 1.0 });
-            if let Some(value) = options.get(context.difficulty.min(options.len().saturating_sub(1))).cloned() {
+            if let Some(rgb) = choice.closed_swatch {
+                // The colour box's closed value: a swatch before the arrow (retail recording,
+                // about 18x8 with a black edge; measured, not traced).
+                let swatch = [x + w - arrow_w - 4.0 - 4.0 - 20.0, y + 5.0, 20.0, 8.0];
+                screen.draw.extend(outline(swatch, [0.0, 0.0, 0.0, 1.0]));
+                screen.draw.push(Draw::Quad { rect: swatch, colour: rgb_colour(rgb), hover: None, link: None, back: false });
+            }
+            let faint = if disabled { 48.0 / 255.0 } else { 1.0 };
+            if !choice.closed.is_empty() {
+                let value = choice.closed.clone();
                 let font = "universC11m.ffn".to_string();
                 let left = x + w - 10.0 - label_width(game_dir, &font, &value) - 3.0;
-                screen.draw.push(Draw::Text { text: value, pos: [left, y + 2.0], size: point_size(&font), colour: [0.0, 0.0, 0.0, 1.0], font });
+                screen.draw.push(Draw::Text { text: value, pos: [left, y + 2.0], size: point_size(&font), colour: [0.0, 0.0, 0.0, faint], font });
             }
             if let Some(text) = label_text(block, locale, language) {
                 let font = "universC11b.ffn".to_string();
@@ -628,13 +713,49 @@ fn append_control_with(
                 // open; position measured, its source in the code is not traced).
                 let divider = x + 5.0 + label_width(game_dir, &font, &text) + 4.0;
                 screen.draw.push(Draw::Quad { rect: [divider, y, 1.0, h], colour: [0.0, 0.0, 0.0, 1.0], hover: None, link: None, back: false });
-                screen.draw.push(Draw::Text { text, pos: [x + 5.0, y + 2.0], size: point_size(&font), colour: [1.0; 4], font });
+                screen.draw.push(Draw::Text { text, pos: [x + 5.0, y + 2.0], size: point_size(&font), colour: [1.0, 1.0, 1.0, faint], font });
             }
             // Red, yellow under the pointer and while open (retail recording).
             let red = data.get("backrect.color").and_then(|c| eval_colour(c, &data)).unwrap_or([188.0 / 255.0, 0.0, 0.0, 1.0]);
             let yellow = [1.0, 0.733, 0.0, 1.0];
-            let (fill, hover) = if disabled { (red, None) } else if open { (yellow, None) } else { (red, Some(yellow)) };
+            // Under a popup the page's dropdowns fade like its buttons (retail recording of the settings
+            // popup over quick race): the buttons' disabled fill 0x30FF0000 and faint text.
+            let faded = [1.0, 0.0, 0.0, 48.0 / 255.0];
+            let (fill, hover) = if disabled { (faded, None) } else if open { (yellow, None) } else { (red, Some(yellow)) };
             screen.draw.push(Draw::Quad { rect, colour: fill, hover, link: None, back: false });
+            true
+        }
+        // The chosen car's logo (`CarLogo.ctr`), from the car's catalogue record, at the control's
+        // position and natural size. Logo `n` is two half pictures, archive entries `2n` (left)
+        // and `2n + 1` (right), both named `n` ("PORS" + "CHE" for logo 4); matched against the
+        // retail recording.
+        "NFS5.CarLogo" => {
+            if hidden(&data) {
+                return true;
+            }
+            if let Some((file, logo)) = context.session.and_then(|s| s.car_logo.clone()) {
+                let (left_w, _) = shape_size(game_dir, &file, logo * 2).unwrap_or((0.0, 0.0));
+                let (right_w, _) = shape_size(game_dir, &file, logo * 2 + 1).unwrap_or((0.0, 0.0));
+                // `align=1` centres the logo on its position (the settings popup; matches the retail
+                // recording); `align=0` starts it there (quick race page).
+                let x = if number("align").unwrap_or(0.0) as i32 == 1 { (x - (left_w + right_w) / 2.0).round() } else { x };
+                screen.draw.push(Draw::Picture { file: file.clone(), index: logo * 2 + 1, pos: [x + left_w, y], flip: 0, alpha: 1.0 });
+                screen.draw.push(Draw::Picture { file, index: logo * 2, pos: [x, y], flip: 0, alpha: 1.0 });
+            }
+            true
+        }
+        // A line of text from a data accessor (`AccessorWatch.ctr`): the track name, difficulty and
+        // record time on the location screens. Font and colour from the layout.
+        "NFS5.AccessorWatch" => {
+            if hidden(&data) {
+                return true;
+            }
+            let accessor = data.get("accessor").map(|a| a.trim().to_string()).unwrap_or_default();
+            let Some(text) = context.session.and_then(|s| s.watch.get(&accessor)).cloned() else { return false };
+            let font = data.get("fontPathName").map(|s| s.trim().to_string()).unwrap_or_else(|| "univers8b.ffn".to_string());
+            let colour = data.get("foreColor").and_then(|c| eval_colour(c, &data)).unwrap_or([1.0; 4]);
+            let shift = -label_width(game_dir, &font, &text) / 2.0 * number("align").unwrap_or(0.0);
+            screen.draw.push(Draw::Text { text, pos: [x + shift, y], size: point_size(&font), colour, font });
             true
         }
         // A transition button is a coloured rectangle plus a label; its template draws the
@@ -928,6 +1049,144 @@ fn outline([x, y, w, h]: Rect, colour: [f32; 4]) -> Vec<Draw> {
 
 /// The open dropdown list's background, measured from a retail recording (#E9B819).
 const COMBO_LIST_YELLOW: [f32; 4] = [0xE9 as f32 / 255.0, 0xB8 as f32 / 255.0, 0x19 as f32 / 255.0, 1.0];
+
+/// Row heights of an open dropdown list: items 14 units, section titles 13 (both from the retail
+/// list drawing; the car list's titles advance the pen by 13).
+const LIST_ROW: f32 = 14.0;
+const LIST_HEADER: f32 = 13.0;
+/// Width of the list's scroll bar column (measured from the retail car list, about 12 units).
+const SCROLLBAR: f32 = 12.0;
+
+fn row_height(row: &Row) -> f32 {
+    match row {
+        Row::Header(_) => LIST_HEADER,
+        Row::Item { .. } => LIST_ROW,
+    }
+}
+
+/// The full height of a list: its rows plus the 1-unit bottom edge.
+fn list_height(rows: &[Row]) -> f32 {
+    rows.iter().map(row_height).sum::<f32>() + 1.0
+}
+
+/// The last useful first row of a list `max_h` tall (scrolling further would leave a gap).
+pub fn max_scroll(rows: &[Row], max_h: f32) -> usize {
+    let mut h = 1.0;
+    for i in (0..rows.len()).rev() {
+        h += row_height(&rows[i]);
+        if h > max_h {
+            return i + 1;
+        }
+    }
+    0
+}
+
+/// The row that shows item `item` (headers skipped), for scrolling the choice into view.
+pub fn item_row(rows: &[Row], item: usize) -> usize {
+    rows.iter().enumerate().filter(|(_, r)| matches!(r, Row::Item { .. })).nth(item).map(|(i, _)| i).unwrap_or(0)
+}
+
+fn rgb_colour([r, g, b]: [u8; 3]) -> [f32; 4] {
+    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+}
+
+/// The open list of a dropdown, topmost first, inside `area` (`x`, top, width, maximum height).
+/// Click targets go to `targets` (they must sit outside the sliding clip to be hit-tested); rows
+/// take clicks only when `ready` (fully slid open).
+///
+/// Look, measured from retail recordings: flat yellow rows (~#E9B819) with a black outline and a
+/// drop shadow; the row under the pointer turns red (0xBC0000) with white text. Section titles
+/// are centred black capitals (Univers7b, the font the car list's accessor loads) between a light
+/// top line and a dark bottom line (the list code draws a line above and below each). The car
+/// list's year column is white, its name starts 22 units in, and the owned row has a paint
+/// swatch and a divider. Lists taller than `selectionboxmaxheight` scroll, with a bar of up and
+/// down arrows on the right. Styling beyond these points is approximate.
+#[allow(clippy::too_many_arguments)]
+fn combo_list(choice: &Choice, area: Rect, scroll: usize, accessor: &str, font: &str, ready: bool, game_dir: Option<&Path>, targets: &mut Vec<Draw>) -> Vec<Draw> {
+    let [x, top, w, max_h] = area;
+    let black = [0.0, 0.0, 0.0, 1.0];
+    let total = list_height(&choice.rows);
+    let scrolling = total > max_h;
+    let height = total.min(max_h);
+    let first = if scrolling { scroll.min(max_scroll(&choice.rows, max_h)) } else { 0 };
+    let rows_w = if scrolling { w - 1.0 - SCROLLBAR } else { w - 1.0 };
+    let bottom = top + height - 1.0;
+    let mut pieces = outline([x, top, w, height], black);
+    let mut item = choice.rows[..first].iter().filter(|r| matches!(r, Row::Item { .. })).count();
+    let mut cy = top;
+    let quad = |rect: Rect, colour: [f32; 4]| Draw::Quad { rect, colour, hover: None, link: None, back: false };
+    for row in &choice.rows[first..] {
+        if cy >= bottom {
+            break;
+        }
+        let rh = row_height(row);
+        let r = [x + 1.0, cy, rows_w - 1.0, rh];
+        match row {
+            Row::Header(title) => {
+                let title_font = "Univers7b.ffn".to_string();
+                let tw = label_width(game_dir, &title_font, title);
+                pieces.push(Draw::Text { text: title.clone(), pos: [r[0] + (r[2] - tw) / 2.0, cy + 2.0], size: point_size(&title_font), colour: black, font: title_font });
+                pieces.push(quad([r[0], cy, r[2], 1.0], [1.0, 1.0, 1.0, 0.6]));
+                pieces.push(quad([r[0], cy + rh - 1.0, r[2], 1.0], [0.0, 0.0, 0.0, 0.4]));
+                pieces.push(quad(r, COMBO_LIST_YELLOW));
+            }
+            Row::Item { lead, text, swatch, divider } => {
+                let hit = [r[0], cy, r[2], rh.min(bottom - cy)];
+                if ready {
+                    targets.push(Draw::Target { rect: hit, hit: Hit::ComboPick(accessor.to_string(), item) });
+                }
+                let offset = if swatch.is_some() && !text.is_empty() { 12.0 } else { 0.0 };
+                let text_x = if lead.is_some() { r[0] + 22.0 + offset } else { r[0] + 2.0 + offset };
+                let line = |colour| Draw::Text { text: text.clone(), pos: [text_x, cy + 1.0], size: point_size(font), colour, font: font.to_string() };
+                if ready {
+                    pieces.push(Draw::Shown { when: Show::Hover(hit), draw: Box::new(line([1.0; 4])) });
+                    pieces.push(Draw::Shown { when: Show::Idle(hit), draw: Box::new(line(black)) });
+                } else {
+                    pieces.push(line(black));
+                }
+                if let Some(l) = lead {
+                    pieces.push(Draw::Text { text: l.clone(), pos: [r[0] + 2.0 + offset, cy + 1.0], size: point_size(font), colour: [1.0; 4], font: font.to_string() });
+                }
+                if *divider {
+                    pieces.push(quad([r[0] + 20.0 + offset, cy, 1.0, rh], black));
+                }
+                if let Some(rgb) = swatch {
+                    // A paint swatch: small before a name, the whole row in a colour list.
+                    let s = if text.is_empty() { [r[0] + 3.0, cy + 3.0, r[2] - 6.0, rh - 6.0] } else { [r[0] + 2.0, cy + 3.0, 8.0, 8.0] };
+                    pieces.extend(outline([s[0] - 1.0, s[1] - 1.0, s[2] + 2.0, s[3] + 2.0], black));
+                    pieces.push(quad(s, rgb_colour(*rgb)));
+                }
+                pieces.push(Draw::Quad { rect: r, colour: COMBO_LIST_YELLOW, hover: ready.then_some([188.0 / 255.0, 0.0, 0.0, 1.0]), link: None, back: false });
+                item += 1;
+            }
+        }
+        cy += rh;
+    }
+    if scrolling {
+        // Scroll bar: up and down buttons with the arrow icon, and a thumb sized to the view.
+        let sx = x + w - 1.0 - SCROLLBAR;
+        let (up, down) = ([sx, top + 1.0, SCROLLBAR, SCROLLBAR], [sx, bottom - SCROLLBAR, SCROLLBAR, SCROLLBAR]);
+        if ready {
+            targets.push(Draw::Target { rect: up, hit: Hit::ComboScroll(accessor.to_string(), -1) });
+            targets.push(Draw::Target { rect: down, hit: Hit::ComboScroll(accessor.to_string(), 1) });
+        }
+        let (arrow_w, arrow_h) = shape_size(game_dir, "weeicons.fsh", COMBO_ARROW).unwrap_or((10.0, 7.0));
+        for (button, flip) in [(up, 2u8), (down, 0u8)] {
+            pieces.push(Draw::Picture { file: "weeicons.fsh".into(), index: COMBO_ARROW, pos: [(button[0] + (SCROLLBAR - arrow_w) / 2.0).round(), (button[1] + (SCROLLBAR - arrow_h) / 2.0).round()], flip, alpha: 1.0 });
+            pieces.extend(outline(button, black));
+            pieces.push(quad(button, COMBO_LIST_YELLOW));
+        }
+        let track = [sx, up[1] + SCROLLBAR, SCROLLBAR, down[1] - up[1] - SCROLLBAR];
+        let last = max_scroll(&choice.rows, max_h).max(1) as f32;
+        let thumb_h = (track[3] * (height / total)).max(6.0).min(track[3]);
+        let thumb_y = track[1] + (track[3] - thumb_h) * (first as f32 / last).min(1.0);
+        pieces.push(quad([sx + 1.0, thumb_y, SCROLLBAR - 2.0, thumb_h], [1.0, 1.0, 1.0, 0.85]));
+        pieces.push(quad(track, [1.0, 1.0, 1.0, 0.45]));
+        pieces.push(quad([sx - 1.0, top, 1.0, height], black));
+    }
+    pieces.extend(button_shadow([x, top, w, height], 4.0, 4.0));
+    pieces
+}
 
 /// The dropdown arrow in `weeicons.fsh` (`BarD`, 10x7).
 const COMBO_ARROW: usize = 14;
@@ -1502,7 +1761,7 @@ mod tests {
         b.entries.push(("disabledcolor".into(), "0x30FF0000".into()));
         let locale = Locale::parse_csv("String ID,ENGLISH_IDS\n15704,quick race\n");
         let profiles = Profiles::default();
-        let context = Context { profiles: &profiles, game_dir: None, disabled: true, can_go_back: true, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0 };
+        let context = Context { profiles: &profiles, game_dir: None, disabled: true, can_go_back: true, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0, session: None };
         let mut screen = Screen::default();
         assert!(append_control_with(&mut screen, &b, &template, &locale, 0, &context));
         assert_eq!(screen.hit_at(250.0, 260.0), None, "no click while disabled");
@@ -1581,9 +1840,10 @@ mod tests {
         let locale = Locale::parse_csv("String ID,ENGLISH_IDS\n450,beginner\n451,advanced\n452,expert\n15707,difficulty\n");
         let b = block(&[("id", "NFS5.ComboBoxSlider"), ("pos", "243,206"), ("accessor", "Game.Difficutly"), ("width", "152"), ("height", "18"), ("stringID", "15707")]);
         let profiles = Profiles::default();
-        let open = Context { profiles: &profiles, game_dir: None, disabled: false, can_go_back: true, can_play: true, difficulty: 2, open_combo: Some("Game.Difficutly".into()), combo_reveal: 1.0 };
+        let open = Context { profiles: &profiles, game_dir: None, disabled: false, can_go_back: true, can_play: true, difficulty: 2, open_combo: Some("Game.Difficutly".into()), combo_reveal: 1.0, session: None };
         let mut screen = Screen::default();
         assert!(append_control_with(&mut screen, &b, &template, &locale, 0, &open));
+        lift_top(&mut screen);
         assert_eq!(screen.hit_at(250.0, 210.0), Some(Hit::ComboToggle("Game.Difficutly".into())));
         assert_eq!(screen.hit_at(250.0, 226.0), Some(Hit::ComboPick("Game.Difficutly".into(), 0)));
         assert_eq!(screen.hit_at(250.0, 254.0), Some(Hit::ComboPick("Game.Difficutly".into(), 2)));
@@ -1596,7 +1856,91 @@ mod tests {
         let sliding = Context { combo_reveal: 0.5, ..open };
         let mut half = Screen::default();
         assert!(append_control_with(&mut half, &b, &template, &locale, 0, &sliding));
+        lift_top(&mut half);
         assert_eq!(half.hit_at(250.0, 226.0), None);
+    }
+
+    /// What `load_screen_with` does once every control is placed.
+    fn lift_top(screen: &mut Screen) {
+        let top = std::mem::take(&mut screen.top);
+        screen.draw.splice(0..0, top);
+    }
+
+    /// The quick-race car dropdown: headers are not choosable, items count without them, the list
+    /// scrolls past its maximum height and the arrows scroll it.
+    #[test]
+    fn a_long_list_with_headers_scrolls() {
+        let template = ControlTemplate { id: "NFS5.ComboBoxSlider".into(), description: String::new(), parts: vec![], states: vec![], blocks: vec![] };
+        let b = block(&[("id", "NFS5.ComboBoxSlider"), ("pos", "152,47"), ("accessor", "zMergedList.Car(SHORT)"), ("width", "162"), ("height", "18"), ("selectionboxwidth", "262"), ("selectionboxmaxheight", "160")]);
+        let mut rows = vec![Row::Header("FACTORY STOCK".into())];
+        rows.extend((0..20).map(|i| Row::Item { lead: Some("'50".into()), text: format!("car {i}"), swatch: None, divider: false }));
+        let mut session = Session { open_combo: Some("zMergedList.Car".into()), ..Session::default() };
+        session.choices.insert("zMergedList.Car".into(), Choice { rows: rows.clone(), selected: 3, closed: "356".into(), closed_swatch: None });
+        let profiles = Profiles::default();
+        let context = Context { open_combo: session.open_combo.clone(), session: Some(&session), ..Context::new(&profiles) };
+        let mut screen = Screen::default();
+        assert!(append_control_with(&mut screen, &b, &template, &Locale::default(), 0, &context));
+        lift_top(&mut screen);
+        // List top 65; the header is 13 tall, so item 0 starts at 78.
+        assert_eq!(screen.hit_at(160.0, 70.0), None, "a header takes no click");
+        assert_eq!(screen.hit_at(160.0, 80.0), Some(Hit::ComboPick("zMergedList.Car".into(), 0)));
+        assert_eq!(screen.hit_at(160.0, 94.0), Some(Hit::ComboPick("zMergedList.Car".into(), 1)));
+        assert_eq!(screen.hit_at(152.0 + 262.0 - 6.0, 70.0), Some(Hit::ComboScroll("zMergedList.Car".into(), -1)));
+        assert_eq!(screen.hit_at(152.0 + 262.0 - 6.0, 65.0 + 155.0), Some(Hit::ComboScroll("zMergedList.Car".into(), 1)));
+        assert_eq!(screen.hit_at(160.0, 65.0 + 170.0), None, "nothing below the 160-unit list");
+        assert!(screen.draw.iter().any(|d| matches!(d, Draw::Text { text, .. } if text == "356")), "closed value");
+        // Scrolled by 3 rows: the header and two items are off the top.
+        session.scroll = 3;
+        let context = Context { open_combo: session.open_combo.clone(), session: Some(&session), ..Context::new(&profiles) };
+        let mut scrolled = Screen::default();
+        assert!(append_control_with(&mut scrolled, &b, &template, &Locale::default(), 0, &context));
+        lift_top(&mut scrolled);
+        assert_eq!(scrolled.hit_at(160.0, 66.0), Some(Hit::ComboPick("zMergedList.Car".into(), 2)));
+        assert_eq!(max_scroll(&rows, 160.0), 21 - 11, "eleven 14-unit rows fit in 159");
+        assert_eq!(item_row(&rows, 3), 4);
+    }
+
+    /// RACE and the location arrows report their callbacks; the arrow keeps its mirror flag.
+    #[test]
+    fn bottom_bar_callbacks_are_reported() {
+        let template = ControlTemplate { id: "NFS5.BOTTOMBARBUTTON".into(), description: String::new(), parts: vec![], states: vec![], blocks: vec![] };
+        let race = block(&[("id", "NFS5.BOTTOMBARBUTTON"), ("stringID", "0"), ("callback", "PLAYGAME"), ("posx", "330"), ("posy", "456"), ("shapePathName", "racebutton.fsh")]);
+        let mut screen = Screen::default();
+        assert!(append_control(&mut screen, &race, &template, &Locale::default(), 0));
+        assert_eq!(screen.hit_at(335.0, 460.0), Some(Hit::Callback("PLAYGAME".into())));
+        let profiles = Profiles::default();
+        let grey = Context { can_play: false, ..Context::new(&profiles) };
+        let mut off = Screen::default();
+        assert!(append_control_with(&mut off, &race, &template, &Locale::default(), 0, &grey));
+        assert_eq!(off.hit_at(335.0, 460.0), None, "RACE is inert while the page cannot start a game");
+        let arrow = block(&[("id", "NFS5.BOTTOMBARBUTTON"), ("callback", "TRACK1INC"), ("posx", "500"), ("posy", "265"), ("shapePathName", "SPINArrw.fsh"), ("flip", "1")]);
+        let mut screen = Screen::default();
+        assert!(append_control(&mut screen, &arrow, &template, &Locale::default(), 0));
+        assert_eq!(screen.hit_at(505.0, 270.0), Some(Hit::Callback("TRACK1INC".into())));
+        assert!(screen.draw.iter().any(|d| matches!(d, Draw::Picture { flip: 1, .. })));
+    }
+
+    /// One of two controls at the same place is hidden by name; watches and the logo read the
+    /// session.
+    #[test]
+    fn session_driven_controls() {
+        let empty = |id: &str| ControlTemplate { id: id.into(), description: String::new(), parts: vec![], states: vec![], blocks: vec![] };
+        let mut session = Session { hidden: vec!["ID_MERGEDLISTCARSETUP".into()], car_logo: Some(("finallogos2.fsh".into(), 4)), ..Session::default() };
+        session.watch.insert("Track1.Track(DIFFICULTY)".into(), "advanced".into());
+        let profiles = Profiles::default();
+        let context = Context { session: Some(&session), ..Context::new(&profiles) };
+        let garage = block(&[("id", "NFS5.GOTOBUTTON"), ("name", "ID_MERGEDLISTCARSETUP"), ("pos", "101,71"), ("width", "162"), ("height", "18"), ("destination", "garage")]);
+        let mut screen = Screen::default();
+        assert!(append_control_with(&mut screen, &garage, &empty("NFS5.GOTOBUTTON"), &Locale::default(), 0, &context));
+        assert!(screen.draw.is_empty(), "hidden by name");
+        let watch = block(&[("id", "NFS5.AccessorWatch"), ("pos", "436,429"), ("accessor", "Track1.Track(DIFFICULTY)"), ("fontPathName", "univers8b.ffn"), ("foreColor", "0xffffffff")]);
+        assert!(append_control_with(&mut screen, &watch, &empty("NFS5.AccessorWatch"), &Locale::default(), 0, &context));
+        assert!(matches!(&screen.draw[0], Draw::Text { text, pos, .. } if text == "advanced" && *pos == [436.0, 429.0]));
+        let logo = block(&[("id", "NFS5.CarLogo"), ("pos", "330,426")]);
+        assert!(append_control_with(&mut screen, &logo, &empty("NFS5.CarLogo"), &Locale::default(), 0, &context));
+        assert_eq!(screen.draw[2], Draw::Picture { file: "finallogos2.fsh".into(), index: 8, pos: [330.0, 426.0], flip: 0, alpha: 1.0 }, "logo 4's left half");
+        assert!(matches!(&screen.draw[1], Draw::Picture { index: 9, .. }), "and its right half");
+        assert_eq!(accessor_key("Track1.Direction(SHORT)"), "Track1.Direction");
     }
 
     #[test]
@@ -1616,7 +1960,7 @@ mod tests {
         let locale = Locale::parse_csv("String ID,ENGLISH_IDS\n10501,back\n");
         let b = block(&[("id", "NFS5.BOTTOMBARBUTTON"), ("stringID", "10501"), ("callback", "GOBACK"), ("space", "4"), ("posx", "5"), ("posy", "452"), ("shapePathName", "backbutton.fsh")]);
         let profiles = Profiles::default();
-        let context = Context { profiles: &profiles, game_dir: None, disabled: false, can_go_back: false, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0 };
+        let context = Context { profiles: &profiles, game_dir: None, disabled: false, can_go_back: false, can_play: true, difficulty: 1, open_combo: None, combo_reveal: 1.0, session: None };
         let mut screen = Screen::default();
         assert!(append_control_with(&mut screen, &b, &template, &locale, 0, &context));
         assert_eq!(screen.hit_at(10.0, 460.0), None);

@@ -325,6 +325,142 @@ Retail recording of the dropdown with Greg selected:
 - Data quirk, not ours: the main menu's "singleplayer" button carries string 1007, "Play a quick race" in English. The German text for 1007 describes all three single-player modes.
 - **Not modelled**: suppression during screen transitions (we have no transitions yet). The hover test uses our drawn rectangle, which may differ slightly from the retail control's hit area (**guess**).
 
+## Quick race (2026-10-17)
+
+Sources: the shipped layouts and catalogue files, the retail executable's accessor and list
+classes (read-only reference, described here in our own words), and the author's retail
+recording of 2026-10-16 22:40 (quick race with Greg, read as still frames; nothing stored).
+
+### Flow
+| Screen | Layout | Header | Reached from |
+|---|---|---|---|
+| main menu | `GameSetup.lay` | `ID_MOVIEOVAL` frame, `ID_GARAGE` room, `canplaygame=0` | start |
+| single player | `singleplayer.lay` | popup (`room=ID_NONE`) | "single player" |
+| quick race | `QuickRace.lay` | no frame, `ID_GARAGE` room, `canplaygame=1` | "quick race..." (`callback=SETTYPEQUICKRACE`) |
+| location setup | `location.lay` | no frame, `ID_TRACK` room, `canplaygame=1` | "location setup..." |
+| settings | `settings.lay` | popup, `canplaygame` empty (RACE grey) | "settings" |
+| car compare | `carcompare.lay` | popup (`ID_FULLOVAL`) | "car compare..." |
+| garage | `garage.lay` | `ID_GARAGE` room | "garage..." (owned car only) |
+
+- RACE is the bottom bar's `PLAYGAME` button, live while the top screen's `canplaygame` is 1. The
+  location screen also has `canplaygame=1`, so RACE works there too.
+- The recording shows the bottom bar on the quick-race page although it has no frame. We draw
+  the bar on every page that has a room (`ID_GARAGE`, `ID_TRACK`); beyond quick race this is a
+  **guess**.
+- `SETTYPEQUICKRACE` sets `Game.GameType` to 0, rebuilds the car and track lists and resets
+  `zMergedList.Car` to the first row. The recording agrees: Greg's save holds car 72, yet quick
+  race opened on his owned 356.
+
+### Dropdowns and what they list
+| Control (accessor) | Rows | Closed shows | Save value (Greg) |
+|---|---|---|---|
+| car (`zMergedList.Car`) | "OWNED" cars, then "FACTORY STOCK", each grouped by era and class titles | the car's short name (`356`, `356 B`) | 72 (not used, see above) |
+| location (`Track1.Track`) | the open tracks' full names | the short name (string + 40) | 0 |
+| opponents (`OpponentCar.Car`) | same car, same era, same class, same era/class, random car, then every installed road car | "era/class" for the fourth rule; a car's short name | 0 |
+| opponents (`Game.NumOpponents`) | 0..7 (number accessor, default 4) | the number | 7 |
+| direction (`Track1.Direction`) | forward, backward, forward/mirrored, backward/mirrored (410-413) | forward, bkw, fwd/mir, bkw/mir (410, 416-418) | 2 |
+| traffic (`Track1.Traffic`) | none, light, medium, heavy (403-400) | same | 2 |
+| laps (`Track1.Laps`) | 1..8 (420-427) | same | 1 (two laps) |
+| transmission (`Car.Transmission`) | manual, automatic (560-561) | same | 1 |
+| ABS, traction control (`Car.ABS`, `Car.Traction`) | off, on (1500-1501) | same | 1, 0 |
+| roof (`Car.Roof`) | up, down (1509-1510) | same | 0 |
+| damage (`Game.Damage`) | off, on (705, 704) | same | 0 |
+| color (`GenericCar.Colour`, `NFS5.ColorBox`) | the model's paints (`.clr` sections) | a swatch | 20 |
+
+- The `(SHORT)` suffix in a layout's accessor picks the short text for the closed control.
+- Save values are the accessor name, a zero byte and a `u32`, as for the difficulty. Read-only;
+  choices made in our menu are not written back.
+- **Garage button or colour box**: `QuickRace.lay` places "garage..." (`ID_MERGEDLISTCARSETUP`) and
+  the colour box (`ID_MERGEDLISTCOLOR`) at the same spot. The recording shows "garage..." with
+  the owned car and "color" with a factory car. The switching code is not traced.
+
+### `nfs5.car` (0x670-byte records, 109 in this install)
+| Offset | Field |
+|---|---|
+| 0 | `u16` id |
+| 2 | full name, `'50 356 1100 Cabriolet` |
+| 0x34 | short name (`356`, `356 B`), shown in the closed car control |
+| 0x4d | simulation file stem |
+| 0x7f | model stem in `GameData/CarModel` (`356_1`); also the `.clr` paint file |
+| 0x147 | logo archive (`finallogos1`/`finallogos2`) |
+| 0x179 | engine sound bank |
+| 0x1ac | `u32` class string (501 CLASS 3, 502 CLASS 2, 503 CLASS 1) |
+| 0x1b0 | `u32` era string (521 CLASSIC ERA, 522 GOLDEN ERA, 523 MODERN ERA) |
+| 0x1f4 | `u16` kind: 0 road car, 1 traffic, 2 police |
+| 0x1f6 | `u16` logo number n: archive entries 2n and 2n+1 are its left and right halves ("PORS" + "CHE" for 4; the recording shows "1600 SUPER" for 19) |
+| 0x1f8, 0x202 | `u16` first and last model year |
+| 0x204 | `u16` availability: 0/2 listed, 1 hidden, 3 never (the three factory-driver prize cars) |
+| 0x208 | price (11000 for the first 356) |
+
+- **Factory stock** outside career: kind 0 with availability 0 or 2 (84 cars here). The list is
+  sorted by era, then class, then first year, with a simple exchange sort (each slot swapped
+  with any later car that sorts before it). We do the same. The comparison's argument order
+  comes from a decompile that lost the `this` register, so "ascending" is inferred; the
+  recording's first rows ('50 356 1100 Cabriolet, '50 356 1100 Coupé Ferdinand, '51 356 1300
+  Cabriolet, '51 356 1300 Coupé) agree.
+- **Owned cars**: the save's `PlayerInfo` section holds a copy of each owned car's record (id,
+  then name). We find them by that pattern; Greg's one 356 is found. **Guess** at the section's
+  layout; the owned car's own paint is not read yet (we show its model's first paint).
+- **Opponent cars**: every kind-0 car whose model file is installed, same sort (87 here).
+- **List rows** (retail list drawing): a title row (13 units) whenever the era changes and
+  whenever the class changes, plus the "OWNED"/"FACTORY STOCK" title before each part. Item rows
+  are 14 units: the first three characters of the name (the year) in a white column, the name
+  from the fifth character, 22 units in. The owned row adds a paint swatch and a divider.
+
+### `nfs5.trk` (0x4a8-byte records, 15 here) and `nfs5.trn` (0xd40-byte records, 35)
+| Offset | Track field |
+|---|---|
+| 0 | `i16` id |
+| 4 | `u32` name string (full); short = +40, capitals = +60 |
+| 8 | file stem in `GameData/Track` |
+| 0x30, 0x44, 0x58 | `FEData/TrackArt` pictures (main, `Sp`, `SpSm`) |
+| 0x6c | `i16` 3 = locked until a tournament that uses it opens |
+| 0x6e | `i16` 1 = in the looped (test-drive) list |
+| 0x78 | `i16` difficulty (0-2, strings 450-452) |
+| 0x1ac.. | best-time table: 0x4c-byte entries of driver, car, `u32` time |
+
+- **Track list rule**: every record whose `<file>.crp` exists in `GameData/Track`, except the skid
+  pad. A record with 0x6c = 3 is included only when a tournament that lists it is open:
+  tournament era code (at 4) 521/522/523 opens in career year 1970/1989/2000; other codes are
+  open from the start. Track ids sit at 12 (count at 10). In game type 3 every track is open
+  (not used here). List order is file order.
+- With a new profile (career year 1950) quick race offers Côte d'Azur, Pyrénées, Normandie and
+  Monte Carlo 3. 1970 adds Schwarzwald, Zone Industrielle, Monte Carlo 1 and 2; 1989 adds Alps,
+  Autobahn, Auvergne, Monte Carlo 4 and 5, Corsica.
+- The save keeps its own tournament table, which we do not read; we use `nfs5.trn` with the
+  save's career year. **Not checked** against a later career.
+- **Record time** (location screen): the first entry's time, a `u32` in 1/128 s ticks (the front
+  end clock), shown as `mm:ss.hh`. Which entry and the exact format are **guesses**.
+
+### `.clr` paints
+Plain text, one `[sectionN]` per paint scheme, with `color1..4` as both HSV (`.h .s .v`) and RGB
+(`.r .g .b`). `color1` is the body colour. How retail lays out its colour picker
+(`selectionboxwidth=0`, `allowcustom=1`) is not traced; we use a plain list of swatches.
+
+### Drawing (ours)
+- Dropdowns list any rows (titles and items), scroll when taller than `selectionboxmaxheight`
+  (arrows, plus the mouse wheel, which is our addition), and open on top of every other
+  control. The open car list in the recording is 262 wide (`selectionboxwidth`) with a scroll bar
+  of about 12 units.
+- `NFS5.CarLogo` draws the car's logo (both halves) at the control's position: `align=1` centres it
+  there (settings popup), `align=0` starts it there (quick race page). Both match the recording.
+- Under a popup the page's dropdowns fade like its buttons (fill `0x30FF0000`, faint text), as in
+  the recording.
+- **Not done**: retail shows "N/A" (and a faded control) for ABS, traction control and roof on cars
+  without them (a 1600 Super in the recording); where that comes from is not traced. `NFS5.AccessorWatch` draws
+  its accessor's text (track name, difficulty, record time) in the layout's font and colour.
+- The location arrows are bottom-bar buttons (`SPINArrw.fsh`, `flip=1` on the right one) with
+  callbacks `TRACK1INC`/`TRACK1DEC`; they step through the tracks and wrap.
+- **Gaps**: the 3D garage car (`NFS5.3DCAR`) and the track room (`ID_TRACK`) are not drawn. As a
+  stand-in the location screen shows the chosen track's `TrackArt` picture. The garage, car
+  compare and track records screens open, but their special controls are not drawn.
+
+### RACE hand-off
+Pressing RACE builds a `RaceSetup` (`crates/nfspu-game/src/race_setup.rs`), logs it to
+`logs/m0.log`, writes it to `logs/race_setup.txt` as `key = value` lines, and leaves the menu.
+`NFSPU_MENU_PLAY=1` with `NFSPU_MENU_CAPTURE=1` presses RACE after the capture, for checks without
+a window. `NFSPU_MENU_PICK=zMergedList.Car=5;Track1.Track=2` makes choices before the first frame.
+
 ## What is still open
 
 * What each `[part.*]` and `flags=` token renders as, and how `callback`/`callbacklist` hook into

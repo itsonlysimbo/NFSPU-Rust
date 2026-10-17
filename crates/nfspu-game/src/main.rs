@@ -58,7 +58,11 @@ fn log_line(msg: &str) {
 
 fn main() {
     START.get_or_init(Instant::now);
-    let _ = fs::remove_file(log_path());
+    // A program started by the quick-race launcher (below) keeps the launcher's log.
+    let child = env::var_os("NFSPU_CHILD").is_some();
+    if !child {
+        let _ = fs::remove_file(log_path());
+    }
     log_line(&format!(
         "starting: pid {}, exe {:?}, started from {:?}",
         std::process::id(),
@@ -81,8 +85,17 @@ fn main() {
     if let Ok(requested) = env::var("NFSPU_MENU") {
         let trimmed = requested.trim();
         let start = if trimmed.is_empty() { "singleplayer".to_string() } else { trimmed.to_ascii_lowercase() };
+        // Started directly, this process launches the menu and the races as separate programs
+        // in turn (a window loop cannot restart inside one process).
+        if !child && env::var_os("NFSPU_MENU_CAPTURE").is_none() {
+            run_flow(start);
+            return;
+        }
         let dir = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
-        menu_mode::run(dir, start);
+        let result = menu_mode::run(dir, start);
+        if result == AppExit::from_code(menu_mode::RACE_EXIT_CODE) {
+            std::process::exit(menu_mode::RACE_EXIT_CODE as i32);
+        }
         return;
     }
 
@@ -1309,14 +1322,89 @@ fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, console: Res<console::Console>, 
 /// Gives the HUD (when `NFSPU_HUD=1`) the car's real speed. Rpm and gear are made up from the speed
 /// and the race fields are PLACEHOLDERS (a 3-second countdown at the start, lap 1/3, 1st of 6)
 /// until the race rules fill them.
-fn feed_hud(time: Res<Time>, car: Option<Res<CarRes>>, name: Res<CarName>, feed: Option<ResMut<nfspu_game::hud_plugin::HudFeed>>, mut start: Local<Option<f32>>) {
+/// The quick-race loop: the menu runs until RACE (exit code `RACE_EXIT_CODE`, setup in
+/// `logs/race_setup.txt`), then the race runs behind the loading screen with the HUD, and after the
+/// results the menu opens again at the quick-race screen. Any other menu exit ends the loop.
+fn run_flow(start: String) {
+    let Ok(exe) = env::current_exe() else {
+        log_line("flow: cannot find our own program file");
+        return;
+    };
+    let setup_file = log_path().parent().map(|d| d.join("race_setup.txt")).unwrap_or_default();
+    let mut screen = start;
+    loop {
+        log_line(&format!("flow: menu at '{screen}'"));
+        let menu = std::process::Command::new(&exe).env("NFSPU_CHILD", "1").env("NFSPU_MENU", &screen).status();
+        let code = menu.as_ref().ok().and_then(|s| s.code());
+        if code != Some(menu_mode::RACE_EXIT_CODE as i32) {
+            log_line(&format!("flow: menu closed ({menu:?}), done"));
+            return;
+        }
+        let setup = fs::read_to_string(&setup_file).map_err(|e| e.to_string()).and_then(|t| nfspu_game::race_setup::RaceSetup::parse(&t));
+        let setup = match setup {
+            Ok(s) => s,
+            Err(e) => {
+                log_line(&format!("flow: could not read {}: {e}", setup_file.display()));
+                return;
+            }
+        };
+        use nfspu_game::race_setup::Direction as D;
+        let backward = matches!(setup.direction, D::Backward | D::BackwardMirrored);
+        let mirrored = matches!(setup.direction, D::ForwardMirrored | D::BackwardMirrored);
+        let loading = format!("{},{}{}{}", setup.track, setup.car_model, if backward { ",reverse" } else { "" }, if mirrored { ",mirror" } else { "" });
+        let race = format!("{},{},{}", setup.track, if backward { "backward" } else { "forward" }, setup.laps);
+        log_line(&format!("flow: race NFSPU_LOADING={loading} NFSPU_RACE={race} (opponents and traffic not simulated yet)"));
+        let run = std::process::Command::new(&exe)
+            .env("NFSPU_CHILD", "1")
+            .env_remove("NFSPU_MENU")
+            .env("NFSPU_LOADING", &loading)
+            .env("NFSPU_RACE", &race)
+            .env("NFSPU_HUD", "1")
+            .status();
+        log_line(&format!("flow: race closed ({run:?})"));
+        screen = "quickrace".to_string();
+    }
+}
+
+fn feed_hud(
+    time: Res<Time>,
+    car: Option<Res<CarRes>>,
+    name: Res<CarName>,
+    feed: Option<ResMut<nfspu_game::hud_plugin::HudFeed>>,
+    race: Res<nfspu_game::race::RaceStatus>,
+    mut start: Local<Option<f32>>,
+    mut finished_at: Local<Option<f32>>,
+) {
     let (Some(car), Some(mut feed)) = (car, feed) else { return };
     let now = time.elapsed_secs();
-    let since = now - *start.get_or_insert(now);
     let speed_kmh = car.car.speed * 3.6;
     let (rpm, gear) = nfspu_game::hud::placeholder_engine(speed_kmh);
-    let race_time = (since - 3.0).max(0.0);
     feed.car_model = name.0.clone();
+    if race.active {
+        // The race clock: GO is at tick 448 of the 64 Hz race clock (docs/provenance/race.md).
+        let countdown = race.held.then(|| (448.0 - race.tick as f32).max(0.0) / 64.0);
+        if race.finished && finished_at.is_none() {
+            *finished_at = Some(now);
+        }
+        feed.input = nfspu_game::hud::HudInput {
+            speed_kmh,
+            rpm: race.rpm.unwrap_or(rpm),
+            gear,
+            lap: race.current_lap.max(1),
+            total_laps: race.total_laps.max(1),
+            position: race.position.max(1) as u32,
+            car_count: race.cars.max(1) as u32,
+            race_time: race.race_time,
+            lap_time: race.lap_time,
+            best_lap: race.best_lap,
+            countdown,
+            finished: finished_at.map(|t| (race.position.max(1) as u32, now - t)),
+        };
+        return;
+    }
+    // No race running: made-up race numbers so the HUD can be looked at in the viewer.
+    let since = now - *start.get_or_insert(now);
+    let race_time = (since - 3.0).max(0.0);
     feed.input = nfspu_game::hud::HudInput {
         speed_kmh,
         rpm,

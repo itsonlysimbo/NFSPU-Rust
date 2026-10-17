@@ -67,11 +67,13 @@ pub struct RacePlugin(pub Option<RaceRequest>);
 
 impl Plugin for RacePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(RaceStatus::default()).insert_resource(RaceHold(false));
+        // With a race requested the car is held from the start (also behind the loading screen).
+        app.insert_resource(RaceStatus::default()).insert_resource(RaceHold(self.0.is_some()));
         if let Some(req) = &self.0 {
+            // The race starts on the first frame the car exists: right after start-up, or once the
+            // loading screen has run `setup`.
             app.insert_resource(req.clone())
-                .add_systems(PostStartup, start_race)
-                .add_systems(Update, (race_tick, results_screen).chain().after(crate::drive_car));
+                .add_systems(Update, (start_race, race_tick, results_screen, leave_results).chain().after(crate::drive_car));
         }
     }
 }
@@ -87,7 +89,11 @@ fn race_log(msg: &str) {
     }
 }
 
-fn start_race(mut commands: Commands, req: Res<RaceRequest>, car: Option<ResMut<crate::CarRes>>, mut status: ResMut<RaceStatus>, mut hold: ResMut<RaceHold>) {
+fn start_race(mut commands: Commands, mut started: Local<bool>, req: Res<RaceRequest>, car: Option<ResMut<crate::CarRes>>, mut status: ResMut<RaceStatus>, mut hold: ResMut<RaceHold>) {
+    if *started || car.is_none() {
+        return;
+    }
+    *started = true;
     let _ = std::fs::create_dir_all(race_log_path().parent().unwrap());
     let _ = std::fs::remove_file(race_log_path());
     race_log(&format!("request: {:?}", *req));
@@ -213,6 +219,9 @@ fn results_screen(mut commands: Commands, run: Option<ResMut<RaceRun>>, status: 
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         race_log(&format!("results | {}", line.trim()));
     }
+    text += "
+
+Press Enter to continue";
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -228,6 +237,14 @@ fn results_screen(mut commands: Commands, run: Option<ResMut<RaceRun>>, status: 
         TextColor(Color::srgb(1.0, 0.95, 0.8)),
         ResultsPanel,
     ));
+}
+
+/// Enter, Space or Escape on the results closes the race (the launcher then reopens the menu).
+fn leave_results(run: Option<Res<RaceRun>>, keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
+    if run.is_some_and(|r| r.results_shown) && keys.any_just_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::Escape]) {
+        race_log("results closed, leaving the race");
+        exit.write(AppExit::Success);
+    }
 }
 
 #[cfg(test)]
