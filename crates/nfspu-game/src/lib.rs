@@ -4,6 +4,7 @@ pub mod car;
 pub mod car_model;
 pub mod collision;
 pub mod ground;
+pub mod loading;
 pub mod menu;
 pub mod menu_canvas;
 pub mod menu_movie;
