@@ -26,6 +26,7 @@ use nfspu_game::{refbuild, sky, track};
 use nfspu_game::MIRROR_X;
 mod console;
 mod menu_mode;
+mod race_mode;
 mod visual_probe;
 
 use std::collections::HashMap;
@@ -84,7 +85,9 @@ fn main() {
         return;
     }
 
-    let track = env::args().nth(1).unwrap_or_else(|| "alps".to_string());
+    // `NFSPU_RACE=<track>[,<forward|backward>[,<laps>]]` starts a race on that track.
+    let race_request = race_mode::RaceRequest::from_env();
+    let track = race_request.as_ref().map(|r| r.track.clone()).or_else(|| env::args().nth(1)).unwrap_or_else(|| "alps".to_string());
     let car_name = env::args().nth(2).unwrap_or_else(|| "993".to_string());
     let car_style: usize = env::args().nth(3).and_then(|v| v.parse().ok()).unwrap_or(1);
     let car_driver: u8 = env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(1);
@@ -116,6 +119,7 @@ fn main() {
         .insert_resource(CamMode(0))
         .insert_resource(Orbit { yaw: 0.6, pitch: 0.35, radius: 6.0 })
         .insert_resource(RetailFov::from_env())
+        .add_plugins(race_mode::RacePlugin(race_request))
         .add_systems(Startup, setup)
         .add_systems(Last, visual_probe::update)
         .add_systems(Update, (console::handle_input, console::apply).chain())
@@ -1298,6 +1302,7 @@ fn drive_car(
     walls: Option<Res<WallRes>>,
     car: Option<ResMut<CarRes>>,
     console: Res<console::Console>,
+    hold: Res<race_mode::RaceHold>,
     mut bodies: Query<&mut Transform, With<CarBody>>,
 ) {
     let (Some(ground), Some(walls), Some(mut state)) = (ground, walls, car) else { return };
@@ -1311,12 +1316,15 @@ fn drive_car(
     if mode.0 {
         let left = keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft);
         let right = keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight);
-        let input = CarInput {
+        let mut input = CarInput {
             throttle: keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp),
             brake: keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
             handbrake: keys.pressed(KeyCode::Space),
             steer: (left as i8 - right as i8) as f32,
         };
+        if hold.0 {
+            input = CarInput::default(); // on the grid until GO
+        }
         state.steer = input.steer;
         state.braking = (input.brake && state.car.speed > 0.5) || input.handbrake;
         state.car.step(input, time.delta_secs(), &ground.0, &walls.0);
