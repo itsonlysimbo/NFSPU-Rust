@@ -288,7 +288,42 @@ Retail recording of the dropdown with Greg selected:
 - **Open list**: opens **downwards** from directly under the control. Rows are 14 units, flat yellow (~#E9B819), with a black outline at the control's left/right edges and a drop shadow. The hovered row is red (0xBC0000) with white text; other rows are black text in Univers8b. The current value is not marked.
 - **Slide**: done. The list is revealed downwards over 16 ticks (125 ms) on open and hidden the same way on close; rows take clicks only when fully open (`Draw::Clipped`).
 - **Sounds**: open 2, close 3, choice 5 from `fesfx.bnk` (see `docs/provenance/sound.md`).
-- **Not done**: tooltips.
+- **Tooltips**: done, see Help tips below.
+
+### Help tips (`helptext`) (2026-10-17)
+15 control templates declare a `helptext` field (INT, default 0), and the shared control code reads it for every control; 269 layout controls set a non-zero id. All 24 ids on the main menu, `selectname`, `singleplayer` and `QuickRace` are `!helptext` rows in `festrings.csv` (1000-1011, 1155-1167, 1258, 1283, 1309). The bottom bar sets none.
+
+**Behaviour** (retail executable: the shared control load stores the id, and the shared control draw step shows the tip; described, not copied):
+
+| What | Value |
+|---|---|
+| When | the control is hovered, not disabled, not hidden, and no screen transition is running. Otherwise the hover clock restarts every frame |
+| Delay | 128 ticks of the 128 Hz front-end clock = **1 s** of continuous hover |
+| Fade in | alpha = `min(255, (ticks - 128) * 4)`: full after another 64 ticks (0.5 s) |
+| Font | `Univers8b.ffn` (loaded once by the front end for this) |
+| Wrap | greedy at spaces; a line must measure **less than 310** pixels. Line step = measured text height + 2 |
+| Box | text width + 8 by text height + 4 |
+| Place | bottom-left corner at the pointer when the tip first appears (fixed while shown). If `x + width + 8 > 640` then `x = 636 - width`; the top is clamped to 0 |
+| Fill | white, alpha `alpha * 0xC0 / 255` (75% when fully shown) |
+| Outline | 1-pixel black at `alpha`, drawn as four strips (they overlap at the corners) |
+| Text | black at `alpha`, 4 right and 2 down from the box corner |
+
+**Checked against retail footage** (the let's play linked from the coordinating notes, 854x480, in which the 640x480 front end is 1:1 vertically; frames read in the browser, nothing saved):
+- At 2:30, "continue" on `selectname` shows "Select player profile and continue playing" in a box at about 337,387, 242x17: black text on a pale box with a dark 1-pixel edge, just above-right of the glove pointer. 17 = 13 + 4 fits one Univers8b line (11 + 2).
+- The fill is see-through: over the yellow button it is `#FFF2C9`, over grey-green `#CFD1D0`. Fitted alpha 0.77; the code says 0.75.
+- Timing, sampled every 0.1 s: the button turns yellow at 148.15 s, the tip starts to show at about 149.25 s and is complete by 149.7 s. That fits 1 s + 0.5 s.
+- Size check with our Univers8b metrics: the width comes out at exactly **242** (text 234 + 8). The height needs a text height of 11, but the font's line height field is 13 (box 19). 11 is the glyph extent of that line: capitals start at row 1, descenders end at row 12. We measure each line's glyph extent (**guess**: the retail measure routine is not traced; "line height - 2" would also fit this one frame). Retail does keep a separate height per line while wrapping and steps lines by the last one's, which suggests a per-string measure.
+- The author's two recordings do not show a tip: the bottom of the game window is covered by the recorder's own panel.
+
+**Ours** (`crates/nfspu-game/src/menu_help.rs`):
+- `menu_help::target` reads a control's `helptext` while the screen is built. Its hover area is the largest rectangle or click target the control drew (a button also draws 1-unit outline strips). A page drawn disabled (under a popup) gets no tips.
+- `HelpTimer` keeps the hover clock: same layer and same help, or it restarts. `tooltip` turns text, ticks and anchor into draw commands.
+- The front end draws the tip as an extra non-interactive layer on top of everything and recomposes while it fades.
+- `cargo run -p nfspu-game --example help_audit -j 2` lists every tip and its box (`logs/help_audit.txt`).
+- Capture: `NFSPU_MENU_CAPTURE_SECS=2` waits long enough for a tip to fade in under `NFSPU_MENU_POINTER`.
+- Capture checks (2026-10-17, `NFSPU_MENU_CAPTURE_SECS=3`): `GameSetup+selectname` with the pointer at 337,403 on "continue" matches the retail frame by eye (same text, place, see-through fill over the yellow button, dark edge). Also checked: main menu "singleplayer", the `singleplayer` popup's "quick knockout" (two lines), and `QuickRace` "settings" (two lines).
+- Data quirk, not ours: the main menu's "singleplayer" button carries string 1007, "Play a quick race" in English. The German text for 1007 describes all three single-player modes.
+- **Not modelled**: suppression during screen transitions (we have no transitions yet). The hover test uses our drawn rectangle, which may differ slightly from the retail control's hit area (**guess**).
 
 ## What is still open
 

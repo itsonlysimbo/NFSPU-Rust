@@ -93,6 +93,8 @@ pub struct Screen {
     pub can_play: bool,
     /// The header's `musicfile=` song pattern (`menu*`, `NONE`, ...); empty when absent.
     pub music: String,
+    /// Controls with a help tip (`helptext=`), topmost first; none on a disabled page.
+    pub help: Vec<crate::menu_help::Help>,
 }
 
 /// The layout file a frame id names: `ID_MOVIEOVAL` is `screenmovieoval.lay`. `ID_SCREEN`,
@@ -333,8 +335,13 @@ pub fn load_screen_with(
             continue;
         };
         let context = Context { profiles, game_dir: Some(game_dir), disabled, can_go_back: session.can_go_back, can_play: session.can_play, difficulty: session.difficulty, open_combo: session.open_combo.clone(), combo_reveal: session.combo_reveal };
+        let drawn = screen.draw.len();
         if !append_control_with(&mut screen, block, template, locale, language, &context) {
             screen.skipped.push(id.to_string());
+        }
+        // Retail shows help only for enabled controls.
+        if let Some(help) = crate::menu_help::target(block, &screen.draw[drawn..], locale, language).filter(|_| !disabled) {
+            screen.help.push(help);
         }
     }
     Some(screen)
