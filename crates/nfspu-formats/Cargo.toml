@@ -1,0 +1,7 @@
+[package]
+name = "nfspu-formats"
+version = "0.1.0"
+edition = "2021"
+description = "Readers for Need for Speed: Porsche Unleashed data files (original code, no game data)"
+
+[dependencies]

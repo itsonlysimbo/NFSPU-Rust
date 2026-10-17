@@ -1,0 +1,9 @@
+[package]
+name = "nfspu-game"
+version = "0.1.0"
+edition = "2021"
+description = "Bevy front end for the Porsche Unleashed rewrite"
+
+[dependencies]
+bevy = { version = "0.19", features = ["wav"] }
+nfspu-formats = { path = "../nfspu-formats" }

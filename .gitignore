@@ -1,0 +1,19 @@
+# Whitelist: ignore everything, then allow only our own source and docs.
+# Never add game files, decompiled code or Ghidra databases here.
+*
+!*/
+!.gitignore
+!AGENTS.md
+!README.md
+!MODLOG.md
+!STATUS.md
+!Cargo.toml
+!Cargo.lock
+!*.rs
+!*.md
+
+# Always ignored, even though they match the allow rules above
+reference/
+target/
+logs/
+extracted/
