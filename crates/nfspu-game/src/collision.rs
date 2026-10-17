@@ -110,6 +110,11 @@ impl WallSet {
                         continue;
                     }
                     let q = closest_point(t, [x, cy, z]);
+                    // the band must also hold where the wall is touched: a long sloping face can
+                    // reach the body's height far away while lying under the road next to the car
+                    if q[1] < y_min || q[1] > y_max {
+                        continue;
+                    }
                     let (dx, dz) = (x - q[0], z - q[2]);
                     let dist = (dx * dx + dz * dz).sqrt();
                     if dist >= radius {
@@ -161,6 +166,14 @@ mod tests {
         let w = wall(); // wall spans y 0..3
         assert!(w.resolve(0.5, 1.0, 4.0, 5.5, 1.0).is_none()); // car on a bridge above
         assert!(w.resolve(0.5, 1.0, -3.0, -0.5, 1.0).is_none()); // car in a dip below
+    }
+
+    #[test]
+    fn a_sloping_face_only_blocks_where_it_reaches_the_body() {
+        // in the plane x = 0: the top edge climbs from y -2 at z -20 to y 1.5 at z 20
+        let w = WallSet::new(vec![[[0.0, -2.0, -20.0], [0.0, -2.0, 20.0], [0.0, 1.5, 20.0]]], 4.0);
+        assert!(w.resolve(0.5, -15.0, 0.0, 1.5, 1.0).is_none()); // under the road here
+        assert!(w.resolve(0.5, 19.0, 0.0, 1.5, 1.0).is_some()); // reaches the body here
     }
 
     #[test]
