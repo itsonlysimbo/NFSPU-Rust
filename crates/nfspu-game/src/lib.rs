@@ -7,6 +7,7 @@ pub mod ground;
 pub mod hud;
 pub mod hud_plugin;
 pub mod hud_render;
+pub mod loading;
 pub mod menu;
 pub mod menu_canvas;
 pub mod menu_movie;

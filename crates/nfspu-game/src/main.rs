@@ -26,6 +26,7 @@ use nfspu_game::{refbuild, sky, track};
 use nfspu_game::MIRROR_X;
 mod console;
 mod menu_mode;
+mod race_load;
 mod race_mode;
 mod visual_probe;
 
@@ -92,6 +93,10 @@ fn main() {
     let car_style: usize = env::args().nth(3).and_then(|v| v.parse().ok()).unwrap_or(1);
     let car_driver: u8 = env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(1);
     let car_paint: usize = env::args().nth(5).and_then(|v| v.parse().ok()).unwrap_or(CarOptions::default().paint);
+    // `NFSPU_LOADING=<track>[,<car>]` loads that race behind the retail loading screen.
+    let loading = race_load::from_env();
+    let track = loading.as_ref().map_or(track, |s| s.track.clone());
+    let car_name = loading.as_ref().map_or(car_name, |s| s.car.clone());
 
     let result = App::new()
         .add_plugins(DefaultPlugins.build().disable::<bevy::app::TerminalCtrlCHandlerPlugin>().set(WindowPlugin {
@@ -120,7 +125,8 @@ fn main() {
         .insert_resource(Orbit { yaw: 0.6, pitch: 0.35, radius: 6.0 })
         .insert_resource(RetailFov::from_env())
         .add_plugins(race_mode::RacePlugin(race_request))
-        .add_systems(Startup, setup)
+        // Runs `setup` directly, or behind the loading screen with NFSPU_LOADING.
+        .add_plugins(race_load::RaceLoad(loading))
         // In-race HUD, only with NFSPU_HUD=1 for now (see hud_plugin.rs).
         .add_plugins(nfspu_game::hud_plugin::HudPlugin)
         .add_systems(Update, feed_hud.after(drive_car))
@@ -426,6 +432,9 @@ fn append_track_batch(
 
 /// Reads one track from the player's install: geometry (LOD 0), materials and textures.
 fn load_track(name: &str) -> Result<LoadedTrack, String> {
+    if let Some(track) = race_load::take_preloaded(name) {
+        return track;
+    }
     let dir = env::var("NFSPU_GAME_DIR").map_err(|_| "NFSPU_GAME_DIR is not set".to_string())?;
     let base = PathBuf::from(dir).join("GameData").join("Track");
     let read = |ext: &str| -> Result<Vec<u8>, String> {
