@@ -2,9 +2,10 @@
 //! `NFSPU_RACE=<track>[,<forward|backward>[,<laps>[,<opponents>[,<difficulty>]]]]` puts the
 //! player's car on pole of the retail start grid with the opponents behind, runs the countdown
 //! (cars held until GO), drives the opponents (`nfspu_game::ai`), counts laps for every car,
-//! finishes the race and then shows a placeholder results screen. `NFSPU_OPPONENTS=<model>,...`
-//! names the opponents' car models (default: the player's car); `NFSPU_AI_SEED` fixes the random
-//! draws.
+//! finishes the race and then shows a placeholder results screen.
+//! `NFSPU_OPPONENTS=<car>,...` names each opponent's car by catalogue id (`nfs5.car`) or model
+//! stem (default: the player's car); `NFSPU_AI_SEED` fixes the random draws. Opponents drive the
+//! retail car physics of their car's `.sim` and hit each other and the player (`collide_cars`).
 //!
 //! Hook API (for the coordinator, HUD and loading screen):
 //! - `RacePlugin(Option<RaceRequest>)`: always inserts `nfspu_game::race::RaceStatus` (default =
@@ -15,7 +16,8 @@
 
 use bevy::prelude::*;
 use nfspu_game::ai::{self, Opponent, Other, Rng, View};
-use nfspu_game::car::Car;
+use nfspu_game::car::{self as car_mod, Car};
+use nfspu_game::car_load::{self, Pick};
 use nfspu_game::car_model::CarOptions;
 use nfspu_game::race::{self, CarSample, Kind, Race, RaceEvent, RaceSetup, RaceStatus};
 use nfspu_game::race_path::{self, crosses, grid_spot, Direction, TrackRace};
@@ -33,8 +35,9 @@ pub struct RaceRequest {
     pub cars: usize,
     /// 0 beginner, 1 advanced, 2 expert: which drivers race and how the lead slowdown works.
     pub difficulty: u8,
-    /// Car model of each opponent; empty entries (or a shorter list) use the player's car.
-    pub opponent_models: Vec<String>,
+    /// Each opponent's car: a catalogue id or a model stem; empty entries (or a shorter list)
+    /// use the player's car.
+    pub opponent_cars: Vec<String>,
 }
 
 impl RaceRequest {
@@ -49,13 +52,13 @@ impl RaceRequest {
         let laps = parts.next().and_then(|l| l.parse().ok()).filter(|&l| l > 0).unwrap_or(2);
         let opponents: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0).min(7);
         let difficulty = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
-        Some(RaceRequest { track, direction, laps, cars: 1 + opponents, difficulty, opponent_models: Vec::new() })
+        Some(RaceRequest { track, direction, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new() })
     }
 
     pub fn from_env() -> Option<Self> {
         let mut r = std::env::var("NFSPU_RACE").ok().and_then(|s| Self::parse(&s))?;
         if let Ok(list) = std::env::var("NFSPU_OPPONENTS") {
-            r.opponent_models = list.split(',').map(|m| m.trim().to_string()).collect();
+            r.opponent_cars = list.split(',').map(|m| m.trim().to_string()).collect();
         }
         Some(r)
     }
@@ -175,7 +178,7 @@ fn start_race(
     let spots: Vec<_> = (0..cars).map(|g| grid_spot(p, track.start_slice, g, cars, req.direction)).collect();
     let spot = spots[player];
     let start = spot.pos + Vec3::Y * 1.5;
-    car.car = Car::new(start, spot.yaw);
+    car.car = car.car.reset(start, spot.yaw);
     car.start_pos = start;
     car.start_yaw = spot.yaw;
     let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, req.direction)).collect();
@@ -211,13 +214,29 @@ fn start_race(
         }
     ));
     let (drivers, names) = ai::load_drivers(&game);
+    let catalogue = car_load::catalogue(&game);
     let picked = ai::pick_drivers(&drivers, req.difficulty, cars - 1, &mut rng);
     race_log(&format!("opponents: {}, difficulty {}, seed {seed}, {} drivers in nfs5.per", cars - 1, req.difficulty, drivers.len()));
     let mut racers = Vec::new();
     for (i, driver) in picked.into_iter().enumerate() {
-        let model = req.opponent_models.get(i).filter(|m| !m.is_empty()).cloned().unwrap_or_else(|| car_name.0.clone());
-        let Some((spec, ais)) = ai::load_ais(&game, &model) else {
-            race_log(&format!("no AICarData for '{model}', opponent {} left out", i + 1));
+        // the car: catalogue record (model, AI name) and its .sim physics
+        let entry = req.opponent_cars.get(i).filter(|m| !m.is_empty()).cloned().unwrap_or_else(|| car_name.0.clone());
+        let id = entry.parse::<u16>().ok();
+        let record = catalogue.iter().find(|c| Some(c.id) == id || (id.is_none() && c.kind == 0 && c.model.eq_ignore_ascii_case(&entry))).cloned();
+        let Some(record) = record else {
+            race_log(&format!("opponent {}: no catalogue car '{entry}', left out", i + 1));
+            continue;
+        };
+        let model = record.model.clone();
+        let loaded = match car_load::load(&game, Pick::Id(record.id), false) {
+            Ok(l) => l,
+            Err(e) => {
+                race_log(&format!("opponent {}: '{model}' has no car spec ({e}), left out", i + 1));
+                continue;
+            }
+        };
+        let Some((spec, ais)) = ai::load_ais(&game, &record.ai_name) else {
+            race_log(&format!("opponent {}: no AICarData for '{}', left out", i + 1, record.ai_name));
             continue;
         };
         let spot = spots[1 + racers.len()];
@@ -228,15 +247,17 @@ fn start_race(
         crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, body, &model, &options);
         let name = names.get(&(driver.name_id as u16)).cloned().unwrap_or_else(|| format!("Driver {}", driver.id));
         race_log(&format!(
-            "car {}: {name} (driver {}, difficulty {}, skills {:?}) in '{model}' paint {} using {ais}.ais (top table speed {:.1} m/s)",
+            "car {}: {name} (driver {}, difficulty {}, skills {:?}) in {} '{model}' paint {}, {ais}.ais (top table speed {:.1} m/s); {}",
             racers.len() + 1,
             driver.id,
             driver.difficulty,
             driver.skills,
+            record.name,
             options.paint,
-            spec.speeds[0]
+            spec.speeds[0],
+            loaded.note
         ));
-        racers.push(Racer { car: Car::new(start, spot.yaw), brain: Opponent::new(spec, driver, spot.slice), body, name, steer: 0.0, braking: false, resets: 0 });
+        racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, name, steer: 0.0, braking: false, resets: 0 });
     }
     // opponents that could not be set up drop out of the race
     let cars = 1 + racers.len();
@@ -269,7 +290,7 @@ fn start_race(
 
 /// One 64 Hz tick for every opponent: think, drive the car physics, follow it along the slices
 /// and fill its race sample. Cars stuck for long or fallen off the world go back on the road.
-fn drive_opponents(run: &mut RaceRun, player: &Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet, samples: &mut [CarSample]) {
+fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet, samples: &mut [CarSample]) {
     let dir = run.track.dir;
     let held = run.race.held();
     let player_progress = run.race.cars[run.player].progress;
@@ -283,6 +304,7 @@ fn drive_opponents(run: &mut RaceRun, player: &Car, dt: f32, ground: &nfspu_game
         let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != race_car).map(|(_, o)| *o).collect();
         let r = &mut run.racers[i];
         let input = r.brain.think(&r.car, &view, &near, &mut run.rng);
+        r.car.sim.held = held; // on the grid the brake is held on until GO (retail)
         let before = r.car.pos;
         r.car.step(input, dt, ground, walls);
         r.steer = input.steer;
@@ -292,13 +314,30 @@ fn drive_opponents(run: &mut RaceRun, player: &Car, dt: f32, ground: &nfspu_game
         let fallen = r.car.pos.y < run.track.path.slices[slice].pos.y - 30.0;
         if !held && !finished && (fallen || r.brain.wants_reset()) {
             let (pos, yaw) = ai::reset_pose(&run.track.path, &run.line, slice, dir);
-            r.car = Car::new(pos, yaw);
+            r.car = r.car.reset(pos, yaw);
             r.brain.was_reset(slice);
             r.resets += 1;
             race_log(&format!("tick {}: car {race_car} ({}) put back on the road at slice {slice} ({})", run.race.tick, r.name, if fallen { "fell" } else { "stuck" }));
         }
         let crossed = run.track.finish.is_some_and(|(a, b)| crosses(before, r.car.pos, a, b));
         samples[race_car] = CarSample { fraction: run.track.path.fraction(slice, dir), crossed_finish: crossed };
+    }
+    // car against car: every opponent with the player and with each other (retail's impulse)
+    let tick = run.race.tick;
+    for i in 0..run.racers.len() {
+        if let Some(hit) = car_mod::collide_cars(player, &mut run.racers[i].car) {
+            if hit >= 20.0 {
+                race_log(&format!("tick {tick}: player hit {} (impact {hit:.0})", run.racers[i].name));
+            }
+        }
+        for j in i + 1..run.racers.len() {
+            let (a, b) = run.racers.split_at_mut(j);
+            if let Some(hit) = car_mod::collide_cars(&mut a[i].car, &mut b[0].car) {
+                if hit >= 20.0 {
+                    race_log(&format!("tick {tick}: {} hit {} (impact {hit:.0})", a[i].name, b[0].name));
+                }
+            }
+        }
     }
 }
 
@@ -318,13 +357,13 @@ fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform,
 fn race_tick(
     time: Res<Time>,
     run: Option<ResMut<RaceRun>>,
-    car: Option<Res<crate::CarRes>>,
+    car: Option<ResMut<crate::CarRes>>,
     ground: Option<Res<crate::GroundRes>>,
     walls: Option<Res<crate::WallRes>>,
     mut status: ResMut<RaceStatus>,
     mut hold: ResMut<RaceHold>,
 ) {
-    let (Some(mut run), Some(car), Some(ground), Some(walls)) = (run, car, ground, walls) else { return };
+    let (Some(mut run), Some(mut car), Some(ground), Some(walls)) = (run, car, ground, walls) else { return };
     let run = &mut *run;
     let dt = time.delta_secs();
     let pos = car.car.pos;
@@ -344,14 +383,13 @@ fn race_tick(
     run.carry += dt.min(0.25);
     let step = 1.0 / race::TICK_HZ as f32;
     let fraction = run.track.path.fraction(run.slice, dir);
-    let player_car = car.car;
     let name = |names: &[String], car: usize| names.get(car).cloned().unwrap_or_else(|| format!("car {car}"));
     while run.carry >= step {
         run.carry -= step;
         let mut samples = vec![CarSample::default(); run.race.cars.len()];
         samples[run.player] = CarSample { fraction, crossed_finish: crossed };
         crossed = false;
-        drive_opponents(run, &player_car, step, &ground.0, &walls.0, &mut samples);
+        drive_opponents(run, &mut car.car, step, &ground.0, &walls.0, &mut samples);
         for e in run.race.step(&samples) {
             let t = run.race.tick;
             match e {
@@ -369,7 +407,7 @@ fn race_tick(
             for (pos, c) in run.race.order().into_iter().enumerate() {
                 let speed = match c.checked_sub(1).and_then(|i| run.racers.get(i)) {
                     Some(r) => format!("{:.0}/{:.0} m/s", r.car.speed, r.brain.target_speed),
-                    None => format!("{:.0} m/s", player_car.speed),
+                    None => format!("{:.0} m/s", car.car.speed),
                 };
                 line += &format!(" | P{} {} {:.3} {speed}", pos + 1, name(&status.names, c), run.race.cars[c].progress);
             }
@@ -384,7 +422,7 @@ fn race_tick(
     run.race.fill_status(run.player, &mut status);
     status.wrong_way = run.wrong_way;
     status.speed_kmh = car.car.speed.abs() * 3.6;
-    status.rpm = None;
+    status.rpm = Some(car.car.rpm());
     if status.finished {
         run.finished_for += dt;
     }

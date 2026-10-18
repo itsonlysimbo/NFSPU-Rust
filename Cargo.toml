@@ -5,6 +5,9 @@ members = ["crates/nfspu-formats", "crates/nfspu-game"]
 # Bevy is slow in debug builds; optimise dependencies even in dev profile.
 [profile.dev]
 opt-level = 1
+# Line tables keep panic backtraces readable but make linking much faster than full debug info.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
+debug = false

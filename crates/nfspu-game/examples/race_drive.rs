@@ -6,6 +6,8 @@
 //! Run: `cargo run -p nfspu-game --example race_drive --release -- monaco1 forward 2 7 2`
 //! (track, forward|backward, laps, opponents 0-7, difficulty 0-2; with no track it runs every track
 //! once, alone). `NFSPU_AI_SEED` fixes the random draws. Log: logs/race_drive.txt
+//! `RACE_DRIVE_CAR=<catalogue id>` drives that retail car (default: the made-up `Spec::generic`);
+//! opponents drive the 993's retail car.
 
 use nfspu_game::ai::{self, Opponent, Other, Rng, View};
 use nfspu_game::car::{Car, Input};
@@ -32,7 +34,16 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let cars = 1 + opponents;
     let spots: Vec<_> = (0..cars).map(|g| grid_spot(p, t.start_slice, g, cars, dir)).collect();
     let spot = spots[0];
-    let mut car = Car::new(spot.pos + bevy::math::Vec3::Y, spot.yaw);
+    // RACE_DRIVE_CAR=<catalogue id> drives a retail car's .sim physics instead of the made-up one
+    let mut car = match std::env::var("RACE_DRIVE_CAR").ok().and_then(|v| v.parse::<u16>().ok()) {
+        Some(id) => {
+            let game = std::path::PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
+            let l = nfspu_game::car_load::load(&game, nfspu_game::car_load::Pick::Id(id), false).expect("car spec");
+            let _ = writeln!(out, "   car: {}", l.note);
+            Car::with_spec(spot.pos + bevy::math::Vec3::Y, spot.yaw, l.spec, Default::default())
+        }
+        None => Car::new(spot.pos + bevy::math::Vec3::Y, spot.yaw),
+    };
     let kind = if t.point_to_point() { Kind::PointToPoint } else { Kind::Circuit };
     let mut slice = spot.slice;
     let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, dir)).collect();
@@ -45,16 +56,18 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let line = ai::driving_line(p, lsp.as_deref());
     let (drivers, names) = ai::load_drivers(&game);
     let (spec, _) = ai::load_ais(&game, "993").expect("993.ais");
+    let opp_spec = nfspu_game::car_load::load(&game, nfspu_game::car_load::Pick::Model("993"), false).expect("993 car spec").spec;
     let mut racers: Vec<(Car, Opponent, String)> = ai::pick_drivers(&drivers, difficulty, opponents, &mut rng)
         .into_iter()
         .enumerate()
         .map(|(i, d)| {
             let s = spots[i + 1];
             let n = names.get(&(d.name_id as u16)).cloned().unwrap_or_default();
-            (Car::new(s.pos + bevy::math::Vec3::Y, s.yaw), Opponent::new(spec.clone(), d, s.slice), n)
+            (Car::with_spec(s.pos + bevy::math::Vec3::Y, s.yaw, opp_spec.clone(), Default::default()), Opponent::new(spec.clone(), d, s.slice), n)
         })
         .collect();
     let mut resets = vec![0u32; opponents];
+    let mut hits = 0u32;
     let who = |c: usize, racers: &[(Car, Opponent, String)]| if c == 0 { "player".to_string() } else { racers[c - 1].2.clone() };
     if opponents > 0 {
         let _ = writeln!(out, "   {opponents} opponents, difficulty {difficulty}, seed {seed}, racing line {}", if lsp.as_ref().is_some_and(|l| l.len() == p.slices.len()) { "from .lsp" } else { "slice centres" });
@@ -83,13 +96,18 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             let to = route_target - car.pos;
             let diff = wrap((-to.x).atan2(-to.z) - car.yaw);
             let want = if diff.abs() > 0.5 { 10.0 } else { 22.0 };
+            // with the retail model the driver damps its steering with the yaw rate and lifts
+            // while sliding, or full lock plus full throttle spins a rear-drive car
+            let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
+            let steer = (diff * 2.5 - 0.25 * car.sim.yaw_rate).clamp(-1.0, 1.0);
             if backing > 0.0 {
                 backing -= dt;
                 Input { brake: true, steer: -(diff * 2.5).clamp(-1.0, 1.0), ..Default::default() }
             } else {
-                Input { throttle: car.speed < want, brake: car.speed > want + 5.0, steer: (diff * 2.5).clamp(-1.0, 1.0), ..Default::default() }
+                Input { throttle: car.speed < want && !sliding, brake: car.speed > want + 5.0, steer, ..Default::default() }
             }
         };
+        car.sim.held = r.held(); // on the grid the brake is held on until GO (retail)
         car.step(input, dt, &ground, &walls);
         let player_progress = r.cars[0].progress;
         let rate = ai::player_rate(player_progress - fractions[0], r.race_ticks());
@@ -101,6 +119,7 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             let (c, brain, rname) = &mut racers[i];
             let before_rec = brain.recoveries;
             let input = brain.think(c, &view, &near, &mut rng);
+            c.sim.held = r.held();
             if brain.recoveries != before_rec && brain.recoveries <= 5 {
                 let s = &p.slices[brain.slice];
                 let _ = writeln!(out, "      tick {:>5}: {rname} recovers at slice {} (segment {}), speed {:.1}, {:.1} m off centre, heading . road {:.2}",
@@ -112,16 +131,35 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             let fallen = c.pos.y < p.slices[brain.slice].pos.y - 30.0;
             if !r.held() && r.cars[i + 1].state == race::CarState::Racing && (fallen || brain.wants_reset()) {
                 let (pos, yaw) = ai::reset_pose(p, &line, brain.slice, dir);
-                *c = Car::new(pos, yaw);
+                *c = c.reset(pos, yaw);
                 brain.was_reset(brain.slice);
                 resets[i] += 1;
             }
             let crossed = t.finish.map_or(false, |(a, b)| crosses(before, c.pos, a, b));
             samples[i + 1] = CarSample { fraction: p.fraction(brain.slice, dir), crossed_finish: crossed };
         }
+        // car against car (retail impulse): player with each opponent, opponents with each other
+        for i in 0..racers.len() {
+            if nfspu_game::car::collide_cars(&mut car, &mut racers[i].0).is_some_and(|h| h >= 20.0) {
+                hits += 1;
+            }
+            for j in i + 1..racers.len() {
+                let (a, b) = racers.split_at_mut(j);
+                if nfspu_game::car::collide_cars(&mut a[i].0, &mut b[0].0).is_some_and(|h| h >= 20.0) {
+                    hits += 1;
+                }
+            }
+        }
         if r.held() {
             let d = car.pos - start_pos;
             moved_before_go = moved_before_go.max((d.x * d.x + d.z * d.z).sqrt());
+        }
+        if let Some((a, b)) = std::env::var("RACE_DRIVE_WINDOW").ok().and_then(|w| { let (a, b) = w.split_once('-')?; Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?)) }) {
+            if r.tick >= a && r.tick <= b && r.tick % 4 == 0 {
+                let _ = writeln!(out, "      w {:>5} pos ({:.1},{:.1},{:.1}) yaw {:.2} rate {:.2} v_f {:.1} v_r {:.1} gear {} rpm {:.0} in t{} b{} s{:.2} wall {} imp {:.1} ground {} pitch {:.2} roll {:.2}",
+                    r.tick, car.pos.x, car.pos.y, car.pos.z, car.yaw, car.sim.yaw_rate, car.speed, car.sim.lateral_speed(car.yaw), car.gear(), car.rpm(),
+                    input.throttle as u8, input.brake as u8, input.steer, car.hit_wall as u8, car.impact, car.on_ground as u8, car.pitch, car.roll);
+            }
         }
         if debug && ((r.tick % 64 == 0 && r.tick <= 64 * 120) || r.tick % 640 == 0) {
             let _ = writeln!(out, "      t {:>5} slice {slice:>5} seg {:>3} frac {:.3} pos ({:.0},{:.0},{:.0}) yaw {:.2} speed {:.1}",
@@ -145,11 +183,14 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         }
         let prog = r.cars[0].progress;
         if prog > best_progress + 0.002 || r.held() { best_progress = best_progress.max(prog); last_gain = r.tick; }
-        if !r.held() && r.tick - last_gain > 64 * 6 && backing <= 0.0 { backing = 2.0; last_gain = r.tick; }
+        if !r.held() && r.tick - last_gain > 64 * 10 && backing <= 0.0 { backing = 3.0; last_gain = r.tick; }
         if r.race_ticks() > 64 * 60 * 25 { stuck = r.cars[0].state != race::CarState::Finished; break; }
     }
     for (i, (_, brain, n)) in racers.iter().enumerate() {
         let _ = writeln!(out, "   {n}: progress {:.3}, {} recoveries, {} resets{}", r.cars[i + 1].progress, brain.recoveries, resets[i], if r.cars[i + 1].finish_time.is_none() { " (DID NOT FINISH)" } else { "" });
+    }
+    if opponents > 0 {
+        let _ = writeln!(out, "   car-to-car hits of impact 20+: {hits}");
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });

@@ -1,0 +1,15 @@
+{
+  "enabledMcpjsonServers": ["ghidra"],
+  "permissions": {
+    "deny": [
+      "mcp__ghidra__rename_function",
+      "mcp__ghidra__rename_function_by_address",
+      "mcp__ghidra__rename_data",
+      "mcp__ghidra__rename_variable",
+      "mcp__ghidra__set_decompiler_comment",
+      "mcp__ghidra__set_disassembly_comment",
+      "mcp__ghidra__set_function_prototype",
+      "mcp__ghidra__set_local_variable_type"
+    ]
+  }
+}

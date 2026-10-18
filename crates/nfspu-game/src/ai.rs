@@ -23,7 +23,8 @@
 //!
 //! Ours (not read from retail, marked "guess" where used): how far ahead the steering looks, the
 //! recovery manoeuvre and the reset after 10 s stuck, the avoidance of other cars, the route at
-//! junctions (always the main route), and the mapping from a car model to its `.ais` file.
+//! junctions (always the main route), the yaw-rate damping of the steering, and lifting off at
+//! full lock or while sliding.
 
 use crate::car::{Car, Input};
 use crate::catalog;
@@ -310,7 +311,9 @@ impl Opponent {
 
         let mut to = aim - car.pos;
         to.y = 0.0;
-        let steer = -(to.normalize_or_zero().dot(right) * 2.0).clamp(-1.0, 1.0);
+        // damped with the yaw rate so the retail tyre model does not swing the car round (ours)
+        let steer = (-(to.normalize_or_zero().dot(right) * 2.0) - 0.25 * car.sim.yaw_rate).clamp(-1.0, 1.0);
+        let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
 
         // stuck: too slow for too long, or facing back down the road
         let road = v.path.slices[self.slice].forward * v.dir.sign();
@@ -326,8 +329,8 @@ impl Opponent {
             self.reverse_ticks -= 1;
             return Input { brake: true, steer: -steer, ..Default::default() };
         }
-        // no throttle near full lock: the placeholder car cannot hold a tight line at speed (ours)
-        Input { throttle: speed < target_speed && steer.abs() < 0.7, brake: speed > target_speed + 2.0, steer, ..Default::default() }
+        // no throttle near full lock or while sliding: the car cannot hold a tight line at speed (ours)
+        Input { throttle: speed < target_speed && steer.abs() < 0.7 && !sliding, brake: speed > target_speed + 2.0, steer, ..Default::default() }
     }
 }
 
@@ -349,10 +352,11 @@ pub fn pick_drivers(drivers: &[Driver], difficulty: u8, n: usize, rng: &mut Rng)
         .collect()
 }
 
-/// Opponent car models by the menu's rule. Same era / class / both: retail draws `k` over the
-/// whole list and takes the `k`-th match counting round the list, i.e. `matches[k % matches]`;
-/// random: any car of the list. Falls back to the player's car when nothing matches.
-pub fn pick_cars(rule: &OpponentCars, player: &catalog::Car, list: &[catalog::Car], n: usize, rng: &mut Rng) -> Vec<String> {
+/// Opponent cars (catalogue ids) by the menu's rule. Same era / class / both: retail draws `k`
+/// over the whole list and takes the `k`-th match counting round the list, i.e.
+/// `matches[k % matches]`; random: any car of the list. Falls back to the player's car when
+/// nothing matches.
+pub fn pick_cars(rule: &OpponentCars, player: &catalog::Car, list: &[catalog::Car], n: usize, rng: &mut Rng) -> Vec<u16> {
     let matches: Vec<&catalog::Car> = list
         .iter()
         .filter(|c| match rule {
@@ -364,28 +368,19 @@ pub fn pick_cars(rule: &OpponentCars, player: &catalog::Car, list: &[catalog::Ca
         .collect();
     (0..n)
         .map(|_| match rule {
-            OpponentCars::SameCar => player.model.clone(),
-            OpponentCars::Car { model, .. } => model.clone(),
-            _ if matches.is_empty() => player.model.clone(),
-            OpponentCars::Random => matches[rng.below(matches.len())].model.clone(),
-            _ => matches[rng.below(list.len().max(1)) % matches.len()].model.clone(),
+            OpponentCars::SameCar => player.id,
+            OpponentCars::Car { id, .. } => *id,
+            _ if matches.is_empty() => player.id,
+            OpponentCars::Random => matches[rng.below(matches.len())].id,
+            _ => matches[rng.below(list.len().max(1)) % matches.len()].id,
         })
         .collect()
 }
 
-/// The `.ais` file (stem) for a car model, from the stems present: the model's own name, then
-/// the name without a leading `f` / `cop` and a trailing `_1`, then the shortest stem starting
-/// with that name (`930` -> `930t`), then the longest stem the name starts with, else `default` (our mapping; retail names the file from the car's sim record).
-pub fn ais_for_model(model: &str, stems: &[String]) -> String {
-    let m = model.to_ascii_lowercase();
-    let find = |name: &str| stems.iter().find(|s| s.to_ascii_lowercase() == name).cloned();
-    let trimmed = m.trim_start_matches("cop").trim_end_matches("_german").trim_end_matches("_1");
-    let trimmed = if trimmed.len() > 3 && trimmed.starts_with('f') { &trimmed[1..] } else { trimmed };
-    find(&m)
-        .or_else(|| find(trimmed))
-        .or_else(|| stems.iter().filter(|s| s.to_ascii_lowercase().starts_with(trimmed)).min_by_key(|s| s.len()).cloned())
-        .or_else(|| stems.iter().filter(|s| trimmed.starts_with(&s.to_ascii_lowercase()) && s.to_ascii_lowercase() != "default").max_by_key(|s| s.len()).cloned())
-        .unwrap_or_else(|| "default".to_string())
+/// The `.ais` file stem for a car's AI-data name (`nfs5.car`, e.g. `993T`): the file of that
+/// name in any letter case, else `default`, as retail falls back to `default.ais`.
+pub fn ais_stem(ai_name: &str, stems: &[String]) -> String {
+    stems.iter().find(|s| !ai_name.is_empty() && s.eq_ignore_ascii_case(ai_name)).cloned().unwrap_or_else(|| "default".to_string())
 }
 
 /// The retail drivers (`FEData/Data/nfs5.per`) and their names by string id
@@ -397,9 +392,9 @@ pub fn load_drivers(game: &Path) -> (Vec<Driver>, std::collections::BTreeMap<u16
     (drivers, names)
 }
 
-/// The `.ais` tables for a car model (`GameData/Simulation/AICarData`, see `ais_for_model`), with
-/// the file stem used.
-pub fn load_ais(game: &Path, model: &str) -> Option<(AiSpec, String)> {
+/// The `.ais` tables for a car's AI-data name (`GameData/Simulation/AICarData`, see `ais_stem`),
+/// with the file stem used.
+pub fn load_ais(game: &Path, ai_name: &str) -> Option<(AiSpec, String)> {
     let dir = game.join("GameData").join("Simulation").join("AICarData");
     let files: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
         .ok()?
@@ -409,7 +404,7 @@ pub fn load_ais(game: &Path, model: &str) -> Option<(AiSpec, String)> {
         .filter_map(|p| Some((p.file_stem()?.to_string_lossy().to_string(), p)))
         .collect();
     let stems: Vec<String> = files.iter().map(|f| f.0.clone()).collect();
-    let stem = ais_for_model(model, &stems);
+    let stem = ais_stem(ai_name, &stems);
     let path = &files.iter().find(|f| f.0.eq_ignore_ascii_case(&stem))?.1;
     Some((aidata::parse_ais(&std::fs::read(path).ok()?)?, stem))
 }
@@ -591,33 +586,27 @@ mod tests {
 
     #[test]
     fn cars_follow_the_rule() {
-        let car = |model: &str, era: u32, class: u32| catalog::Car { model: model.into(), era, class, ..Default::default() };
-        let list = vec![car("356_1", 521, 503), car("550", 521, 501), car("911", 522, 503), car("993", 523, 501), car("gt1", 523, 501)];
-        let player = car("356_1", 521, 503);
+        let car = |id: u16, era: u32, class: u32| catalog::Car { id, era, class, ..Default::default() };
+        let list = vec![car(1, 521, 503), car(2, 521, 501), car(3, 522, 503), car(4, 523, 501), car(5, 523, 501)];
+        let player = car(1, 521, 503);
         let mut rng = Rng::new(5);
-        assert!(pick_cars(&OpponentCars::SameCar, &player, &list, 4, &mut rng).iter().all(|m| m == "356_1"));
-        assert!(pick_cars(&OpponentCars::SameEra, &player, &list, 20, &mut rng).iter().all(|m| m == "356_1" || m == "550"));
-        assert!(pick_cars(&OpponentCars::SameClass, &player, &list, 20, &mut rng).iter().all(|m| m == "356_1" || m == "911"));
-        assert!(pick_cars(&OpponentCars::SameEraAndClass, &player, &list, 5, &mut rng).iter().all(|m| m == "356_1"));
+        assert!(pick_cars(&OpponentCars::SameCar, &player, &list, 4, &mut rng).iter().all(|&c| c == 1));
+        assert!(pick_cars(&OpponentCars::SameEra, &player, &list, 20, &mut rng).iter().all(|&c| c == 1 || c == 2));
+        assert!(pick_cars(&OpponentCars::SameClass, &player, &list, 20, &mut rng).iter().all(|&c| c == 1 || c == 3));
+        assert!(pick_cars(&OpponentCars::SameEraAndClass, &player, &list, 5, &mut rng).iter().all(|&c| c == 1));
         let any = pick_cars(&OpponentCars::Random, &player, &list, 50, &mut rng);
-        assert!(any.iter().any(|m| m == "gt1") && any.iter().any(|m| m == "550"));
-        let one = OpponentCars::Car { id: 9, model: "993".into() };
-        assert_eq!(pick_cars(&one, &player, &list, 2, &mut rng), vec!["993", "993"]);
+        assert!(any.contains(&5) && any.contains(&2));
+        let one = OpponentCars::Car { id: 4, model: "993".into() };
+        assert_eq!(pick_cars(&one, &player, &list, 2, &mut rng), vec![4, 4]);
     }
 
     #[test]
-    fn model_names_map_to_ais_files() {
-        let stems: Vec<String> = ["356", "356A", "356B", "550a", "901", "930t", "993", "993t", "Gt1", "boxster", "default"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(ais_for_model("993", &stems), "993");
-        assert_eq!(ais_for_model("356_1", &stems), "356");
-        assert_eq!(ais_for_model("356a", &stems), "356A");
-        assert_eq!(ais_for_model("550", &stems), "550a");
-        assert_eq!(ais_for_model("f901", &stems), "901");
-        assert_eq!(ais_for_model("fboxster", &stems), "boxster");
-        assert_eq!(ais_for_model("cop993", &stems), "993");
-        assert_eq!(ais_for_model("930", &stems), "930t");
-        assert_eq!(ais_for_model("993", &stems), "993", "exact name before 993t");
-        assert_eq!(ais_for_model("gt1", &stems), "Gt1");
-        assert_eq!(ais_for_model("eas1", &stems), "default");
+    fn ai_names_pick_ais_files() {
+        let stems: Vec<String> = ["356", "993", "993t", "Gt1", "default"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(ais_stem("993T", &stems), "993t");
+        assert_eq!(ais_stem("993", &stems), "993");
+        assert_eq!(ais_stem("GT1", &stems), "Gt1");
+        assert_eq!(ais_stem("", &stems), "default", "traffic cars have no AI name");
+        assert_eq!(ais_stem("550A", &stems), "default", "missing file");
     }
 }

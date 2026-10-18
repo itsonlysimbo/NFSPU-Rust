@@ -2,6 +2,8 @@
 
 pub mod ai;
 pub mod car;
+pub mod car_load;
+pub mod car_sim;
 pub mod car_model;
 pub mod collision;
 pub mod ground;
