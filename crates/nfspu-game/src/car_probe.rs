@@ -23,6 +23,8 @@ pub struct CarProbe {
     frames: u32,
     loaded: bool,
     waiting: bool,
+    /// Seconds spent on the current view.
+    elapsed: f32,
 }
 
 impl CarProbe {
@@ -44,6 +46,7 @@ impl CarProbe {
 
 #[allow(clippy::too_many_arguments)]
 pub fn update(
+    time: Res<Time>,
     mut probe: ResMut<CarProbe>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -79,6 +82,7 @@ pub fn update(
         holder.style_count = count;
         probe.loaded = true;
         probe.frames = 0;
+        probe.elapsed = 0.0;
         return;
     }
     let (view_name, mode, [yaw, pitch, radius]) = VIEWS[probe.view];
@@ -89,9 +93,11 @@ pub fn update(
         orbit.radius = radius;
     }
     probe.frames += 1;
-    // the very first capture waits longer: the track and window are still settling
+    // the very first capture waits longer: the track and window are still settling; the chase view
+    // also needs its camera to swing in from straight behind (about a second, `chase_cam`)
+    probe.elapsed += time.delta_secs();
     let wait = if probe.car == 0 && probe.view == 0 { 150 } else { 40 };
-    if probe.frames < wait {
+    if probe.frames < wait || (mode == 0 && probe.elapsed < 1.5) {
         return;
     }
     let safe: String = car.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
@@ -102,6 +108,7 @@ pub fn update(
         super::log_line(&format!("car probe: {} -> {:?}", path.display(), result));
         probe.waiting = false;
         probe.frames = 0;
+        probe.elapsed = 0.0;
         probe.view += 1;
         if probe.view >= VIEWS.len() {
             probe.view = 0;

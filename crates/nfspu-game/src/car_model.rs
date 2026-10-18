@@ -3,8 +3,8 @@
 //! Each triangle is sorted into a piece by its material kind (paint, trim, glass, cabin, ...) and
 //! carries the texture page its material names; the pages are assembled from the archives embedded
 //! in the car file and the shared files next to it, as the car's `.tpg` lays them out (see
-//! `docs/provenance/car.md`). The body style picks which variant of each piece is used; decals and
-//! shadow quads are left out. Units are metres, the car faces -Z and its origin is at ground level.
+//! `docs/provenance/car.md`). The body style picks which variant of each piece is used; the wheel
+//! shadow quads are a piece of their own. Units are metres, the car faces -Z and its origin is at ground level.
 
 use crate::MIRROR_X;
 use nfspu_formats::{crp, refpack, shpi};
@@ -80,6 +80,8 @@ pub struct CarModel {
     /// The driver's body (suit) and head, from the `LODDriver` article of the chosen driver type.
     pub driver_suit: Piece,
     pub driver_head: Piece,
+    /// The wheel shadow quads (see `is_shadow_name`): upright, on the wheels' outer faces.
+    pub shadow: Piece,
     pub wheels: Vec<Wheel>,
     /// Page for body paint pieces (embedded archive 0, "exterior"); 256 x 256 on the 993.
     pub exterior: Option<Page>,
@@ -112,11 +114,13 @@ pub struct CarModel {
     /// (x: pitch, positive looks down; y: yaw), from the `.tpg` for the chosen style.
     pub driver_eye: [f32; 3],
     pub driver_rot: [f32; 3],
+    /// Height of the engine's car centre above the ground: half the model's height, wheels included.
+    pub centre_height: f32,
 }
 
 impl CarModel {
     pub fn triangles(&self) -> usize {
-        let body = (self.paint.positions.len() + self.trim.positions.len() + self.glass.positions.len() + self.interior.positions.len() + self.cabrio_glass.positions.len() + self.trim_solid.positions.len() + self.paint_inner.positions.len() + self.headlights.positions.len() + self.taillights.positions.len() + self.driver_suit.positions.len() + self.driver_head.positions.len()) / 3;
+        let body = (self.paint.positions.len() + self.trim.positions.len() + self.glass.positions.len() + self.interior.positions.len() + self.cabrio_glass.positions.len() + self.trim_solid.positions.len() + self.paint_inner.positions.len() + self.headlights.positions.len() + self.taillights.positions.len() + self.driver_suit.positions.len() + self.driver_head.positions.len() + self.shadow.positions.len()) / 3;
         body + self.wheels.iter().map(|w| w.piece.positions.len() / 3).sum::<usize>()
     }
 }
@@ -150,11 +154,17 @@ fn lamp_end(article: &str, finish: Finish, interior_pass: bool, tri: &[[f32; 3]]
     Some(z < 0.0)
 }
 
-/// Names of articles that are never drawn: the wheel shadow quads and the passenger. Decals (badges,
-/// gauge faces), needles, the fuel cap and the aerial are drawn: the body style picks their type and
-/// the tile rules leave a decal's artwork out (transparent) when the style does not use it.
+/// Names of articles that are never drawn: the passenger. Decals (badges, gauge faces), needles,
+/// the fuel cap and the aerial are drawn: the body style picks their type and the tile rules leave a
+/// decal's artwork out (transparent) when the style does not use it.
 fn is_skipped_name(name: &str) -> bool {
-    ["WheelShadow", "Passenger"].iter().any(|p| name.starts_with(p))
+    name.starts_with("Passenger")
+}
+
+/// The wheel shadow quads (`WheelShadowFront`, `WheelShadowRear`): one upright, wheel-sized square
+/// just outside each wheel, whose shared shadow page darkens the top of the tyre under the arch.
+fn is_shadow_name(name: &str) -> bool {
+    name.starts_with("WheelShadow")
 }
 
 /// Cabin pieces that are never drawn: interior glass overlays (the windows are drawn from the
@@ -760,6 +770,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         taillights: Piece::default(),
         driver_suit: Piece::default(),
         driver_head: Piece::default(),
+        shadow: Piece::default(),
         wheels: Vec::new(),
         exterior: None,
         interior_page: None,
@@ -777,6 +788,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         page_source: Vec::new(),
         driver_eye: [0.0; 3],
         driver_rot: [0.0; 3],
+        centre_height: 0.0,
     };
     // The car's .tpg text file lists its texture pages, the files that fill them (most embedded
     // in the car file), the body styles and which tiles each style draws.
@@ -843,9 +855,10 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
             if driver == 0 || base.geometry != 9 || (!traffic && base.type_index != driver) {
                 continue;
             }
-        } else if base.type_index as u32 != style.geometry_type(base.geometry as u32) || is_skipped_name(&article_name) || (interior_pass && is_hidden_in_cabin(&article_name)) {
+        } else if base.type_index as u32 != style.geometry_type(base.geometry as u32) || is_skipped_name(&article_name) || (interior_pass && (is_hidden_in_cabin(&article_name) || is_shadow_name(&article_name))) {
             continue;
         }
+        let is_shadow = is_shadow_name(&article_name);
         let Some(mesh) = crp.article_mesh(a, lvl) else { continue };
         let matrix = crp.article_transform(a, lvl);
         // WheelFront / WheelRear are the wheels; WheelWell (the arch liner) is ordinary body trim
@@ -859,7 +872,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
             // the shiny dash top (356) has a body-paint kind but its artwork is on the cabin page
             let finish = if article_name.starts_with("ShinyDash") { Finish::Interior } else { finish };
             // the interior pass keeps only cabin triangles, the exterior pass leaves them out
-            if !is_driver && (finish == Finish::Interior) != interior_pass {
+            if !is_driver && !is_shadow && (finish == Finish::Interior) != interior_pass {
                 continue;
             }
             // a batch whose UVs span less than 2 texels of the 128-px trim page samples one solid
@@ -905,6 +918,8 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                 // material instead.
                 let target = if is_wheel {
                     &mut wheel_piece
+                } else if is_shadow {
+                    &mut model.shadow
                 } else if !interior_pass && !is_driver && finish == Finish::Paint && n[1] < -0.25 {
                     &mut model.paint_inner
                 } else if is_driver {
@@ -944,7 +959,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                     target.materials.push(b.material);
                     target.articles.push(a as u16);
                     target.pages.push(page as u8);
-                    if !is_wheel && !interior_pass && !is_driver {
+                    if !is_wheel && !interior_pass && !is_driver && !is_shadow {
                         for k in 0..3 {
                             lo[k] = lo[k].min(p[k]);
                             hi[k] = hi[k].max(p[k]);
@@ -983,13 +998,202 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
     }
     model.size = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
     // the engine's car centre is half the model's height (wheels included, so from the ground) up
-    model.driver_eye = driver_eye(campos, (hi[1] - lo[1].min(0.0)) / 2.0);
+    model.centre_height = (hi[1] - lo[1].min(0.0)) / 2.0;
+    model.driver_eye = driver_eye(campos, model.centre_height);
     Ok(model)
+}
+
+/// A soft ground shadow for a car: an alpha mask over a square of the ground plane (model space,
+/// x and z), drawn as one blended quad under the car. Our own stand-in for the engine's projected
+/// shadow texture (see `docs/provenance/car.md`, "Ground shadow").
+#[derive(Clone, Debug)]
+pub struct GroundShadow {
+    /// Corner of the square with the smallest x and z, and the one with the largest.
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+    /// Mask resolution (square) and one alpha value per texel, row by row from `min` in z.
+    pub size: u32,
+    pub alpha: Vec<u8>,
+}
+
+/// Texels across the shadow mask.
+const SHADOW_SIZE: usize = 64;
+/// Ground left around the car's outline inside the mask (metres), room for the soft edge.
+const SHADOW_MARGIN: f32 = 0.45;
+/// Darkest alpha of the shadow (0-255), as a blend on screen values.
+const SHADOW_ALPHA: f32 = 150.0;
+/// The outline is grown by this many texels before blurring, so the soft edge shows round the car.
+const SHADOW_GROW: usize = 2;
+/// Box blur radius in texels and number of passes (three passes look close to a Gaussian).
+const SHADOW_BLUR: usize = 2;
+const SHADOW_PASSES: usize = 3;
+
+impl CarModel {
+    /// The car's outline seen from straight above, softened: every body, glass and wheel triangle
+    /// is filled into the mask, which is then grown a little and blurred.
+    pub fn ground_shadow(&self) -> Option<GroundShadow> {
+        let mut tris: Vec<[[f32; 2]; 3]> = Vec::new();
+        for piece in [&self.paint, &self.paint_inner, &self.trim, &self.trim_solid, &self.glass, &self.cabrio_glass, &self.headlights, &self.taillights] {
+            for t in piece.positions.chunks_exact(3) {
+                tris.push([[t[0][0], t[0][2]], [t[1][0], t[1][2]], [t[2][0], t[2][2]]]);
+            }
+        }
+        for w in &self.wheels {
+            for t in w.piece.positions.chunks_exact(3) {
+                let at = |p: [f32; 3]| [p[0] + w.offset[0], p[2] + w.offset[2]];
+                tris.push([at(t[0]), at(t[1]), at(t[2])]);
+            }
+        }
+        if tris.is_empty() {
+            return None;
+        }
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for p in tris.iter().flatten() {
+            for k in 0..2 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        // a square mask (texels the same size both ways) centred on the outline
+        let half = (hi[0] - lo[0]).max(hi[1] - lo[1]) / 2.0 + SHADOW_MARGIN;
+        let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+        let min = [centre[0] - half, centre[1] - half];
+        let n = SHADOW_SIZE;
+        let texel = 2.0 * half / n as f32;
+        let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+        let mut cover = vec![0.0f32; n * n];
+        for t in &tris {
+            let px = t.map(|p| [(p[0] - min[0]) / texel, (p[1] - min[1]) / texel]);
+            let area = edge(px[0], px[1], px[2]);
+            if area.abs() < 1e-6 {
+                continue;
+            }
+            let (mut x0, mut x1, mut y0, mut y1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+            for p in &px {
+                x0 = x0.min(p[0]);
+                x1 = x1.max(p[0]);
+                y0 = y0.min(p[1]);
+                y1 = y1.max(p[1]);
+            }
+            let (x0, y0) = (x0.floor().max(0.0) as usize, y0.floor().max(0.0) as usize);
+            let (x1, y1) = ((x1.ceil().max(0.0) as usize).min(n - 1), (y1.ceil().max(0.0) as usize).min(n - 1));
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let c = [x as f32 + 0.5, y as f32 + 0.5];
+                    // either winding: the centre is inside when all three edges agree with the area's sign
+                    if edge(px[1], px[2], c) * area >= 0.0 && edge(px[2], px[0], c) * area >= 0.0 && edge(px[0], px[1], c) * area >= 0.0 {
+                        cover[y * n + x] = 1.0;
+                    }
+                }
+            }
+        }
+        cover = grow(&cover, n, SHADOW_GROW);
+        for _ in 0..SHADOW_PASSES {
+            cover = box_blur(&cover, n, SHADOW_BLUR);
+        }
+        let alpha = cover.iter().map(|c| (c * SHADOW_ALPHA).round() as u8).collect();
+        Some(GroundShadow { min, max: [centre[0] + half, centre[1] + half], size: n as u32, alpha })
+    }
+}
+
+/// Each texel takes the largest value within `r` texels (a square neighbourhood).
+fn grow(src: &[f32], n: usize, r: usize) -> Vec<f32> {
+    let mut out = vec![0.0; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            let mut m = 0.0f32;
+            for j in y.saturating_sub(r)..=(y + r).min(n - 1) {
+                for i in x.saturating_sub(r)..=(x + r).min(n - 1) {
+                    m = m.max(src[j * n + i]);
+                }
+            }
+            out[y * n + x] = m;
+        }
+    }
+    out
+}
+
+/// One horizontal and one vertical box blur of an `n` x `n` grid (outside the grid counts as 0).
+fn box_blur(src: &[f32], n: usize, r: usize) -> Vec<f32> {
+    let w = (2 * r + 1) as f32;
+    let mut tmp = vec![0.0; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            tmp[y * n + x] = (x.saturating_sub(r)..=(x + r).min(n - 1)).map(|i| src[y * n + i]).sum::<f32>() / w;
+        }
+    }
+    let mut out = vec![0.0; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            out[y * n + x] = (y.saturating_sub(r)..=(y + r).min(n - 1)).map(|j| tmp[j * n + x]).sum::<f32>() / w;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ground_shadow_covers_the_outline_softly() {
+        let mut paint = Piece::default();
+        // a 2 m x 4 m rectangle, as two triangles of opposite windings
+        for p in [[-1.0, 0.5, -2.0], [1.0, 0.5, -2.0], [1.0, 0.5, 2.0], [-1.0, 0.5, -2.0], [-1.0, 0.5, 2.0], [1.0, 0.5, 2.0]] {
+            paint.positions.push(p);
+        }
+        let model = CarModel { paint, ..empty_model() };
+        let s = model.ground_shadow().unwrap();
+        let n = s.size as usize;
+        let at = |x: f32, z: f32| {
+            let i = ((x - s.min[0]) / (s.max[0] - s.min[0]) * n as f32) as usize;
+            let j = ((z - s.min[1]) / (s.max[1] - s.min[1]) * n as f32) as usize;
+            s.alpha[j * n + i]
+        };
+        assert_eq!(at(0.0, 0.0), SHADOW_ALPHA as u8, "full under the middle");
+        assert_eq!(at(2.4, 0.0), 0, "nothing well outside");
+        // grown by two texels, so still dark at the outline and soft further out
+        assert!(at(1.0, 0.0) > 100, "dark at the outline: {}", at(1.0, 0.0));
+        assert!(at(1.3, 0.0) > 10 && at(1.3, 0.0) < 100, "soft outside it: {}", at(1.3, 0.0));
+        assert!((s.max[1] - s.min[1] - (4.0 + 2.0 * SHADOW_MARGIN)).abs() < 1e-4);
+    }
+
+    fn empty_model() -> CarModel {
+        CarModel {
+            name: String::new(),
+            paint: Piece::default(),
+            trim: Piece::default(),
+            glass: Piece::default(),
+            interior: Piece::default(),
+            cabrio_glass: Piece::default(),
+            trim_solid: Piece::default(),
+            paint_inner: Piece::default(),
+            interior_outside: Piece::default(),
+            headlights: Piece::default(),
+            taillights: Piece::default(),
+            driver_suit: Piece::default(),
+            driver_head: Piece::default(),
+            shadow: Piece::default(),
+            wheels: Vec::new(),
+            exterior: None,
+            interior_page: None,
+            extint: None,
+            glass_page: None,
+            cabrio_page: None,
+            suit_page: None,
+            head_page: None,
+            size: [0.0; 3],
+            articles_used: 0,
+            article_names: Vec::new(),
+            style_name: String::new(),
+            style_count: 0,
+            pages: Vec::new(),
+            page_source: Vec::new(),
+            driver_eye: [0.0; 3],
+            driver_rot: [0.0; 3],
+            centre_height: 0.0,
+        }
+    }
 
     #[test]
     fn material_kinds_map_to_finishes() {
@@ -1180,7 +1384,8 @@ width=8
     fn skipped_names() {
         assert!(!is_skipped_name("DecalHood"));
         assert!(!is_skipped_name("DecalGauge"));
-        assert!(is_skipped_name("WheelShadowFront"));
+        assert!(!is_skipped_name("WheelShadowFront"));
+        assert!(is_shadow_name("WheelShadowFront") && is_shadow_name("WheelShadowRear") && !is_shadow_name("WheelFront"));
         assert!(is_skipped_name("Passenger"));
         assert!(!is_skipped_name("LODDriver3")); // drivers are picked by their own type, not skipped
         assert!(!is_skipped_name("Body"));
