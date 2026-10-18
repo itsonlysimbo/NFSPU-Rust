@@ -26,6 +26,11 @@ pub struct Car {
     pub short: String,
     /// Model file stem in `GameData/CarModel`, `356_1` (at 0x7f).
     pub model: String,
+    /// Simulation file stem in `GameData/Simulation/CarData`, `356cabrio11` (at 0xb1).
+    pub sim: String,
+    /// AI-data name (`GameData/Simulation/AICarData/<name>.ais`), `356` (at 0x115); the physics
+    /// keys a few per-car rules on it (`car_sim::SpecOptions::for_car`).
+    pub ai_name: String,
     /// Logo archive in `FEData/Art`, `finallogos2` (at 0x147).
     pub logo_file: String,
     /// Logo entry in that archive (`u16` at 0x1f6).
@@ -68,6 +73,8 @@ impl Car {
             name: text(&r[2..0x34]),
             short: text(&r[0x34..0x4d]),
             model: text(&r[0x7f..0xb1]),
+            sim: text(&r[0xb1..0xe3]),
+            ai_name: text(&r[0x115..0x147]),
             logo_file: text(&r[0x147..0x179]),
             logo_index: u16_at(r, 0x1f6),
             class: u32_at(r, 0x1ac),

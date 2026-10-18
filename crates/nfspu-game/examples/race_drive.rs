@@ -3,6 +3,7 @@
 //! Checks that the countdown holds the car, laps are counted and the race finishes.
 //! Run: `cargo run -p nfspu-game --example race_drive --release -- monaco1 forward 2`
 //! (track, forward|backward, laps; with no track it runs every track once). Log: logs/race_drive.txt
+//! `RACE_DRIVE_CAR=<catalogue id>` drives that retail car (default: the made-up `Spec::generic`).
 
 use nfspu_game::car::{Car, Input};
 use nfspu_game::collision::WallSet;
@@ -26,7 +27,16 @@ fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
     let walls = WallSet::new(g.walls, 4.0);
     let p = &t.path;
     let spot = grid_spot(p, t.start_slice, 0, 1, dir);
-    let mut car = Car::new(spot.pos + bevy::math::Vec3::Y, spot.yaw);
+    // RACE_DRIVE_CAR=<catalogue id> drives a retail car's .sim physics instead of the made-up one
+    let mut car = match std::env::var("RACE_DRIVE_CAR").ok().and_then(|v| v.parse::<u16>().ok()) {
+        Some(id) => {
+            let game = std::path::PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
+            let l = nfspu_game::car_load::load(&game, nfspu_game::car_load::Pick::Id(id), false).expect("car spec");
+            let _ = writeln!(out, "   car: {}", l.note);
+            Car::with_spec(spot.pos + bevy::math::Vec3::Y, spot.yaw, l.spec, Default::default())
+        }
+        None => Car::new(spot.pos + bevy::math::Vec3::Y, spot.yaw),
+    };
     let kind = if t.point_to_point() { Kind::PointToPoint } else { Kind::Circuit };
     let mut slice = spot.slice;
     let mut r = Race::new(RaceSetup { kind, laps, cars: 1 }, &[p.fraction(slice, dir)]);
@@ -54,17 +64,29 @@ fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
             let to = route_target - car.pos;
             let diff = wrap((-to.x).atan2(-to.z) - car.yaw);
             let want = if diff.abs() > 0.5 { 10.0 } else { 22.0 };
+            // with the retail model the driver damps its steering with the yaw rate and lifts
+            // while sliding, or full lock plus full throttle spins a rear-drive car
+            let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
+            let steer = (diff * 2.5 - 0.25 * car.sim.yaw_rate).clamp(-1.0, 1.0);
             if backing > 0.0 {
                 backing -= dt;
                 Input { brake: true, steer: -(diff * 2.5).clamp(-1.0, 1.0), ..Default::default() }
             } else {
-                Input { throttle: car.speed < want, brake: car.speed > want + 5.0, steer: (diff * 2.5).clamp(-1.0, 1.0), ..Default::default() }
+                Input { throttle: car.speed < want && !sliding, brake: car.speed > want + 5.0, steer, ..Default::default() }
             }
         };
+        car.sim.held = r.held(); // on the grid the brake is held on until GO (retail)
         car.step(input, dt, &ground, &walls);
         if r.held() {
             let d = car.pos - start_pos;
             moved_before_go = moved_before_go.max((d.x * d.x + d.z * d.z).sqrt());
+        }
+        if let Some((a, b)) = std::env::var("RACE_DRIVE_WINDOW").ok().and_then(|w| { let (a, b) = w.split_once('-')?; Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?)) }) {
+            if r.tick >= a && r.tick <= b && r.tick % 4 == 0 {
+                let _ = writeln!(out, "      w {:>5} pos ({:.1},{:.1},{:.1}) yaw {:.2} rate {:.2} v_f {:.1} v_r {:.1} gear {} rpm {:.0} in t{} b{} s{:.2} wall {} imp {:.1} ground {} pitch {:.2} roll {:.2}",
+                    r.tick, car.pos.x, car.pos.y, car.pos.z, car.yaw, car.sim.yaw_rate, car.speed, car.sim.lateral_speed(car.yaw), car.gear(), car.rpm(),
+                    input.throttle as u8, input.brake as u8, input.steer, car.hit_wall as u8, car.impact, car.on_ground as u8, car.pitch, car.roll);
+            }
         }
         if debug && ((r.tick % 64 == 0 && r.tick <= 64 * 120) || r.tick % 640 == 0) {
             let _ = writeln!(out, "      t {:>5} slice {slice:>5} seg {:>3} frac {:.3} pos ({:.0},{:.0},{:.0}) yaw {:.2} speed {:.1}",
@@ -87,7 +109,7 @@ fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
         }
         let prog = r.cars[0].progress;
         if prog > best_progress + 0.002 || r.held() { best_progress = best_progress.max(prog); last_gain = r.tick; }
-        if !r.held() && r.tick - last_gain > 64 * 6 && backing <= 0.0 { backing = 2.0; last_gain = r.tick; }
+        if !r.held() && r.tick - last_gain > 64 * 10 && backing <= 0.0 { backing = 3.0; last_gain = r.tick; }
         if r.race_ticks() > 64 * 60 * 25 { stuck = true; break; }
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; final progress {:.3}; {}",
