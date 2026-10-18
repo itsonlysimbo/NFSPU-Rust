@@ -6,6 +6,7 @@ pub mod car_load;
 pub mod car_sim;
 pub mod car_model;
 pub mod collision;
+pub mod garage;
 pub mod ground;
 pub mod catalog;
 pub mod hud;
