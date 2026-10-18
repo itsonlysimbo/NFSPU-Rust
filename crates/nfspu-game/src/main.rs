@@ -21,7 +21,9 @@ use nfspu_formats::{crp, refpack, shpi};
 use nfspu_game::car::{Car, Input as CarInput, RIDE_HEIGHT};
 use nfspu_game::car_model::{self, CarOptions, Page, Piece};
 use nfspu_game::collision::WallSet;
+use nfspu_game::chase_cam::{self, CarFrame, ChaseCam, ChaseView};
 use nfspu_game::ground::Ground;
+use nfspu_game::race_path::{self, Direction, RoadPath};
 use nfspu_game::{refbuild, sky, track};
 use nfspu_game::MIRROR_X;
 mod car_probe;
@@ -1125,7 +1127,10 @@ fn spawn_car_model(
         "car '{}' style '{}': {} parts, {} triangles, {} wheels, size {:.2} x {:.2} x {:.2} m (width x height x length), {} texture pages, eye {:?} turn {:?}",
         m.name, m.style_name, m.articles_used, m.triangles(), m.wheels.len(), m.size[0], m.size[1], m.size[2], m.pages.iter().flatten().count(), m.driver_eye, m.driver_rot
     ));
-    commands.entity(model).insert(CockpitView { eye: Vec3::from(m.driver_eye), pitch: m.driver_rot[0].to_radians(), yaw: m.driver_rot[1].to_radians() });
+    commands.entity(model).insert((
+        CockpitView { eye: Vec3::from(m.driver_eye), pitch: m.driver_rot[0].to_radians(), yaw: m.driver_rot[1].to_radians() },
+        CarBounds { centre_height: m.centre_height, half_length: m.size[2] / 2.0 },
+    ));
     let mut looks = CarLooks::new(&m, images);
     // Faces are drawn one-sided, as the engine does: the cabin, interior glass and the inner faces of
     // the shell are separate parts that face inwards. Glass blends; the arch liners sample a texel
@@ -1174,6 +1179,18 @@ fn spawn_car_model(
             commands.entity(model).add_child(e);
         }
     }
+    // the wheel shadow quads: upright squares outside the wheels, blended from the shared 4444
+    // shadow page, darken the tops of the tyres under the arches
+    for (page, part) in by_page(&m.shadow) {
+        let mat = looks.material(page, Look::Shadow, materials);
+        let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default())).id();
+        commands.entity(model).add_child(e);
+    }
+    // the ground shadow: the car's softened outline on a quad just above the road
+    if let Some(g) = m.ground_shadow() {
+        let e = commands.spawn((Mesh3d(meshes.add(ground_shadow_mesh(&g))), MeshMaterial3d(ground_shadow_material(&g, images, materials)), Transform::default())).id();
+        commands.entity(model).add_child(e);
+    }
     for w in &m.wheels {
         let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0 })).id();
         commands.entity(model).add_child(wheel);
@@ -1193,6 +1210,55 @@ enum Look {
     Cut,
     Solid,
     Glass,
+    /// The wheel shadow quads: blended by their page's alpha and seen from either side.
+    Shadow,
+}
+
+/// How far (metres) the ground shadow is raised so it draws over the road under the car.
+const SHADOW_LIFT: f32 = 0.05;
+
+/// The alpha that darkens a pixel as much as `a` does when blending on screen values (as the
+/// engine's renderer did). Bevy blends linear light, where a black overlay of alpha `a` changes
+/// the screen value far less on a dark road, so the shadows are made stronger to match:
+/// screen value * (1 - a) is about linear * (1 - a)^2.2.
+fn screen_alpha(a: u8) -> u8 {
+    let keep = 1.0 - a as f32 / 255.0;
+    ((1.0 - keep.powf(2.2)) * 255.0).round() as u8
+}
+
+/// The ground shadow's quad in model space (the model's origin is on the ground).
+fn ground_shadow_mesh(g: &car_model::GroundShadow) -> Mesh {
+    let ([x0, z0], [x1, z1]) = (g.min, g.max);
+    let positions = vec![[x0, SHADOW_LIFT, z0], [x1, SHADOW_LIFT, z0], [x1, SHADOW_LIFT, z1], [x0, SHADOW_LIFT, z1]];
+    // the mask's rows run from `min` in z, its columns from `min` in x
+    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]));
+    mesh
+}
+
+/// Black with the mask as alpha, blended over the road and drawn in front of it.
+fn ground_shadow_material(g: &car_model::GroundShadow, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    let rgba: Vec<u8> = g.alpha.iter().flat_map(|&a| [0, 0, 0, screen_alpha(a)]).collect();
+    let mut image = Image::new(
+        Extent3d { width: g.size, height: g.size, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        rgba,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor { mag_filter: ImageFilterMode::Linear, min_filter: ImageFilterMode::Linear, ..default() });
+    materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(images.add(image)),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        depth_bias: 1000.0,
+        ..default()
+    })
 }
 
 impl Look {
@@ -1211,10 +1277,22 @@ struct CarLooks {
 impl CarLooks {
     fn new(m: &car_model::CarModel, images: &mut Assets<Image>) -> Self {
         let mut out: Vec<Option<(Handle<Image>, bool)>> = Vec::new();
+        // the wheel shadow quads' page is only used by them; it is blended, see `screen_alpha`
+        let shadow_pages: Vec<u8> = m.shadow.pages.clone();
         for (i, page) in m.pages.iter().enumerate() {
             // a page that shows another page's picture shares its image
             let shared = m.page_source.get(i).copied().flatten().and_then(|s| out.get(s).cloned().flatten());
-            out.push(shared.or_else(|| page.as_ref().map(|p| (images.add(page_image(p)), p.has_alpha))));
+            out.push(shared.or_else(|| {
+                page.as_ref().map(|p| {
+                    let mut image = page_image(p);
+                    if shadow_pages.contains(&(i as u8)) {
+                        if let Some(data) = image.data.as_mut() {
+                            data.chunks_exact_mut(4).for_each(|px| px[3] = screen_alpha(px[3]));
+                        }
+                    }
+                    (images.add(image), p.has_alpha)
+                })
+            }));
         }
         CarLooks { images: out, made: HashMap::new(), grey: None }
     }
@@ -1233,9 +1311,9 @@ impl CarLooks {
                     base_color_texture: Some(image),
                     unlit: true,
                     // the file's front faces are clockwise; mirroring x (MIRROR_X) turns them anticlockwise
-                    cull_mode: Some(if MIRROR_X < 0.0 { Face::Back } else { Face::Front }),
+                    cull_mode: if look == Look::Shadow { None } else { Some(if MIRROR_X < 0.0 { Face::Back } else { Face::Front }) },
                     alpha_mode: match look {
-                        Look::Glass => AlphaMode::Blend,
+                        Look::Glass | Look::Shadow => AlphaMode::Blend,
                         Look::Cut if has_alpha => AlphaMode::Mask(0.5),
                         _ => AlphaMode::Opaque,
                     },
@@ -1266,6 +1344,14 @@ fn by_page(piece: &Piece) -> Vec<(u8, Piece)> {
         }
     }
     out
+}
+
+/// Where the engine's car centre sits on the model (height above the ground) and half the model's
+/// length, for the chase camera.
+#[derive(Component, Clone, Copy)]
+struct CarBounds {
+    centre_height: f32,
+    half_length: f32,
 }
 
 /// The driver's eye and the in-car camera's turn for the car model under this entity.
@@ -1643,18 +1729,107 @@ fn driver_visibility(
     }
 }
 
+/// The chase camera's running state: the camera itself, frame time not yet run as a 64 Hz tick,
+/// the camera mode last frame and the road path used for the slope lift.
+#[derive(Default)]
+struct ChaseState {
+    cam: ChaseCam,
+    pending: f32,
+    last_mode: Option<u8>,
+    path_track: Option<String>,
+    path: Option<RoadPath>,
+    slice: usize,
+}
+
+/// The view used for camera mode 0 (see `docs/provenance/car.md`, "Chase camera").
+const CHASE_VIEW: ChaseView = chase_cam::MEDIUM;
+
+#[allow(clippy::too_many_arguments)]
 fn chase_camera(
     time: Res<Time>,
     mode: Res<DriveMode>,
     cam_mode: Res<CamMode>,
     orbit: Res<Orbit>,
     car: Option<Res<CarRes>>,
+    track: Res<TrackName>,
+    ground: Option<Res<GroundRes>>,
     cockpit: Query<&CockpitView>,
+    bounds: Query<&CarBounds>,
+    mut state: Local<ChaseState>,
     mut cams: Query<&mut Transform, With<FlyCamera>>,
 ) {
-    let (true, Some(state)) = (mode.0, car) else { return };
-    let c = &state.car;
+    let (true, Some(car_state)) = (mode.0, car) else {
+        state.last_mode = None;
+        return;
+    };
+    let c = &car_state.car;
     let rot = Quat::from_euler(EulerRot::YXZ, c.yaw, c.pitch, c.roll);
+    let chase = cam_mode.0 == 0;
+    if chase {
+        let st = &mut *state;
+        // the road path, for the slope ahead; loaded once per track
+        if st.path_track.as_deref() != Some(track.0.as_str()) {
+            st.path_track = Some(track.0.clone());
+            st.path = match race_path::load(&track.0, Direction::Forward) {
+                Ok(t) => Some(t.path),
+                Err(e) => {
+                    log_line(&format!("chase camera: no road path for the slope ({e})"));
+                    None
+                }
+            };
+            st.slice = st.path.as_ref().map_or(0, |p| p.nearest(c.pos));
+        }
+        let b = bounds.iter().next().copied().unwrap_or(CarBounds { centre_height: 0.65, half_length: 2.2 });
+        let heading = c.heading();
+        let right = Vec3::new(-heading.z, 0.0, heading.x);
+        let vel = Vec3::new(c.sim.vel[0], 0.0, c.sim.vel[1]);
+        let slope = match &st.path {
+            Some(p) if !p.slices.is_empty() => {
+                st.slice = p.track(st.slice.min(p.slices.len() - 1), c.pos);
+                // ahead in the way the car points, whichever way that is along the road
+                let steps = if heading.dot(p.slices[st.slice].forward) >= 0.0 { chase_cam::SLOPE_SLICES } else { -chase_cam::SLOPE_SLICES };
+                let ahead = p.walk(st.slice, steps, Direction::Forward);
+                (p.slices[ahead].pos.y - p.slices[st.slice].pos.y) / chase_cam::SLOPE_SLICES as f32
+            }
+            _ => 0.0,
+        };
+        let frame = CarFrame {
+            centre: c.pos + rot * Vec3::Y * (b.centre_height - RIDE_HEIGHT),
+            rot,
+            half_length: b.half_length,
+            forward_speed: vel.dot(heading),
+            side_speed: vel.dot(right),
+            slope,
+        };
+        // a switch into the chase view (or a jump, e.g. a reset) starts it again from behind the car
+        let jumped = cams.iter().next().is_some_and(|t| t.translation.distance(frame.centre) > 40.0);
+        if st.last_mode != Some(0) || jumped {
+            st.cam = ChaseCam::start(&frame);
+            st.pending = 0.0;
+        }
+        st.pending += time.delta_secs();
+        let tick = 1.0 / chase_cam::TICK_HZ;
+        let mut ticks = 0;
+        while st.pending >= tick && ticks < 16 {
+            st.pending -= tick;
+            st.cam.tick(&CHASE_VIEW, &frame);
+            ticks += 1;
+        }
+        if ticks == 16 {
+            st.pending = 0.0;
+        }
+        let free = st.cam.eye(&frame, None);
+        let under = ground.as_ref().and_then(|g| g.0.height_at(free.x, free.z, free.y, 1.0));
+        let eye = st.cam.eye(&frame, under);
+        for mut t in &mut cams {
+            t.translation = eye;
+            t.look_at(ChaseCam::target(&frame), Vec3::Y);
+        }
+    }
+    state.last_mode = Some(cam_mode.0);
+    if chase {
+        return;
+    }
     for mut t in &mut cams {
         match cam_mode.0 {
             1 => {
@@ -1665,20 +1840,11 @@ fn chase_camera(
                 t.translation = c.pos + rot * (view.eye - Vec3::Y * RIDE_HEIGHT);
                 t.rotation = rot * Quat::from_euler(EulerRot::YXZ, -view.yaw, -view.pitch, 0.0);
             }
-            2 => {
+            _ => {
                 let target = c.pos + Vec3::Y * 0.6;
                 let r = Quat::from_euler(EulerRot::YXZ, c.yaw + orbit.yaw, -orbit.pitch, 0.0);
                 t.translation = target + r * Vec3::new(0.0, 0.0, orbit.radius);
                 t.look_at(target, Vec3::Y);
-            }
-            _ => {
-                let desired = c.pos - c.heading() * 8.5 + Vec3::Y * 3.4;
-                if t.translation.distance(desired) > 40.0 {
-                    t.translation = desired; // first frame or after a reset: jump instead of gliding
-                } else {
-                    t.translation = t.translation.lerp(desired, 1.0 - (-8.0 * time.delta_secs()).exp());
-                }
-                t.look_at(c.pos + Vec3::Y * 1.0, Vec3::Y);
             }
         }
     }
@@ -1703,9 +1869,9 @@ impl RetailFov {
     }
 }
 
-/// Gives the chase and cockpit cameras the patched build's field of view, recomputed when the
-/// window size or camera mode changes. The orbit and free-fly views keep the engine default, and
-/// with the flag off nothing changes at all.
+/// Gives the chase and cockpit cameras the engine's field of view (`chase_cam::engine_vertical_fov`),
+/// or with `NFSPU_RETAIL_FOV` set the patched build's, recomputed when the window size or camera
+/// mode changes. The orbit and free-fly views keep Bevy's default.
 fn retail_fov(
     enabled: Res<RetailFov>,
     drive: Res<DriveMode>,
@@ -1717,9 +1883,16 @@ fn retail_fov(
     let Ok(window) = windows.single() else { return };
     let (w, h) = (window.physical_width(), window.physical_height());
     let view = refbuild::VirtualScreen::for_client(w, h);
-    // only the driving cameras (chase 0, cockpit 1) follow the reference build
-    let apply = enabled.0 && drive.0 && cam_mode.0 < 2;
-    let want = if apply { view.fov_degrees.to_radians() } else { PerspectiveProjection::default().fov };
+    // only the driving cameras (chase 0, cockpit 1) take the engine's (or the reference build's) view
+    let driving = drive.0 && cam_mode.0 < 2;
+    let apply = enabled.0 && driving;
+    let want = if apply {
+        view.fov_degrees.to_radians()
+    } else if driving {
+        chase_cam::engine_vertical_fov(w.max(1) as f32 / h.max(1) as f32)
+    } else {
+        PerspectiveProjection::default().fov
+    };
     for mut projection in &mut cams {
         if let Projection::Perspective(p) = &mut *projection {
             if (p.fov - want).abs() > 1e-4 {

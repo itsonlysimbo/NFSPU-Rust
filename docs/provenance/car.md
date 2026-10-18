@@ -158,7 +158,8 @@ The old loader skipped every article whose name starts with `Decal`, `Gauge`, `N
 (`DecalInterior`), the trunk lettering (`DecalTrunk` types 0-5, one per badge text), the fuel cap
 and the aerial. All of them are alternatives picked by the body style's piece types, and a decal
 whose artwork the style does not use lands on transparent texels, so they are now drawn. Only the
-wheel shadow quads (`WheelShadow*`, shadow page) and the passenger stay out. Decals lie on the
+passenger stays out; the wheel shadow quads are drawn too (they shade the tyre tops, see "Wheel
+shadows are not a ground shadow" below). Decals lie on the
 surface below them (the 993's gauge faces are 3 cm in front of the instrument panel, the badges on
 the body skin) and are lifted 5 mm like handles and plates.
 
@@ -200,12 +201,143 @@ Verified by eye in the captures:
 Not verified:
 - **The in-car camera against the game.** No retail in-car footage was available (the let's
   play uses the chase view only; the user's recordings show menus). Position and pitch come from
-  the `.tpg` and the engine code as described above; the field of view is still Bevy's default
-  (45 degrees vertical).
+  the `.tpg` and the engine code as described above; the field of view is now the engine's (see
+  "Field of view" below), not compared with the game.
 - Gauge needles are drawn where the model puts them (not animated).
 - The stripe package used in a real quick race (see "Not settled yet").
 - Traffic cars' cabins.
 
 Differences seen against the retail chase frames that are outside the car model: the retail
-chase camera sits lower and closer behind the car, and the retail car casts a shadow (the
-`WheelShadow` quads on the shared shadow page, which we leave out).
+chase camera sits lower and closer behind the car, and the retail car casts a ground shadow.
+This was first taken to be the `WheelShadow` quads; it is not (see the next section, which covers
+the camera, the wheel shadows and our ground shadow).
+
+## Chase camera and ground shadow
+
+### The camera table
+
+`Porsche.exe` v3.5 keeps 20 camera entries of 16 bytes at 0x5CF610: an offset (x, y, z) in the
+engine's car frame (+z forward, origin at the car's centre) and a flag word. The flag bits are
+copied into the camera's state when a view is chosen; the ones traced are bit 0 (raise the aim
+point, below), bit 2 (aim at the car) and bit 3 (keep the camera out of the scenery).
+
+| Entry | Offset (x, y, z) | Flags | Update routine | Use |
+|---|---|---|---|---|
+| 0 | (0, 0.4, 0.9) | 0x02 | fixed to the car | bumper/hood (not traced further) |
+| 1 | (0, 0.4, 0.9) | 0x00 | fixed to the car, `drivercampos` replaces the offset | in-car |
+| 2 | (0, 1.15, -3.3) | 0x2D | chase, no slope lift, fixed follow | chase (close) |
+| 3 | (0, 1.35, -4.5) | 0x2D | chase, slope lift 0.25..1, speed follow up to 0.1 | chase (medium) |
+| 4 | (0, 1.15, -4.8) | 0x2D | chase, slope lift -0.25..2, speed follow up to 0.05 | chase (far) |
+| 5-7 | (0, 2, -6), (0, 2, -6), (0, 4.9, -6.7) | 0x2D | a second chase routine, not traced | high chase views |
+| 8-19 | various | | replays, TV and other views | not used here |
+
+The C key steps through four entries kept in the player profile (the `_CAMERA` key of the save);
+the default list was not found (the profile is filled from the save file, and Ghidra was not
+running to trace it). **Which entry the let's play uses is an inference**: entry 3 matches the
+recording's framing best (below).
+
+### How a chase view (entries 2-4) moves (read from the code)
+
+All of this runs on the game's 64 Hz tick (the camera update is registered on the per-tick task
+list), so the shares are per 1/64 s.
+
+- Wanted offset: the entry's offset with **the car's half length taken off z** (the car's half
+  extents are kept with the car; half length is the third), plus a slope lift on y, turned by the
+  car's orientation into world space.
+- Slope lift: the road height 3 slices ahead minus the height of the car's slice, over 3 (the rise
+  per slice, about 6 m apart), clamped to the entry's range: none for entry 2, 0.25..1 for entry 3
+  (so even on a flat road it adds 0.25 m), -0.25..2 for entry 4. "Ahead" is chosen from the car's
+  direction flag and the track's direction; we use the slice direction the car points along.
+- The stored offset is in world space and moves a share of the way to the wanted one each tick, so
+  it trails the car's turns: x and z by the follow share, y by 0.05.
+- Follow share: 0.1 for entry 2. Entries 3 and 4 follow by speed: take the car's velocity along
+  its forward and side axes, `s = max + 0.25 * min` of their sizes (m/s), share = s / 900,
+  clamped to 0.02 .. 0.1 (entry 3) or 0.02 .. 0.05 (entry 4). A standing car's camera swings round
+  slowly; at 90 m/s it reaches the cap. (One game mode keeps 0.1; not traced which.)
+- After the offset moves, if it is shorter than 4.94 m it is stretched to 4.94 m.
+- For 50 ticks after a view switch both shares are 0.1 and the 4.94 m rule is off. Switching in
+  from a non-chase view first puts the offset 4 m straight behind the car's centre.
+- Camera = car centre + offset. The scenery check (bit 3) then keeps the camera at least 1 m above
+  the surface under it (on every track except one named "castle", where it only applies near the
+  car's height). A second scenery test (wall push-out) was **not implemented**.
+- Aim: the car's centre (not the lagging camera's own direction), raised: the aim direction is a
+  quarter of (car - camera) with 0.325 added to its height, which is the same as aiming 1.3 m
+  above the car's centre (1.6 m for entries 5-7). Up is world up.
+
+### Field of view (read from the code)
+
+Every camera starts with the value 37.5 (degrees). The projection setup doubles it and takes the
+tangent of half, so 37.5 degrees is **half the horizontal angle** (75 degrees across a 4:3
+screen); the vertical scale is multiplied by 640/480 for the full screen, which gives square pixels
+and about 59.8 degrees vertically. (The value is multiplied by 1.2 for the outside views when one
+global flag is set; not traced which option that is.) Bevy's default is 45 degrees vertical,
+which made our view much narrower. The chase and cockpit views now use the engine's angle;
+for screens wider than 4:3 we keep the vertical angle (an assumption; the recording, which is
+16:9, fits it). `NFSPU_RETAIL_FOV` still selects the reference build's numbers instead.
+
+### Matching the recording
+
+With a 59.8-degree vertical view, the recording's 356 frame (`logs/ref_letsplay_t700_356_chase.jpg`,
+picture 317 px high) has the bottom of the car's rear about 108 px below the centre and the car
+about 100 px wide. Worked out for each entry with a 4.0 m long, 1.3 m high car on a flat road:
+entry 2 puts that point about 134 px down, entry 3 about 104 px, entry 4 about 93 px. Entry 3 also
+gives the closest car width. So mode 0 ("chase") now uses entry 3; entries 2 and 4 are in
+`chase_cam.rs` as well.
+
+### Wheel shadows are not a ground shadow
+
+`WheelShadowFront` and `WheelShadowRear` (geometry ids 13 and 14, one type per body style) are
+ordinary articles whose material (kind `CarWheel`) names page 6, the shared `shadow.fsh`
+(`global=1`) on a 64 x 64 4444 page (`cargo run -p nfspu-game --example car_shadow_info -- 993`):
+
+- Each is one **upright** square of two triangles per wheel, the wheel's size (0.63 m on the 993,
+  0.58 m on the 356 A), in the plane x = +-0.81 (993 front; 0.88 rear), just outside the wheel,
+  from the ground (y = 0) to the wheel's top. The same quad is used at every level of detail.
+- Its UVs span the whole page, with v = 0 at the top edge.
+- The page is dark grey (mean 30, 30, 30) with alpha only in its upper half: an arch-shaped patch,
+  strongest (about 7/9) at the top and fading out half way down.
+
+So the quad darkens the top of the tyre, where the wheel arch shades it, and nothing on the
+ground. We now draw these quads where the model puts them, blended by the page's alpha and seen
+from both sides (not compared with the game close up).
+
+### Ground shadow (our stand-in)
+
+The retail ground shadow is a renderer feature of its own: the graphics options have
+`ShadowMapping` and `DetailedShadows`, and the exe has a `R3DShadowMapTextureLayer` class whose
+draw step gives track triangles a second set of texture coordinates from their world positions
+through a 2 x 3 matrix, i.e. a shadow texture projected onto the road. What that texture holds,
+where the matrix comes from (sun direction, car position) and how it is blended were not traced
+(Ghidra was not running; the plain decompile does not show the setup).
+
+Until that is traced we draw our own: the car's outline seen from straight above (every body,
+glass and wheel triangle filled into a 64 x 64 mask with 0.45 m of margin, grown by 2 texels and
+then blurred three times with a 5-texel box), black at up to 150/255, on one quad 5 cm above the
+model's ground, blended and drawn in front of the road with a depth bias. It moves and tilts with
+the car.
+
+Blending: Bevy blends in linear light, the engine's renderer (like every renderer of its time)
+on screen values. A black overlay of alpha `a` on a dark road changes the screen value much less
+in linear light, so both shadows convert their alpha first: `1 - (1 - a)^2.2` (the screen value
+then drops by about the factor `1 - a`, as it would have in the game). Measured in the top-view
+capture: road pixels just behind the 993 go from (56, 40, 41) without the shadow to (28, 18, 19).
+
+### Verification (2026-10-18)
+
+`NFSPU_CAR_CAPTURE=993,901` on alps (the capture now waits 1.5 s on the chase view so the camera
+has swung in). Side by side with the recording: `logs/compare_993_vs_356_chase.png` and
+`logs/compare_901_vs_911_chase.png` (reference frame left, ours right, same size).
+
+- Camera framing: verified by eye and by measuring. 901 against the recording's 911: car width
+  0.27 of the picture height in both; bottom of the rear bumper 0.35 below the centre (ours) and
+  0.34 (recording). The 356 frame is mid-corner (the car sits left of centre because the camera
+  trails the turn), which ours does not show in a still capture.
+- The trailing in corners, the speed follow, the slope lift and the 1 m ground clearance are
+  covered by unit tests only; **not tested** against the game in motion.
+- Ground shadow: present (measured, see above) but hard to see by eye on alps, where our road
+  renders much darker than the recording's grey asphalt. The retail shadow is offset to the right
+  rear in both frames (cast by a sun); ours sits straight under the car. **Not matched.**
+- Wheel shadow quads: drawn, but too dark against our black tyres to check by eye; **not tested**
+  against the game.
+- Field of view: the engine's 75 degrees across at 4:3 kept vertical on wider screens is an
+  assumption for widescreen; the recording (16:9) fits it.
