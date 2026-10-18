@@ -10,7 +10,6 @@
 //! - Events go to `logs/race.log`.
 
 use bevy::prelude::*;
-use nfspu_game::car::Car;
 use nfspu_game::race::{self, CarSample, Kind, Race, RaceEvent, RaceSetup, RaceStatus};
 use nfspu_game::race_path::{self, crosses, grid_spot, Direction, TrackRace};
 use std::io::Write as _;
@@ -116,7 +115,7 @@ fn start_race(mut commands: Commands, mut started: Local<bool>, req: Res<RaceReq
     let spots: Vec<_> = (0..cars).map(|g| grid_spot(p, track.start_slice, g, cars, req.direction)).collect();
     let spot = spots[player];
     let start = spot.pos + Vec3::Y * 1.5;
-    car.car = Car::new(start, spot.yaw);
+    car.car = car.car.reset(start, spot.yaw);
     car.start_pos = start;
     car.start_yaw = spot.yaw;
     let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, req.direction)).collect();
@@ -187,7 +186,7 @@ fn race_tick(time: Res<Time>, run: Option<ResMut<RaceRun>>, car: Option<Res<crat
     run.race.fill_status(run.player, &mut status);
     status.wrong_way = run.wrong_way;
     status.speed_kmh = car.car.speed.abs() * 3.6;
-    status.rpm = None;
+    status.rpm = Some(car.car.rpm());
     if status.finished {
         run.finished_for += dt;
     }

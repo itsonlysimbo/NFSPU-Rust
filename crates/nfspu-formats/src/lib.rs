@@ -3,6 +3,7 @@
 
 pub mod asf;
 pub mod bnk;
+pub mod carsim;
 pub mod cardash;
 pub mod crp;
 pub mod fe;

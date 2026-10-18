@@ -24,6 +24,23 @@ A from-scratch Rust/Bevy/wgpu rewrite of Need for Speed: Porsche Unleashed (NFS5
 - Write **"not tested"** for anything unverified. After two failed attempts at one problem, stop and write `STATUS.md`.
 - Update `MODLOG.md`, the README works/doesn't-work list and `STATUS.md` only when a big milestone is complete (e.g. "quick race works end to end"), not after every step (user, 2026-10-16). Provenance notes in `docs/provenance/` are still written as findings are made.
 
+## Parallel sessions (user, 2026-10-17)
+- Big goals are split into parallel sessions, each in its own git worktree and branch. Keep to about 3-4 at once on this 16 GB machine.
+- Each session keeps to its own files, commits to its branch and never pushes. The coordinating session merges and tests each branch as soon as it lands, so later work starts from current code.
+- The user playtests once per milestone, with one recording (game sound on) of everything they noticed.
+
+## Builds
+- `.cargo/config.toml` links with `rust-lld` (ships with Rust; much faster than link.exe).
+- The dev profile keeps line tables only (`debug = "line-tables-only"`, none for dependencies).
+- sccache is installed (winget) and set as the rustc wrapper in the user's `~/.cargo/config.toml`, so all worktrees share one compile cache.
+- For quick edit-build-run loops use `cargo run -p nfspu-game --features dev -j 2`, which links Bevy as a DLL. Leave `dev` off for builds the `run_*.bat` launchers start (they need no DLL).
+- Long builds: run them in the background rather than under a short timeout. A killed link shows as `link.exe failed: exit code 143`.
+
+## Decomp lookups (Ghidra bridge)
+- `.mcp.json` registers the GhidraMCP bridge as the `ghidra` tool server: decompile, list and search functions, xrefs, strings. It works while the user has Ghidra open on the NFS5 project with the GhidraMCP plugin on (port 8080).
+- Its write tools (rename_*, set_*) are denied in `.claude/settings.json`, because the decomp project is read-only. Never work around that.
+- Without the bridge, fall back to searching `decomp/classes` / `decomp/src` (not the whole folder; that times out).
+
 ## Environment
 - OS: Windows 10 Pro (build 26200), 16 GB RAM, Intel UHD + NVIDIA RTX 4050 laptop GPU (can be selected per app)
 - Game: NFS Porsche Unleashed community "Multi6 Enhanced 3.5" build, `Porsche.exe` (v3.5), at `C:\Users\CB\Downloads\NFS5`

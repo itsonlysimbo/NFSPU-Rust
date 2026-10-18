@@ -9,11 +9,19 @@
 !STATUS.md
 !Cargo.toml
 !Cargo.lock
+!.cargo/
+!.cargo/config.toml
+!.mcp.json
+!.claude/
+!.claude/settings.json
 !*.rs
 !*.md
 
 # Always ignored, even though they match the allow rules above
 reference/
 target/
+target-*/
 logs/
 extracted/
+.claude/worktrees/
+.claude/settings.local.json

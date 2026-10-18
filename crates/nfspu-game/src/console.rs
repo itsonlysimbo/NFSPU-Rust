@@ -361,7 +361,7 @@ pub fn apply(
     if pending.reset {
         pending.reset = false;
         if let Some(c) = world.car.as_mut() {
-            c.car = super::Car::new(c.start_pos, c.start_yaw);
+            c.car = c.car.reset(c.start_pos, c.start_yaw);
             super::log_line("car reset to the start (console)");
         }
     }
