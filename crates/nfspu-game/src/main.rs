@@ -910,7 +910,7 @@ fn setup(
     commands.insert_resource(TrackEntities(scene.entities));
     commands.insert_resource(GroundRes(Ground::new(g.tris, 16.0)));
     commands.insert_resource(WallRes(WallSet::new(g.walls, 4.0)));
-    commands.insert_resource(CarRes { car: Car::new(g.start_pos, g.start_yaw), start_pos: g.start_pos, start_yaw: g.start_yaw, steer: 0.0, braking: false });
+    commands.insert_resource(CarRes { car: player_car(g.start_pos, g.start_yaw, &car_name.0), start_pos: g.start_pos, start_yaw: g.start_yaw, steer: 0.0, braking: false });
     commands.spawn((
         Camera3d::default(),
         // the sky dome sits 3 km away, so the camera has to be able to see that far
@@ -1053,7 +1053,7 @@ fn reload_track(
         walls.0 = WallSet::new(g.walls, 4.0);
     }
     if let Some(car) = car {
-        car.car = Car::new(g.start_pos, g.start_yaw);
+        car.car = car.car.reset(g.start_pos, g.start_yaw);
         car.start_pos = g.start_pos;
         car.start_yaw = g.start_yaw;
         car.steer = 0.0;
@@ -1208,6 +1208,39 @@ struct GroundRes(Ground);
 
 #[derive(Resource)]
 struct WallRes(WallSet);
+
+/// The player's car with its retail `.sim` physics. Which car: `NFSPU_SIM=<sim stem>` if set;
+/// in a quick race the setup's catalogue car and its gearbox and aids (`logs/race_setup.txt`);
+/// otherwise the first road car using the shown model. Without an install: a made-up car.
+fn player_car(pos: Vec3, yaw: f32, model: &str) -> Car {
+    use nfspu_game::car_load::{self, Pick};
+    use nfspu_game::car_sim::Aids;
+    let dir = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
+    let setup = env::var_os("NFSPU_LOADING")
+        .and_then(|_| fs::read_to_string(log_path().parent()?.join("race_setup.txt")).ok())
+        .and_then(|t| nfspu_game::race_setup::RaceSetup::parse(&t).ok())
+        .filter(|s| s.car_model.eq_ignore_ascii_case(model));
+    let aids = match &setup {
+        Some(s) => Aids { automatic: s.automatic, abs: s.abs, traction_control: s.traction_control, keyboard_steering: true },
+        None => Aids { automatic: env::var("NFSPU_MANUAL").is_err(), ..Aids::default() },
+    };
+    let sim = env::var("NFSPU_SIM").ok();
+    let pick = match (&sim, &setup) {
+        (Some(stem), _) => Pick::Sim { sim: stem, ai_name: "" },
+        (None, Some(s)) => Pick::Id(s.car_id),
+        (None, None) => Pick::Model(model),
+    };
+    match car_load::load(&dir, pick, !aids.automatic) {
+        Ok(l) => {
+            log_line(&format!("physics: {} ({}, ABS {}, TC {})", l.note, if aids.automatic { "automatic" } else { "manual" }, aids.abs, aids.traction_control));
+            Car::with_spec(pos, yaw, l.spec, aids)
+        }
+        Err(e) => {
+            log_line(&format!("physics: {e}; driving a made-up car"));
+            Car::with_spec(pos, yaw, nfspu_game::car_sim::Spec::generic(), aids)
+        }
+    }
+}
 
 #[derive(Resource)]
 struct CarRes {
@@ -1378,7 +1411,7 @@ fn feed_hud(
     let (Some(car), Some(mut feed)) = (car, feed) else { return };
     let now = time.elapsed_secs();
     let speed_kmh = car.car.speed * 3.6;
-    let (rpm, gear) = nfspu_game::hud::placeholder_engine(speed_kmh);
+    let (rpm, gear) = (car.car.rpm(), car.car.gear());
     feed.car_model = name.0.clone();
     if race.active {
         // The race clock: GO is at tick 448 of the 64 Hz race clock (docs/provenance/race.md).
@@ -1388,7 +1421,7 @@ fn feed_hud(
         }
         feed.input = nfspu_game::hud::HudInput {
             speed_kmh,
-            rpm: race.rpm.unwrap_or(rpm),
+            rpm,
             gear,
             lap: race.current_lap.max(1),
             total_laps: race.total_laps.max(1),
@@ -1437,7 +1470,7 @@ fn drive_car(
         return;
     }
     if keys.just_pressed(KeyCode::KeyR) || state.car.pos.y < state.start_pos.y - 300.0 {
-        state.car = Car::new(state.start_pos, state.start_yaw);
+        state.car = state.car.reset(state.start_pos, state.start_yaw);
         log_line("car reset to the start");
     }
     if mode.0 {
@@ -1448,9 +1481,15 @@ fn drive_car(
             brake: keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
             handbrake: keys.pressed(KeyCode::Space),
             steer: (left as i8 - right as i8) as f32,
+            // manual gearbox: X up, Z down
+            gear_up: keys.pressed(KeyCode::KeyX),
+            gear_down: keys.pressed(KeyCode::KeyZ),
         };
+        // on the grid until GO: the brake is held on and the automatic waits in neutral, but the
+        // engine can be revved (retail)
+        state.car.sim.held = hold.0;
         if hold.0 {
-            input = CarInput::default(); // on the grid until GO
+            input.steer = 0.0;
         }
         state.steer = input.steer;
         state.braking = (input.brake && state.car.speed > 0.5) || input.handbrake;
