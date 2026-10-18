@@ -91,6 +91,9 @@ Every article has a `Name` part (tag `emaN`, a zero-terminated string). In alps 
 - `.edg` (side file): a 4-byte header, then 28-byte records of a u32 and two 3D points (7,694 of them in alps), probably edge line segments. Not used yet. `.map` is a text file with 39 numbered sections (start/end slice, tints, texture ids). `.jnc` (216 bytes of floats) and `.dtx` (11 bytes) not understood.
 
 ## Car files (`GameData/CarModel/<car>.crp`)
+- **Newer notes in `car.md`** replace several points below: the texture page of each triangle is a
+  number in its material (not the material kind), page pixel formats decide what alpha means, and
+  colour bands (not an alpha paint mask) apply the paint, stripe and cabin colours.
 - Container magic is the bytes ` raC` (a space first), i.e. ""Car "" stored reversed. Most are RefPack-compressed; the 928 is stored plain. 993: 172 articles, 67 misc parts (48 materials).
 - **Levels of detail start at 1** (the first byte of a part tag): per the community notes 1 = garage model, 2 = in-car view, 3 and up = exterior. The 993 at level 3 has 77 articles and 2,623 triangles. Variant bits (animation, damage) sit in the high nibble of that byte (17 = level 1, variant 1).
 - Car articles carry **no baked vertex colours** (no `fd` part) and the material texture-name field (0x28) is all zeros. Material kinds: `CarExtEnv` (body paint with environment map), `CarExt` (trim, underbody), `CarWindow`, `CarWheel`, `CarInt` (interior). Car textures are in `<car>D.fsh` / `<car>L.fsh` as 8-bit paletted images (format 0x7B, palette format not decoded) with names `0000`..`0008`; `carcmn.fsh` holds shared 32-bit items. The material-to-texture link is not understood yet (`.tpg` and `.clr` files unexamined).

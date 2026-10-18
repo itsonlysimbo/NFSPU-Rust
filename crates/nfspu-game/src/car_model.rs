@@ -1,9 +1,10 @@
 //! Builds the exterior shape of a car from `GameData/CarModel/<name>.crp` in the player's install.
 //!
-//! Each triangle is tagged with a finish taken from its material kind, and each finish uses one
-//! texture page assembled from the archives embedded in the car file. Only the default configuration
-//! is used (Base type index 0); decals, shadow quads and driver models are left out. Units are
-//! metres, the car faces -Z and its origin is at ground level.
+//! Each triangle is sorted into a piece by its material kind (paint, trim, glass, cabin, ...) and
+//! carries the texture page its material names; the pages are assembled from the archives embedded
+//! in the car file and the shared files next to it, as the car's `.tpg` lays them out (see
+//! `docs/provenance/car.md`). The body style picks which variant of each piece is used; decals and
+//! shadow quads are left out. Units are metres, the car faces -Z and its origin is at ground level.
 
 use crate::MIRROR_X;
 use nfspu_formats::{crp, refpack, shpi};
@@ -33,6 +34,8 @@ pub struct Piece {
     pub materials: Vec<u16>,
     /// Index of the article each corner came from (see `CarModel::article_names`).
     pub articles: Vec<u16>,
+    /// Texture page of each corner (index into `CarModel::pages`), from the triangle's material.
+    pub pages: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +103,15 @@ pub struct CarModel {
     pub style_name: String,
     /// How many body styles the car's .tpg defines (0 if none).
     pub style_count: usize,
+    /// Every texture page of the car (`[tpageN.details]` is index N - 1), built as the engine does;
+    /// `None` for pages without a picture. Pieces point into this by `Piece::pages`.
+    pub pages: Vec<Option<Page>>,
+    /// For each page, the page whose picture it shows (`sourcetpage`), if not its own.
+    pub page_source: Vec<Option<usize>>,
+    /// The driver's eye in car space (see `driver_eye`) and the in-car camera's turn in degrees
+    /// (x: pitch, positive looks down; y: yaw), from the `.tpg` for the chosen style.
+    pub driver_eye: [f32; 3],
+    pub driver_rot: [f32; 3],
 }
 
 impl CarModel {
@@ -120,25 +132,6 @@ pub fn finish_for_material(kind: &str) -> Option<Finish> {
     }
 }
 
-/// Whether any triangle of a batch has its UVs inside one of the body page's `hand` tiles (with
-/// two texels of slack on a 256 page), meaning the handle's artwork is on the body page, not the
-/// trim page. Per triangle, because a handle batch can hold the grip and a second small part with
-/// UVs elsewhere (928).
-pub fn handle_on_body_page(uv_idx: &[u16], uvs: &[[f32; 2]], tiles: &[[f32; 4]]) -> bool {
-    let slack = 2.0 / 256.0;
-    uv_idx.chunks_exact(3).any(|tri| {
-        let (mut u0, mut v0, mut u1, mut v1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for &i in tri {
-            let [u, v] = uvs[i as usize];
-            u0 = u0.min(u);
-            v0 = v0.min(v);
-            u1 = u1.max(u);
-            v1 = v1.max(v);
-        }
-        tiles.iter().any(|t| u0 >= t[0] - slack && v0 >= t[1] - slack && u1 <= t[2] + slack && v1 <= t[3] + slack)
-    })
-}
-
 /// How far (metres) lamp triangles are moved out along their normal so they draw over the body.
 const LAMP_LIFT: f32 = 0.005;
 
@@ -157,9 +150,11 @@ fn lamp_end(article: &str, finish: Finish, interior_pass: bool, tri: &[[f32; 3]]
     Some(z < 0.0)
 }
 
-/// Names of articles that are never drawn: overlay decals, shadow quads, drivers, passengers, gauges.
+/// Names of articles that are never drawn: the wheel shadow quads and the passenger. Decals (badges,
+/// gauge faces), needles, the fuel cap and the aerial are drawn: the body style picks their type and
+/// the tile rules leave a decal's artwork out (transparent) when the style does not use it.
 fn is_skipped_name(name: &str) -> bool {
-    ["Decal", "WheelShadow", "Passenger", "Needle", "Gauge", "Cap", "Ant"].iter().any(|p| name.starts_with(p))
+    ["WheelShadow", "Passenger"].iter().any(|p| name.starts_with(p))
 }
 
 /// Cabin pieces that are never drawn: interior glass overlays (the windows are drawn from the
@@ -190,6 +185,8 @@ pub struct TileRule {
     pub frontend: Option<u32>,
     pub testdrive: Option<u32>,
     pub race_decal: bool,
+    /// `tint=`: whether the tile is painted by colour band, overriding its file's setting.
+    pub tint: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -261,7 +258,7 @@ pub fn parse_tpg(text: &str) -> Tpg {
                 continue;
             }
             let flag = |key: &str| kv.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.parse::<u32>().ok());
-            let mut rule = TileRule { frontend: flag("frontend"), testdrive: flag("testdrive"), race_decal: flag("racedecal") == Some(1), ..Default::default() };
+            let mut rule = TileRule { frontend: flag("frontend"), testdrive: flag("testdrive"), race_decal: flag("racedecal") == Some(1), tint: flag("tint").map(|t| t != 0), ..Default::default() };
             for (is_geometry, id, ty) in pairs(kv) {
                 if is_geometry { rule.geometry.push((id, ty)) } else { rule.texture.push((id, ty)) }
             }
@@ -280,23 +277,99 @@ pub fn tile_flags(archive: &shpi::ShpiArchive, tpg: &Tpg, index: u16, style: &St
         .collect()
 }
 
-/// On the body page every texel is partly "transparent" (alpha about 140-220 of 255): the channel is
-/// a paint mask, not transparency, and cutting out texels below 50% punches holes in the side panels.
-/// Only texels with alpha 0 are real holes (wheel arches, light corners), so every other texel becomes
-/// opaque. (The mask could later drive the paint colour.)
-pub fn alpha_to_mask(rgba: &mut [u8]) {
-    for px in rgba.chunks_exact_mut(4) {
-        px[3] = if px[3] > 0 { 255 } else { 0 };
+/// One texture page of a car (`[tpageN.details]` in its `.tpg`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TpageInfo {
+    pub width: u32,
+    pub height: u32,
+    /// `sourcetpage=M`: this page shows page M's picture (0-based) instead of its own. The body
+    /// page's twin (`tpage2`, `sourcetpage=1`) is used by the car's other side.
+    pub source: Option<usize>,
+    /// Pixel format (`bpp=`, written as a decimal code): 1555 (the default), 4444 or 32. It decides
+    /// how much of the artwork's alpha survives, see `PageFormat::reduce_alpha`.
+    pub format: PageFormat,
+}
+
+/// The pixel format of a texture page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageFormat {
+    /// 1-bit alpha (`bpp=1555`, also the default): a texel is either see-through (alpha 0) or solid.
+    #[default]
+    A1,
+    /// 4-bit alpha (`bpp=4444`).
+    A4,
+    /// Full 8-bit alpha (`bpp=32`).
+    A8,
+}
+
+impl PageFormat {
+    fn from_code(code: u32) -> Self {
+        match code {
+            4444 => PageFormat::A4,
+            32 => PageFormat::A8,
+            _ => PageFormat::A1,
+        }
+    }
+
+    /// The alpha each texel keeps once stored in this format: on 1555 pages any alpha above 0 is
+    /// solid, which is why the body and cabin artwork, whose alpha holds other data (the paint
+    /// mask), shows as solid in the game.
+    pub fn reduce_alpha(self, rgba: &mut [u8]) {
+        for px in rgba.chunks_exact_mut(4) {
+            px[3] = match self {
+                PageFormat::A1 => if px[3] > 0 { 255 } else { 0 },
+                PageFormat::A4 => (px[3] >> 4) * 17,
+                PageFormat::A8 => px[3],
+            };
+        }
     }
 }
 
-/// Reads the page sizes from a car's `.tpg` text file. Embedded archive `i` is listed there as
-/// `[file{i+1}.details]` with `tpage=M`, and `[tpageM.details]` gives `width=W`. Returns a map from
-/// the embedded archive index to the page width in pixels.
-pub fn tpg_page_sizes(text: &str) -> std::collections::HashMap<u16, u32> {
-    use std::collections::HashMap;
-    let (mut file_page, mut page_width): (HashMap<u32, u32>, HashMap<u32, u32>) = (HashMap::new(), HashMap::new());
+/// One texture file of a car (`fileN=` in `[header]`, `[fileN.details]`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileInfo {
+    /// Lower-case file name, e.g. `exterior.fsh`.
+    pub name: String,
+    /// The page (0-based) its tiles are pasted on, at `offset` pixels.
+    pub tpage: Option<usize>,
+    pub offset: [u32; 2],
+    /// `global=K`: the file is not embedded in the car but shared by all cars; 1 shadow,
+    /// 2 intglass, 3 suit, 4 head, 5 cabrio (the order of the engine's list of shared files).
+    pub global: u32,
+    /// `tint=0` turns off the colour bands for the file's tiles (see `tint_bands`); on by default.
+    pub tint: bool,
+}
+
+impl Default for FileInfo {
+    fn default() -> Self {
+        FileInfo { name: String::new(), tpage: None, offset: [0, 0], global: 0, tint: true }
+    }
+}
+
+/// The texture layout of a car's `.tpg`: its pages and which files fill them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TpgLayout {
+    pub tpages: Vec<TpageInfo>,
+    /// `files[N - 1]` is `fileN`; embedded archive N - 1 holds its tiles unless it is global.
+    pub files: Vec<FileInfo>,
+}
+
+/// File names of the shared car textures, by their `global=` number.
+pub const GLOBAL_FILES: [&str; 5] = ["shadow.fsh", "intglass.fsh", "suit.fsh", "head.fsh", "cabrio.fsh"];
+
+pub fn parse_tpg_layout(text: &str) -> TpgLayout {
+    let mut layout = TpgLayout::default();
     let mut section = String::new();
+    let grow_t = |v: &mut Vec<TpageInfo>, n: usize| {
+        if v.len() < n {
+            v.resize(n, TpageInfo::default());
+        }
+    };
+    let grow_f = |v: &mut Vec<FileInfo>, n: usize| {
+        if v.len() < n {
+            v.resize(n, FileInfo::default());
+        }
+    };
     for line in text.lines() {
         let line = line.trim();
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
@@ -304,19 +377,177 @@ pub fn tpg_page_sizes(text: &str) -> std::collections::HashMap<u16, u32> {
             continue;
         }
         let Some((key, value)) = line.split_once('=') else { continue };
-        let Ok(value) = value.trim().parse::<u32>() else { continue };
-        let number = |prefix: &str| section.strip_prefix(prefix).and_then(|r| r.strip_suffix(".details")).and_then(|n| n.parse::<u32>().ok());
-        match (key.trim().to_ascii_lowercase().as_str(), number("file"), number("tpage")) {
-            ("tpage", Some(f), _) => {
-                file_page.insert(f, value);
+        let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
+        let num = value.parse::<u32>().ok();
+        let index = |prefix: &str| section.strip_prefix(prefix).and_then(|r| r.strip_suffix(".details")).and_then(|n| n.parse::<usize>().ok()).filter(|n| *n >= 1);
+        if section == "header" {
+            if let Some(n) = key.strip_prefix("file").and_then(|n| n.parse::<usize>().ok()).filter(|n| *n >= 1) {
+                grow_f(&mut layout.files, n);
+                layout.files[n - 1].name = value.to_ascii_lowercase();
             }
-            ("width", _, Some(p)) => {
-                page_width.insert(p, value);
+        } else if let (Some(t), Some(v)) = (index("tpage"), num) {
+            grow_t(&mut layout.tpages, t);
+            let page = &mut layout.tpages[t - 1];
+            match key.as_str() {
+                "width" => page.width = v,
+                "height" => page.height = v,
+                "sourcetpage" if v >= 1 && v as usize != t => page.source = Some(v as usize - 1),
+                "bpp" => page.format = PageFormat::from_code(v),
+                _ => {}
             }
-            _ => {}
+        } else if let (Some(f), Some(v)) = (index("file"), num) {
+            grow_f(&mut layout.files, f);
+            let file = &mut layout.files[f - 1];
+            if key == "tint" {
+                file.tint = v != 0;
+            }
+            match key.as_str() {
+                "tpage" if v >= 1 => file.tpage = Some(v as usize - 1),
+                "offsetx" => file.offset[0] = v,
+                "offsety" => file.offset[1] = v,
+                "global" => file.global = v,
+                _ => {}
+            }
         }
     }
-    file_page.into_iter().filter_map(|(f, p)| Some(((f - 1) as u16, *page_width.get(&p)?))).collect()
+    layout
+}
+
+/// The in-car camera from a car's `.tpg` header: `drivercampos` (metres) and `drivercamrot`
+/// (degrees), replaced by `drivercamposstyleK` / `drivercamrotstyleK` when the body style (K counted
+/// from 0) has its own. Without any, the engine uses position (-0.36, 0.4, -0.25) and no rotation.
+/// The position is in the engine's car frame: origin at the car's centre (half its height above the
+/// model's origin), +Z forward, -X the driver's (left) side; see `driver_eye`.
+pub fn driver_camera(tpg: &str, style_number: usize) -> ([f32; 3], [f32; 3]) {
+    let mut values: std::collections::HashMap<String, [f32; 3]> = std::collections::HashMap::new();
+    let mut in_header = false;
+    for line in tpg.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_header = line.eq_ignore_ascii_case("[header]");
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=').filter(|_| in_header) else { continue };
+        let v: Vec<f32> = value.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if let [x, y, z] = v[..] {
+            values.insert(key.trim().to_ascii_lowercase(), [x, y, z]);
+        }
+    }
+    let k = style_number.saturating_sub(1);
+    let pos = values.get(&format!("drivercamposstyle{k}")).or_else(|| values.get("drivercampos")).copied().unwrap_or([-0.36, 0.4, -0.25]);
+    let rot = values.get(&format!("drivercamrotstyle{k}")).or_else(|| values.get("drivercamrot")).copied().unwrap_or([0.0; 3]);
+    (pos, rot)
+}
+
+/// Where the driver's eye sits in the viewer's car space (origin on the ground, car facing -Z,
+/// x already mirrored, see `MIRROR_X`), from the `.tpg` camera position and the car's half height.
+/// The engine's car frame is the model turned half a turn (its +Z is forward) and raised by half the
+/// model's height, so z changes sign and x keeps it (the half turn and the mirror cancel).
+pub fn driver_eye(campos: [f32; 3], half_height: f32) -> [f32; 3] {
+    [campos[0] * -MIRROR_X, half_height + campos[1], -campos[2]]
+}
+
+/// What decides which tiles of a file are drawn: the body style, or (suit and head files) the driver.
+pub struct PageChoice<'a> {
+    pub rules: &'a Tpg,
+    pub style: &'a Style,
+    /// Driver type (1 racing suit, 2-10 casual, 0 none).
+    pub driver: u8,
+    /// The colour of each band (see `tint_bands`), from the paint scheme; `None` leaves the
+    /// artwork's own colours (cars without a `.clr`, such as traffic).
+    pub bands: Option<[[u8; 3]; BANDS]>,
+}
+
+/// Builds every texture page of a car as the engine does: each page starts empty and each file's
+/// kept tiles are pasted on its page at the file's offset; a page with `sourcetpage` shows its source
+/// page's picture. Embedded archive N - 1 holds `fileN`; shared (`global`) files are read from
+/// `dir`. Tiles are painted by colour band (`tint_bands`) unless their file or tile says `tint=0`
+/// or the page is a 4444 page (the engine copies those unchanged), and every page keeps only the
+/// alpha its pixel format can hold (`PageFormat::reduce_alpha`). Returns one entry per page (`None`
+/// if it has no size).
+pub fn build_tpages(layout: &TpgLayout, embedded: &[(u16, &[u8])], dir: &std::path::Path, choice: &PageChoice) -> Vec<Option<Page>> {
+    let mut pages: Vec<Option<Page>> = layout
+        .tpages
+        .iter()
+        .map(|t| (t.width > 0 && t.width == t.height).then(|| Page { size: t.width, rgba: vec![0; (t.width * t.width * 4) as usize], has_alpha: true }))
+        .collect();
+    let driver_style = Style { geometry: [(9u32, choice.driver as u32)].into_iter().collect(), ..Default::default() };
+    for (f, file) in layout.files.iter().enumerate() {
+        let Some(t) = file.tpage.filter(|t| layout.tpages.get(*t).is_some_and(|p| p.source.is_none())) else { continue };
+        let Some(page) = pages[t].as_mut() else { continue };
+        let shared;
+        let blob: &[u8] = if file.global > 0 {
+            let Some(name) = GLOBAL_FILES.get(file.global as usize - 1) else { continue };
+            let Some(path) = find_case_insensitive(dir, name) else { continue };
+            let Ok(bytes) = fs::read(path) else { continue };
+            shared = bytes;
+            &shared
+        } else {
+            match embedded.iter().find(|(i, _)| *i as usize == f) {
+                Some((_, b)) => b,
+                None => continue,
+            }
+        };
+        let Ok(archive) = shpi::parse(blob) else { continue };
+        let is_driver = matches!(file.name.as_str(), "suit.fsh" | "head.fsh");
+        if is_driver && choice.driver == 0 {
+            continue;
+        }
+        let style = if is_driver { &driver_style } else { choice.style };
+        let keep = tile_flags(&archive, choice.rules, f as u16, style);
+        // which kept tiles get painted: the tile's own `tint=` or else the file's
+        let format = layout.tpages[t].format;
+        let tinted: Vec<bool> = archive
+            .entries
+            .iter()
+            .map(|e| {
+                let own = choice.rules.tiles.get(&(f as u32 + 1, e.name.trim().to_ascii_lowercase())).and_then(|r| r.tint);
+                choice.bands.is_some() && format != PageFormat::A4 && own.unwrap_or(file.tint)
+            })
+            .collect();
+        for paint in [false, true] {
+            let these: Vec<bool> = keep.iter().zip(&tinted).map(|(k, t)| *k && *t == paint).collect();
+            if !these.contains(&true) {
+                continue;
+            }
+            let mut rgba = shpi::compose_page_filtered(blob, &archive, page.size, &these);
+            if let (true, Some(bands)) = (paint, &choice.bands) {
+                tint_bands(&mut rgba, bands);
+            }
+            format.reduce_alpha(&mut rgba);
+            // paste at the file's offset; transparent texels leave what is already there
+            let s = page.size as usize;
+            let [ox, oy] = [file.offset[0] as usize, file.offset[1] as usize];
+            for y in 0..s.saturating_sub(oy) {
+                for x in 0..s.saturating_sub(ox) {
+                    let src = (y * s + x) * 4;
+                    if rgba[src + 3] == 0 {
+                        continue;
+                    }
+                    let dst = ((y + oy) * s + x + ox) * 4;
+                    page.rgba[dst..dst + 4].copy_from_slice(&rgba[src..src + 4]);
+                }
+            }
+        }
+    }
+    for page in pages.iter_mut().flatten() {
+        page.has_alpha = page.rgba.chunks_exact(4).any(|p| p[3] < 255);
+    }
+    for (t, info) in layout.tpages.iter().enumerate() {
+        if let Some(s) = info.source.filter(|s| *s != t) {
+            pages[t] = pages.get(s).cloned().flatten();
+        }
+    }
+    pages
+}
+
+/// A file in `dir` whose name matches `name` ignoring case (the install mixes `INTGLASS.FSH` and `Cabrio.fsh`).
+fn find_case_insensitive(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+    let direct = dir.join(name);
+    if direct.exists() {
+        return Some(direct);
+    }
+    fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
 }
 
 /// The texture files a car's `.tpg` lists (`fileN=exterior.fsh` in `[header]`), as embedded archive
@@ -334,129 +565,6 @@ pub fn tpg_file_names(text: &str) -> std::collections::HashMap<u16, String> {
     out
 }
 
-/// What an embedded texture archive is for, from its file name in the `.tpg`: 0 body (exterior),
-/// 1 cabin (interior), 2 trim and wheels (extint), 3 glass. Shadow, driver and other files are
-/// not pages of the car body (`None`). Without a name the archive's position decides (Porsche order).
-pub fn page_role(index: u16, file_name: Option<&str>) -> Option<u16> {
-    match file_name {
-        Some("exterior.fsh") => Some(0),
-        Some("interior.fsh") => Some(1),
-        Some("extint.fsh") => Some(2),
-        Some("glass.fsh") => Some(3),
-        Some(_) => None,
-        None => (index <= 3).then_some(index),
-    }
-}
-
-/// A tile of a page: its UV rectangle (u0, v0, u1, v1) and its name.
-pub type NamedTile = ([f32; 4], String);
-
-/// A traffic car's two pages side by side in one square texture: the exterior page at the top left,
-/// the interior page to its right (the bottom half stays empty).
-#[derive(Clone, Debug)]
-pub struct TrafficAtlas {
-    pub page: Page,
-    /// Sizes of the exterior and interior pages, and of the whole atlas, in pixels.
-    sizes: [u32; 2],
-    side: u32,
-    /// Kept tiles of each page.
-    tiles: [Vec<NamedTile>; 2],
-}
-
-/// Tile-name prefixes that belong to an article, for when its UVs fit a tile on both pages.
-fn tile_affinity(article: &str) -> &'static [&'static str] {
-    let a = article.to_ascii_lowercase();
-    if a.starts_with("wheelwell") {
-        &["tre", "ww"]
-    } else if a.starts_with("wheel") {
-        &["whe", "wh", "tre"]
-    } else if a.starts_with("light") || a.starts_with("headlight") {
-        &["lit", "li"]
-    } else if a.starts_with("license") {
-        &["lic"]
-    } else if a.starts_with("bottom") {
-        &["bot", "cbot"]
-    } else if a.contains("mirror") {
-        &["mi"]
-    } else {
-        &[]
-    }
-}
-
-impl TrafficAtlas {
-    pub fn build(exterior: &Page, interior: &Page, tiles: [Vec<NamedTile>; 2]) -> TrafficAtlas {
-        let half = exterior.size.max(interior.size);
-        let side = 2 * half;
-        let mut rgba = vec![0u8; (side * side * 4) as usize];
-        for (page, x0) in [(exterior, 0u32), (interior, half)] {
-            for y in 0..page.size {
-                let src = (y * page.size * 4) as usize;
-                let dst = ((y * side + x0) * 4) as usize;
-                let n = (page.size * 4) as usize;
-                rgba[dst..dst + n].copy_from_slice(&page.rgba[src..src + n]);
-            }
-        }
-        TrafficAtlas { page: Page { size: side, rgba, has_alpha: true }, sizes: [exterior.size, interior.size], side, tiles }
-    }
-
-    /// Alpha of page `half` at a UV of that page.
-    fn alpha_at(&self, uv: [f32; 2], half: usize) -> u8 {
-        let p = self.place([uv[0].clamp(0.0, 0.999), uv[1].clamp(0.0, 0.999)], half);
-        let (x, y) = ((p[0] * self.side as f32) as u32, (p[1] * self.side as f32) as u32);
-        self.page.rgba[((y.min(self.side - 1) * self.side + x.min(self.side - 1)) * 4 + 3) as usize]
-    }
-
-    /// Which page some UVs' artwork is on (0 exterior, 1 interior): the page with a tile containing
-    /// them all; if both have one, the page whose tile name suits the article (lamps `lit`, plate
-    /// `lice`, wheels `whe`/`tre`, ...); otherwise the page that is opaque at their centre; otherwise
-    /// `fallback`.
-    pub fn half_for(&self, uvs: &[[f32; 2]], article: &str, fallback: usize) -> usize {
-        let (mut u0, mut v0, mut u1, mut v1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for uv in uvs {
-            u0 = u0.min(uv[0]);
-            v0 = v0.min(uv[1]);
-            u1 = u1.max(uv[0]);
-            v1 = v1.max(uv[1]);
-        }
-        let slack = 1.5 / 128.0;
-        let fitting = |h: usize| -> Vec<&str> {
-            self.tiles[h]
-                .iter()
-                .filter(|(t, _)| u0 >= t[0] - slack && v0 >= t[1] - slack && u1 <= t[2] + slack && v1 <= t[3] + slack)
-                .map(|(_, n)| n.as_str())
-                .collect()
-        };
-        let (f0, f1) = (fitting(0), fitting(1));
-        match (f0.is_empty(), f1.is_empty()) {
-            (false, true) => return 0,
-            (true, false) => return 1,
-            (false, false) => {
-                let prefixes = tile_affinity(article);
-                let suits = |names: &[&str]| names.iter().any(|n| prefixes.iter().any(|p| n.to_ascii_lowercase().starts_with(p)));
-                match (suits(&f0), suits(&f1)) {
-                    (true, false) => return 0,
-                    (false, true) => return 1,
-                    _ => {}
-                }
-            }
-            (true, true) => {}
-        }
-        let centre = [(u0 + u1) / 2.0, (v0 + v1) / 2.0];
-        match (self.alpha_at(centre, 0) >= 128, self.alpha_at(centre, 1) >= 128) {
-            (true, false) => 0,
-            (false, true) => 1,
-            _ => fallback,
-        }
-    }
-
-    /// Moves a UV of page `half` to where that page sits in the atlas.
-    pub fn place(&self, uv: [f32; 2], half: usize) -> [f32; 2] {
-        let s = self.side as f32;
-        let x0 = if half == 0 { 0.0 } else { (self.side / 2) as f32 };
-        let size = self.sizes[half] as f32;
-        [(x0 + uv[0] * size) / s, uv[1] * size / s]
-    }
-}
 /// Moves a point by a row-vector 4x4 matrix (translation in the last row).
 pub fn apply_matrix(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
     [
@@ -507,51 +615,122 @@ impl Default for CarOptions {
     }
 }
 
-/// Body colour (`color1`) of each paint scheme `[sectionN]` in a car's `.clr` file, by section number.
-pub fn parse_clr(text: &str) -> std::collections::HashMap<usize, [u8; 3]> {
+/// One paint scheme `[sectionN]` of a car's `.clr` file: four colours (`color1` is the body) and
+/// the stripe package (`stripepackage`, counted from 0) that decides where colours 2-4 go.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaintScheme {
+    pub colours: [[u8; 3]; 4],
+    pub stripe_package: usize,
+}
+
+/// Every paint scheme of a `.clr` file, by section number. Sections without a complete `color1`
+/// are left out; missing other colours are black.
+pub fn parse_clr(text: &str) -> std::collections::HashMap<usize, PaintScheme> {
     let mut out = std::collections::HashMap::new();
     let mut current: Option<usize> = None;
-    let mut rgb = [None::<u8>; 3];
-    let mut flush = |section: Option<usize>, rgb: &[Option<u8>; 3]| {
-        if let (Some(n), [Some(r), Some(g), Some(b)]) = (section, rgb) {
-            out.insert(n, [*r, *g, *b]);
+    let mut scheme = PaintScheme::default();
+    let mut has_body = [false; 3];
+    let mut flush = |section: Option<usize>, scheme: &PaintScheme, has_body: &[bool; 3]| {
+        if let (Some(n), [true, true, true]) = (section, has_body) {
+            out.insert(n, *scheme);
         }
     };
     for line in text.lines() {
         let line = line.trim();
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            flush(current, &rgb);
+            flush(current, &scheme, &has_body);
             current = name.to_ascii_lowercase().strip_prefix("section").and_then(|n| n.parse().ok());
-            rgb = [None; 3];
+            scheme = PaintScheme::default();
+            has_body = [false; 3];
         } else if let Some((key, value)) = line.split_once('=') {
-            let Ok(value) = value.trim().parse::<u8>() else { continue };
-            match key.trim().to_ascii_lowercase().as_str() {
-                "color1.r" => rgb[0] = Some(value),
-                "color1.g" => rgb[1] = Some(value),
-                "color1.b" => rgb[2] = Some(value),
-                _ => {}
+            let key = key.trim().to_ascii_lowercase();
+            if key == "stripepackage" {
+                scheme.stripe_package = value.trim().parse().unwrap_or(0);
+                continue;
+            }
+            let Some((colour, channel)) = key.strip_prefix("color").and_then(|r| r.split_once('.')) else { continue };
+            let (Ok(colour), Ok(value)) = (colour.parse::<usize>(), value.trim().parse::<u8>()) else { continue };
+            let Some(k) = ["r", "g", "b"].iter().position(|c| *c == channel) else { continue };
+            if (1..=4).contains(&colour) {
+                scheme.colours[colour - 1][k] = value;
+                if colour == 1 {
+                    has_body[k] = true;
+                }
             }
         }
     }
-    flush(current, &rgb);
+    flush(current, &scheme, &has_body);
     out
 }
 
-/// Applies the paint colour to the body page using its alpha channel as the paint mask: alpha 255
-/// means "not painted" (black soft top, exhaust, lamp lenses), alpha 0 is a hole, and the partial
-/// values (about 140-220) are painted body, strongest near 224. Colours are multiplied toward the
-/// paint colour by the mask strength. Evidence: the soft-top tile is 31% alpha 255, the exhaust 100%.
-pub fn tint_paint_mask(rgba: &mut [u8], colour: [u8; 3]) {
+/// How many colour bands a car's artwork can use.
+pub const BANDS: usize = 18;
+
+/// The stripe packages of `CarModel/packages.ini`: for each package (`[packageN]`, N from 1), which
+/// of the scheme's four colours (0 = `color1`) each band takes. Unlisted bands use colour 0, except
+/// bands 14 and 15, which use colour 3 (`color4`); that is the engine's default.
+pub fn parse_packages(text: &str) -> Vec<[u8; BANDS]> {
+    let mut default = [0u8; BANDS];
+    default[14] = 3;
+    default[15] = 3;
+    let mut out: Vec<[u8; BANDS]> = Vec::new();
+    let mut current: Option<usize> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            current = name.to_ascii_lowercase().strip_prefix("package").and_then(|n| n.parse::<usize>().ok()).filter(|n| *n >= 1);
+            if let Some(n) = current {
+                if out.len() < n {
+                    out.resize(n, default);
+                }
+            }
+        } else if let (Some(n), Some((key, value))) = (current, line.split_once('=')) {
+            let band = key.trim().to_ascii_lowercase().strip_prefix("band").and_then(|b| b.parse::<usize>().ok());
+            if let (Some(band), Ok(colour)) = (band, value.trim().parse::<u8>()) {
+                if band < BANDS && colour < 4 {
+                    out[n - 1][band] = colour;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The colour of every band for a paint scheme: each band takes the scheme colour its stripe
+/// package names (the default bands when the package does not exist).
+pub fn band_colours(scheme: &PaintScheme, packages: &[[u8; BANDS]]) -> [[u8; 3]; BANDS] {
+    let mut table = [0u8; BANDS];
+    table[14] = 3;
+    table[15] = 3;
+    let table = packages.get(scheme.stripe_package).copied().unwrap_or(table);
+    table.map(|c| scheme.colours[c as usize])
+}
+
+/// Which colour band a texel of car artwork belongs to, from its alpha: the alpha is split into 21
+/// steps (`(alpha + 1) * 20 / 256`); steps 0, 10 and 20 keep the artwork's own colour (`None`),
+/// steps 11-19 are bands 8 down to 0 and steps 1-9 bands 17 down to 9. Read from the engine's tile
+/// copy; e.g. the body panels (alpha about 200) are band 4 and the cabin trim (alpha about 50)
+/// band 14, which the default package paints in `color4`.
+pub fn alpha_band(alpha: u8) -> Option<usize> {
+    let step = (alpha as usize + 1) * 20 / 256;
+    match step {
+        0 | 10 | 20 => None,
+        11..=19 => Some(19 - step),
+        _ => Some(18 - step),
+    }
+}
+
+/// Paints artwork the way the engine does when it copies a tile onto a car page: every texel in a
+/// colour band becomes that band's colour scaled by the texel's brightness (its red channel; the
+/// artwork is grey), and is solid unless its alpha is 0. Texels outside the bands are untouched.
+pub fn tint_bands(rgba: &mut [u8], bands: &[[u8; 3]; BANDS]) {
     for px in rgba.chunks_exact_mut(4) {
-        let a = px[3];
-        if a == 0 || a == 255 {
-            continue;
-        }
-        let m = (a as f32 / 224.0).min(1.0);
+        let Some(band) = alpha_band(px[3]) else { continue };
+        let shade = px[0] as u32;
         for k in 0..3 {
-            let mult = 1.0 - m * (1.0 - colour[k] as f32 / 255.0);
-            px[k] = (px[k] as f32 * mult).round() as u8;
+            px[k] = (bands[band][k] as u32 * shade / 256) as u8;
         }
+        px[3] = 255;
     }
 }
 
@@ -564,6 +743,8 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
     let data = if refpack::is_refpack(&raw) { refpack::decompress(&raw).map_err(|e| format!("{}: {e}", path.display()))? } else { raw };
     let crp = crp::parse(&data).map_err(|e| format!("{e}"))?;
     let kinds: std::collections::HashMap<u16, String> = crp.materials().into_iter().map(|m| (m.index, m.kind)).collect();
+    // the texture page each material is drawn with (see `crp::Material::page`)
+    let material_pages: std::collections::HashMap<u16, usize> = crp.materials().into_iter().map(|m| (m.index, m.page as usize)).collect();
 
     let mut model = CarModel {
         name: name.to_string(),
@@ -592,150 +773,57 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         article_names: (0..crp.articles.len()).map(|a| crp.article_name(a).unwrap_or_default()).collect(),
         style_name: String::new(),
         style_count: 0,
+        pages: Vec::new(),
+        page_source: Vec::new(),
+        driver_eye: [0.0; 3],
+        driver_rot: [0.0; 3],
     };
-    // Textures live inside the car file as embedded archives; index 0 = exterior, 1 = interior,
-    // 2 = trim and wheels, 3 = glass (checked by eye on the 993). Page sizes come from the car's
-    // .tpg text file (the wheel and trim page is 128 x 128, not 256); defaults if it is missing.
+    // The car's .tpg text file lists its texture pages, the files that fill them (most embedded
+    // in the car file), the body styles and which tiles each style draws.
     let tpg = fs::read_to_string(car_dir()?.join(format!("{name}.tpg"))).unwrap_or_default();
-    let sizes = tpg_page_sizes(&tpg);
     let rules = parse_tpg(&tpg);
     let style = rules.styles.get(style_number.saturating_sub(1)).or_else(|| rules.styles.first()).cloned().unwrap_or_default();
     model.style_name = style.name.clone();
     model.style_count = rules.styles.len();
-    // door-handle tiles on the body page, as UV rectangles (u0, v0, u1, v1); see `handle_on_body_page`
-    let mut body_handle_tiles: Vec<[f32; 4]> = Vec::new();
-    // the plate tile(s) on the trim page (`lice`), as UV rectangles; see `plate_batch`
-    let mut plate_tiles: Vec<[f32; 4]> = Vec::new();
+    // every texture page, as the engine builds them (see `build_tpages`)
+    let layout = parse_tpg_layout(&tpg);
+    // the paint scheme's colours, spread over the colour bands by its stripe package
+    let packages = parse_packages(&fs::read_to_string(car_dir()?.join("packages.ini")).unwrap_or_default());
+    let bands = parse_clr(&fs::read_to_string(car_dir()?.join(format!("{name}.clr"))).unwrap_or_default()).get(&paint).map(|scheme| band_colours(scheme, &packages));
+    let embedded = crp.embedded_archives();
+    model.pages = build_tpages(&layout, &embedded, &car_dir()?, &PageChoice { rules: &rules, style: &style, driver, bands });
+    model.page_source = layout.tpages.iter().map(|t| t.source).collect();
+    let has_page: Vec<bool> = model.pages.iter().map(Option::is_some).collect();
+    // a material whose page is missing falls back to the page of its kind's usual file
+    let file_page = |file: &str| layout.files.iter().find(|f| f.name == file).and_then(|f| f.tpage).filter(|t| has_page.get(*t) == Some(&true));
+    let fallback_page = |finish: Finish| -> usize {
+        let file = match finish {
+            Finish::Paint => "exterior.fsh",
+            Finish::Interior => "interior.fsh",
+            Finish::Glass => "glass.fsh",
+            Finish::Trim | Finish::Tyre => "extint.fsh",
+        };
+        file_page(file).or_else(|| file_page("exterior.fsh")).unwrap_or(0)
+    };
+    let (campos, camrot) = driver_camera(&tpg, style_number);
+    model.driver_rot = camrot;
     let file_names = tpg_file_names(&tpg);
     // Traffic cars (no trim page) only go down to level 3, which is very crude (32 body triangles
     // and no lamps on eas1), and are low-poly anyway: use their level 1.
     let traffic = !file_names.is_empty() && !file_names.values().any(|n| n == "extint.fsh");
     let level = if traffic { 1 } else { level };
-    // traffic cars spread one part's artwork over two 128-px pages ("exterior": body and tyres;
-    // "interior": lamps, glass, plate, wheel faces, underside); kept tiles of each, see `TrafficAtlas`
-    let mut atlas_tiles: [Vec<NamedTile>; 2] = [Vec::new(), Vec::new()];
-    for (index, blob) in crp.embedded_archives() {
-        // the archive's job comes from its file name: traffic cars list exterior, interior, shadow
-        // and driver files, so their third archive is a shadow, not a trim page
-        let file_name = file_names.get(&index).map(String::as_str);
-        if traffic && driver != 0 && file_name == Some("driver.fsh") {
-            // a traffic car's own driver texture (one page for body and head)
-            if let Ok(archive) = shpi::parse(blob) {
-                let size = sizes.get(&index).copied().unwrap_or(64);
-                let rgba = shpi::compose_page(blob, &archive, size);
-                let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
-                model.suit_page = Some(Page { size, rgba, has_alpha });
-                model.head_page = model.suit_page.clone();
-            }
-            continue;
-        }
-        let Some(role) = page_role(index, file_name) else { continue };
-        let default_size = match role {
-            0 | 1 => 256,
-            2 => 128,
-            _ => 64,
-        };
-        let size = sizes.get(&index).copied().unwrap_or(default_size);
-        let Ok(archive) = shpi::parse(blob) else { continue };
-        // draw only the tiles the style uses (alternative roofs, sides, badges, wheel faces, ...)
-        let keep = tile_flags(&archive, &rules, index, &style);
-        let mut rgba = shpi::compose_page_filtered(blob, &archive, size, &keep);
-        if traffic && role <= 1 {
-            let s = size as f32;
-            let rects: Vec<NamedTile> = archive
-                .entries
-                .iter()
-                .zip(&keep)
-                .filter(|(_, k)| **k)
-                .map(|(e, _)| ([e.x as f32 / s, e.y as f32 / s, (e.x as f32 + e.width as f32) / s, (e.y as f32 + e.height as f32) / s], e.name.clone()))
-                .collect();
-            atlas_tiles[role as usize] = rects;
-        }
-        if role == 2 {
-            let s = size as f32;
-            plate_tiles = archive
-                .entries
-                .iter()
-                .filter(|e| e.name.to_ascii_lowercase().starts_with("lice"))
-                .map(|e| [e.x as f32 / s, e.y as f32 / s, (e.x as f32 + e.width as f32) / s, (e.y as f32 + e.height as f32) / s])
-                .collect();
-        }
-        if role == 0 {
-            let s = size as f32;
-            body_handle_tiles = archive
-                .entries
-                .iter()
-                .filter(|e| e.name.to_ascii_lowercase().starts_with("hand"))
-                .map(|e| [e.x as f32 / s, e.y as f32 / s, (e.x as f32 + e.width as f32) / s, (e.y as f32 + e.height as f32) / s])
-                .collect();
-            // the body page's alpha is a paint mask, not transparency: paint first, then keep only the real holes
-            let clr = fs::read_to_string(car_dir()?.join(format!("{name}.clr"))).unwrap_or_default();
-            if let Some(colour) = parse_clr(&clr).get(&paint) {
-                tint_paint_mask(&mut rgba, *colour);
-            }
-            alpha_to_mask(&mut rgba);
-        }
-        let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
-        let page = Page { size, rgba, has_alpha };
-        match role {
-            0 => model.exterior = Some(page),
-            1 => model.interior_page = Some(page),
-            2 => model.extint = Some(page),
-            _ => model.glass_page = Some(page),
-        }
-    }
-    // traffic cars: one texture with the exterior page on the left and the interior page on the
-    // right; every exterior part points into the half its UVs fit (see `TrafficAtlas::place`)
-    let atlas = if traffic {
-        match (&model.exterior, &model.interior_page) {
-            (Some(e), Some(i)) => {
-                let atlas = TrafficAtlas::build(e, i, atlas_tiles.clone());
-                let page = atlas.page.clone();
-                model.exterior = Some(page.clone());
-                model.extint = Some(page.clone());
-                model.glass_page = Some(page);
-                Some(atlas)
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-    // cars with a single body page draw trim, wheels and glass from it too
-    if model.extint.is_none() {
-        model.extint = model.exterior.clone();
-    }
-    if model.glass_page.is_none() {
-        model.glass_page = model.exterior.clone();
-    }
-    // the soft top's rear window has its own small texture in a shared file next to the cars
-    if let Ok(blob) = fs::read(car_dir()?.join("Cabrio.fsh")) {
-        if let Ok(archive) = shpi::parse(&blob) {
-            let size = sizes.get(&6).copied().unwrap_or(32); // file7 in the .tpg
-            let rgba = shpi::compose_page(&blob, &archive, size);
-            let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
-            model.cabrio_page = Some(Page { size, rgba, has_alpha });
-        }
-    }
-    // Driver textures: Suit.fsh (file 9) and Head.fsh (file 10) hold one skin per driver type; draw
-    // only the tiles the .tpg assigns to this type (type 1 = `suit` and `helm`).
-    if driver != 0 && !traffic {
-        let driver_style = Style { geometry: [(9u32, driver as u32)].into_iter().collect(), ..Default::default() };
-        for (file_name, index) in [("Suit.fsh", 8u16), ("Head.fsh", 9u16)] {
-            let Ok(blob) = fs::read(car_dir()?.join(file_name)) else { continue };
-            let Ok(archive) = shpi::parse(&blob) else { continue };
-            let size = sizes.get(&index).copied().unwrap_or(128);
-            let keep = tile_flags(&archive, &rules, index, &driver_style);
-            let rgba = shpi::compose_page_filtered(&blob, &archive, size, &keep);
-            let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
-            let page = Page { size, rgba, has_alpha };
-            if index == 8 {
-                model.suit_page = Some(page);
-            } else {
-                model.head_page = Some(page);
-            }
-        }
-    }
+    // the pages by their usual job, for the examples that look at them
+    let pages = model.pages.clone();
+    let page_of = |file: &str| file_page(file).and_then(|t| pages[t].clone());
+    model.exterior = page_of("exterior.fsh");
+    model.interior_page = page_of("interior.fsh");
+    model.extint = page_of("extint.fsh").or_else(|| model.exterior.clone());
+    model.glass_page = page_of("glass.fsh").or_else(|| model.exterior.clone());
+    model.cabrio_page = page_of("cabrio.fsh");
+    model.suit_page = page_of("suit.fsh").or_else(|| page_of("driver.fsh"));
+    model.head_page = page_of("head.fsh").or_else(|| page_of("driver.fsh"));
+    // the soft top's rear window is drawn from the shared cabrio file's page
+    let cabrio_page = file_page("cabrio.fsh");
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     // the driver's batches by material; split into head and suit after the loop
     let mut driver_parts: Vec<(u16, Piece)> = Vec::new();
@@ -774,22 +862,6 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
             if !is_driver && (finish == Finish::Interior) != interior_pass {
                 continue;
             }
-            // door handles: the same material kind points at the trim page on some cars (928) and
-            // at a `hand` tile on the body page on others (959); go by where the UVs fall
-            let finish = if !interior_pass && article_name.starts_with("Handle") && handle_on_body_page(&b.uv_idx, &mesh.uvs, &body_handle_tiles) {
-                Finish::Paint
-            } else {
-                finish
-            };
-            // traffic cars: which of the two pages this batch's artwork is on (body parts default to
-            // the exterior page, everything else to the interior page)
-            let atlas_half = match (&atlas, interior_pass || is_driver) {
-                (Some(at), false) => {
-                    let uvs: Vec<[f32; 2]> = b.uv_idx.iter().map(|&i| mesh.uvs[i as usize]).collect();
-                    Some(at.half_for(&uvs, &article_name, if finish == Finish::Paint { 0 } else { 1 }))
-                }
-                _ => None,
-            };
             // a batch whose UVs span less than 2 texels of the 128-px trim page samples one solid
             // colour (944 underside, arch liners); its texel's alpha is not a cut-out
             let solid_sample = !is_wheel && {
@@ -803,32 +875,16 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                 }
                 !b.uv_idx.is_empty() && (u1 - u0) * 128.0 < 2.0 && (v1 - v0) * 128.0 < 2.0
             };
-            // a License batch whose UVs fit the trim page's `lice` tile is the plate itself
-            let plate_batch = article_name.starts_with("License") && (plate_tiles.is_empty() || handle_on_body_page(&b.uv_idx, &mesh.uvs, &plate_tiles));
-            // traffic lamps are trim-kind batches on the interior page; treat them like body lamps
-            let lamp_finish = if atlas.is_some() && finish == Finish::Trim { Finish::Paint } else { finish };
-            // a batch of a soft-top article whose UVs cover most of a page is the rear window
-            let cabrio_window = !interior_pass && article_name.starts_with("Cabrio") && {
-                let (mut u0, mut u1, mut v0, mut v1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
-                for &i in &b.uv_idx {
-                    let uv = mesh.uvs[i as usize];
-                    u0 = u0.min(uv[0]);
-                    u1 = u1.max(uv[0]);
-                    v0 = v0.min(uv[1]);
-                    v1 = v1.max(uv[1]);
-                }
-                u1 - u0 > 0.5 && v1 - v0 > 0.5
-            };
+            let plate_batch = article_name.starts_with("License");
+            // traffic lamps are trim-kind batches; treat them like body lamps
+            let lamp_finish = if traffic && finish == Finish::Trim { Finish::Paint } else { finish };
+            // the texture page comes from the material; a page the car does not have falls back to
+            // the usual page of the material's kind
+            let page = material_pages.get(&b.material).copied().filter(|p| has_page.get(*p) == Some(&true)).unwrap_or_else(|| fallback_page(finish));
+            // the soft top's rear window is drawn from the shared cabrio page, see-through
+            let cabrio_window = !interior_pass && cabrio_page == Some(page);
             for t in 0..b.vertex_idx.len() / 3 {
-                let raw_uvs: Vec<[f32; 2]> = (0..3).map(|q| mesh.uvs[b.uv_idx[3 * t + q] as usize]).collect();
-                // traffic cars: per triangle, since one batch can mix tiles of both pages (eas10 tyres)
-                let corner_uvs: Vec<[f32; 2]> = match (&atlas, atlas_half) {
-                    (Some(at), Some(h)) => {
-                        let h = at.half_for(&raw_uvs, &article_name, h);
-                        raw_uvs.iter().map(|uv| at.place(*uv, h)).collect()
-                    }
-                    _ => raw_uvs,
-                };
+                let corner_uvs: Vec<[f32; 2]> = (0..3).map(|q| mesh.uvs[b.uv_idx[3 * t + q] as usize]).collect();
                 let tri: Vec<[f32; 3]> = (0..3)
                     .map(|q| {
                         let p = mesh.positions[b.vertex_idx[3 * t + q] as usize];
@@ -876,9 +932,9 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                         Finish::Trim | Finish::Tyre => &mut model.trim,
                     }
                 };
-                // lamp lenses, door handles and plates lie on the body surface and flicker against it
-                // (or vanish behind it); lift them slightly
-                let on_surface = !interior_pass && (article_name.starts_with("Handle") || article_name.starts_with("License"));
+                // lamp lenses, door handles, plates and decals (badges, gauge faces) lie on the surface
+                // under them and flicker against it (or vanish behind it); lift them slightly
+                let on_surface = (!interior_pass && (article_name.starts_with("Handle") || article_name.starts_with("License"))) || article_name.starts_with("Decal");
                 let lift = if on_surface || lamp_end(&article_name, lamp_finish, interior_pass, &tri).is_some() { LAMP_LIFT } else { 0.0 };
                 for (q, p) in tri.iter().enumerate() {
                     let p = &[p[0] + n[0] * lift, p[1] + n[1] * lift, p[2] + n[2] * lift];
@@ -887,6 +943,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                     target.uvs.push(corner_uvs[q]);
                     target.materials.push(b.material);
                     target.articles.push(a as u16);
+                    target.pages.push(page as u8);
                     if !is_wheel && !interior_pass && !is_driver {
                         for k in 0..3 {
                             lo[k] = lo[k].min(p[k]);
@@ -925,6 +982,8 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         return Err(format!("no body triangles found for car '{name}' at level {level}"));
     }
     model.size = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+    // the engine's car centre is half the model's height (wheels included, so from the ground) up
+    model.driver_eye = driver_eye(campos, (hi[1] - lo[1].min(0.0)) / 2.0);
     Ok(model)
 }
 
@@ -939,19 +998,6 @@ mod tests {
         assert_eq!(finish_for_material("CarWheel"), Some(Finish::Tyre));
         assert_eq!(finish_for_material("CarInt"), Some(Finish::Interior));
         assert_eq!(finish_for_material("Something"), Some(Finish::Trim));
-    }
-
-    #[test]
-    fn page_sizes_come_from_the_tpg_file() {
-        let tpg = "[header]\r\nnumfiles=3\r\n[tpage1.details]\r\nwidth=256\r\nheight=256\r\n[tpage4.details]\r\nwidth=128\r\n\
-                   [tpage5.details]\r\nwidth=64\r\n[file1.details]\r\nmirror=1\r\ntpage=1\r\n[file3.details]\r\ntpage=4\r\n\
-                   [file4.details]\r\nwidth=64\r\ntpage=5\r\n[file9.details]\r\ntpage=99\r\n";
-        let sizes = tpg_page_sizes(tpg);
-        assert_eq!(sizes.get(&0), Some(&256)); // file1 -> embedded archive 0 -> tpage1
-        assert_eq!(sizes.get(&2), Some(&128)); // file3 -> archive 2 -> tpage4
-        assert_eq!(sizes.get(&3), Some(&64)); // file4 -> archive 3 -> tpage5 (its own width=64 line is ignored)
-        assert_eq!(sizes.get(&8), None); // tpage99 has no width
-        assert!(tpg_page_sizes("").is_empty());
     }
 
     const SAMPLE_TPG: &str = "[style1]\nname=Carreracoupe\ncount=2\ngeometry1=9\ntype1=1\ntexture2=22\ntype2=3\n\
@@ -996,33 +1042,61 @@ mod tests {
     }
 
     #[test]
-    fn body_alpha_is_a_mask_only_zero_is_a_hole() {
+    fn page_formats_keep_their_alpha() {
+        // 1555 pages (the default): only alpha 0 is see-through, so the body's paint mask is solid
         let mut px = vec![10, 20, 30, 0, 10, 20, 30, 1, 10, 20, 30, 140, 10, 20, 30, 255];
-        alpha_to_mask(&mut px);
+        PageFormat::A1.reduce_alpha(&mut px);
         assert_eq!(px.iter().skip(3).step_by(4).copied().collect::<Vec<_>>(), vec![0, 255, 255, 255]);
         assert_eq!(&px[0..3], &[10, 20, 30]); // colours are untouched
+        let mut px = vec![0, 0, 0, 140, 0, 0, 0, 15];
+        PageFormat::A4.reduce_alpha(&mut px);
+        assert_eq!((px[3], px[7]), (136, 0));
+        let mut px = vec![0, 0, 0, 140];
+        PageFormat::A8.reduce_alpha(&mut px);
+        assert_eq!(px[3], 140);
+        assert_eq!(parse_tpg_layout("[tpage1.details]
+bpp=4444
+[tpage2.details]
+width=8
+").tpages.iter().map(|t| t.format).collect::<Vec<_>>(), vec![PageFormat::A4, PageFormat::A1]);
     }
 
     #[test]
-    fn paint_colours_come_from_the_clr_sections() {
-        let clr = "[section1]\r\nstripepackage=2\r\ncolor1.h=51\r\ncolor1.r=93\r\ncolor1.g=94\r\ncolor1.b=89\r\ncolor2.r=255\r\n\
+    fn paint_schemes_come_from_the_clr_sections() {
+        let clr = "[section1]\r\nstripepackage=2\r\ncolor1.h=51\r\ncolor1.r=93\r\ncolor1.g=94\r\ncolor1.b=89\r\ncolor4.r=197\r\ncolor4.g=161\r\ncolor4.b=98\r\n\
                    [section4]\r\ncolor1.r=255\r\ncolor1.g=0\r\ncolor1.b=0\r\n[section9]\r\ncolor1.r=1\r\n";
         let paint = parse_clr(clr);
-        assert_eq!(paint.get(&1), Some(&[93, 94, 89])); // color2 is ignored
-        assert_eq!(paint.get(&4), Some(&[255, 0, 0]));
-        assert_eq!(paint.get(&9), None); // incomplete section
+        assert_eq!(paint[&1], PaintScheme { colours: [[93, 94, 89], [0; 3], [0; 3], [197, 161, 98]], stripe_package: 2 });
+        assert_eq!(paint[&4].colours[0], [255, 0, 0]);
+        assert_eq!(paint.get(&9), None); // incomplete body colour
         assert!(parse_clr("").is_empty());
     }
 
     #[test]
-    fn paint_tint_uses_the_mask() {
-        // strongest paint (alpha 224): white becomes the paint colour
-        let mut px = vec![200, 200, 200, 224, 200, 200, 200, 255, 200, 200, 200, 0, 200, 200, 200, 112];
-        tint_paint_mask(&mut px, [255, 0, 0]);
-        assert_eq!(&px[0..4], &[200, 0, 0, 224]); // fully painted red
-        assert_eq!(&px[4..8], &[200, 200, 200, 255]); // alpha 255 = not painted
-        assert_eq!(&px[8..12], &[200, 200, 200, 0]); // holes untouched
-        assert_eq!(&px[12..16], &[200, 100, 100, 112]); // half mask = half way to red
+    fn alpha_picks_the_colour_band() {
+        assert_eq!(alpha_band(0), None); // see-through
+        assert_eq!(alpha_band(255), None); // own colour (lamp lenses, soft top)
+        assert_eq!(alpha_band(130), None);
+        assert_eq!(alpha_band(200), Some(4)); // body panels
+        assert_eq!(alpha_band(140), Some(8)); // side panel
+        assert_eq!(alpha_band(243), Some(0));
+        assert_eq!(alpha_band(50), Some(15)); // cabin trim: color4 by default
+        assert_eq!(alpha_band(12), Some(17));
+    }
+
+    #[test]
+    fn packages_spread_the_scheme_colours() {
+        let packages = parse_packages("[header]\r\ncount=3\r\n[package1]\r\n[package3]\r\nband1=1\r\nband7=2\r\n");
+        assert_eq!(packages.len(), 3);
+        assert_eq!(packages[0][14], 3); // default: bands 14 and 15 take color4
+        assert_eq!(packages[2][1], 1);
+        let scheme = PaintScheme { colours: [[255, 0, 0], [0, 72, 106], [255, 255, 255], [197, 161, 98]], stripe_package: 2 };
+        let bands = band_colours(&scheme, &packages);
+        assert_eq!((bands[0], bands[1], bands[7], bands[14]), ([255, 0, 0], [0, 72, 106], [255, 255, 255], [197, 161, 98]));
+        // a white body texel (band 4) becomes the body colour, a band-15 texel the cabin colour
+        let mut px = vec![255, 255, 255, 200, 128, 128, 128, 50, 9, 9, 9, 255];
+        tint_bands(&mut px, &bands);
+        assert_eq!(px, vec![254, 0, 0, 255, 98, 80, 49, 255, 9, 9, 9, 255]);
     }
 
     #[test]
@@ -1040,46 +1114,40 @@ mod tests {
     }
 
     #[test]
-    fn pages_are_chosen_by_file_name() {
-        let porsche = tpg_file_names("[header]\r\nnumfiles=4\r\nfile1=exterior.fsh\r\nfile2=interior.fsh\r\nfile3=extint.fsh\r\nfile4=glass.fsh\r\n");
-        let traffic = tpg_file_names("[header]\r\nfile1=Exterior.fsh\r\nfile2=interior.fsh\r\nfile3=shadow.fsh\r\nfile4=driver.fsh\r\n");
-        assert_eq!(page_role(2, porsche.get(&2).map(String::as_str)), Some(2));
-        assert_eq!(page_role(3, porsche.get(&3).map(String::as_str)), Some(3));
-        assert_eq!(page_role(0, traffic.get(&0).map(String::as_str)), Some(0)); // case does not matter
-        assert_eq!(page_role(2, traffic.get(&2).map(String::as_str)), None); // shadow
-        assert_eq!(page_role(3, traffic.get(&3).map(String::as_str)), None); // driver
-        assert_eq!(page_role(2, None), Some(2)); // no .tpg: Porsche order
-        assert_eq!(page_role(5, None), None);
+    fn tpg_layout_lists_pages_and_files() {
+        let tpg = "[header]\r\nnumfiles=3\r\nfile1=exterior.fsh\r\nfile2=interior.fsh\r\nfile3=Cabrio.fsh\r\n\
+                   [tpage1.details]\r\nwidth=256\r\nheight=256\r\nmirrortpage=2\r\n[tpage2.details]\r\nwidth=256\r\nheight=256\r\nsourcetpage=1\r\n\
+                   [tpage3.details]\r\nwidth=32\r\nheight=32\r\nbpp=4444\r\n[file1.details]\r\nmirror=1\r\ntpage=1\r\noffsetx=0\r\n\
+                   [file2.details]\r\ntpage=2\r\noffsetx=8\r\noffsety=16\r\n[file3.details]\r\ntpage=3\r\nglobal=5\r\ntint=0\r\n";
+        let l = parse_tpg_layout(tpg);
+        assert_eq!(l.tpages.len(), 3);
+        assert_eq!(l.tpages[0], TpageInfo { width: 256, height: 256, source: None, format: PageFormat::A1 });
+        assert_eq!(l.tpages[2].format, PageFormat::A4);
+        assert_eq!(l.tpages[1].source, Some(0)); // the body page's twin
+        assert_eq!(l.files[0], FileInfo { name: "exterior.fsh".into(), tpage: Some(0), ..Default::default() });
+        assert_eq!(l.files[1].offset, [8, 16]);
+        assert_eq!(l.files[2], FileInfo { name: "cabrio.fsh".into(), tpage: Some(2), global: 5, tint: false, ..Default::default() });
+        assert_eq!(GLOBAL_FILES[l.files[2].global as usize - 1], "cabrio.fsh");
+        assert_eq!(parse_tpg_layout(""), TpgLayout::default());
     }
 
     #[test]
-    fn traffic_atlas_picks_the_right_page() {
-        let opaque = |size: u32| Page { size, rgba: vec![255; (size * size * 4) as usize], has_alpha: false };
-        let mut interior = opaque(4);
-        for px in interior.rgba.chunks_exact_mut(4).skip(8) {
-            px[3] = 0; // bottom half of the interior page is empty
-        }
-        let tiles = [
-            vec![([0.5, 0.0, 1.0, 0.5], "tref".to_string())],
-            vec![([0.5, 0.0, 1.0, 0.5], "lit2".to_string()), ([0.0, 0.5, 0.5, 1.0], "glas".to_string())],
-        ];
-        let at = TrafficAtlas::build(&opaque(4), &interior, tiles);
-        let both = [[0.6, 0.1], [0.9, 0.4]];
-        assert_eq!(at.half_for(&both, "WheelWell", 1), 0); // tread tile wins over the tail light
-        assert_eq!(at.half_for(&both, "Light2", 0), 1);
-        assert_eq!(at.half_for(&[[0.1, 0.6], [0.4, 0.9]], "Body", 0), 1); // only the interior has a tile
-        assert_eq!(at.half_for(&[[0.6, 0.6], [0.9, 0.9]], "Bottom", 1), 0); // no tile: the opaque page
-        assert_eq!(at.place([0.5, 0.5], 1), [0.75, 0.25]);
+    fn driver_camera_prefers_the_style_entry() {
+        let tpg = "[header]\r\ndrivercampos=-0.43,0.30,-0.53\r\ndrivercamrot=1.0,0.0,0.0\r\n\
+                   drivercamposstyle0=-0.43,0.34,-0.48\r\ndrivercamrotstyle0=0.3,0.0,0.0\r\n[style1]\r\ndrivercampos=9,9,9\r\n";
+        // style 1 is `style0` in the camera keys
+        assert_eq!(driver_camera(tpg, 1), ([-0.43, 0.34, -0.48], [0.3, 0.0, 0.0]));
+        assert_eq!(driver_camera(tpg, 2), ([-0.43, 0.30, -0.53], [1.0, 0.0, 0.0]));
+        assert_eq!(driver_camera("", 1), ([-0.36, 0.4, -0.25], [0.0; 3]));
     }
 
     #[test]
-    fn handles_follow_their_uvs() {
-        let uvs = [[0.13, 0.25], [0.25, 0.25], [0.25, 0.31], [0.6, 0.6]];
-        let tile = [[32.0 / 256.0, 64.0 / 256.0, 64.0 / 256.0, 80.0 / 256.0]];
-        assert!(handle_on_body_page(&[0, 1, 2], &uvs, &tile));
-        assert!(!handle_on_body_page(&[0, 1, 3], &uvs, &tile)); // reaches outside the tile
-        assert!(!handle_on_body_page(&[0, 1, 2], &uvs, &[])); // no hand tile on this car
-        assert!(!handle_on_body_page(&[], &uvs, &tile));
+    fn driver_eye_turns_the_engine_frame() {
+        // 993: 0.38 to the left (the steering-wheel side), 0.40 above the centre, 0.155 behind it
+        let eye = driver_eye([-0.382813, 0.397512, -0.155002], 0.65);
+        assert!((eye[0] - 0.382813 * MIRROR_X).abs() < 1e-6);
+        assert!((eye[1] - 1.047512).abs() < 1e-6);
+        assert!((eye[2] - 0.155002).abs() < 1e-6); // behind = +z for a car facing -z
     }
 
     #[test]
@@ -1110,8 +1178,10 @@ mod tests {
 
     #[test]
     fn skipped_names() {
-        assert!(is_skipped_name("DecalHood"));
+        assert!(!is_skipped_name("DecalHood"));
+        assert!(!is_skipped_name("DecalGauge"));
         assert!(is_skipped_name("WheelShadowFront"));
+        assert!(is_skipped_name("Passenger"));
         assert!(!is_skipped_name("LODDriver3")); // drivers are picked by their own type, not skipped
         assert!(!is_skipped_name("Body"));
         assert!(!is_skipped_name("WheelFront"));
