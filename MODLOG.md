@@ -510,3 +510,19 @@ Built in parallel sessions and merged here (branches `claude/qr-menus-*`, `fe-to
 - **Ground fix**: road on non-`RD` pieces, upside-down road faces, wall height test. A scripted drive now finishes all 15 tracks forward.
 - **Wiring** (`main.rs` `run_flow`): menu -> (exit code 10) -> race behind the loading screen with the HUD -> Enter on the results -> menu at quickrace. Each runs as its own program in turn.
 - Checks: all workspace tests pass. A live race run behind the loading screen logged the countdown 1 s apart and GO. The menu's setup (Cote d'Azur, '50 356) loaded and started. **Not tested**: a full race driven by hand, and clicking through the menus live.
+
+## 2026-10-18 - Milestone: opponents, retail physics, car models, garage
+Merged from parallel sessions (`claude/physics-*`, `car-fixes-*`, `focused-euclid-*`, `vibrant-perlman-*`, `garage-room-*`).
+- **Physics** (`car_sim.rs`, formats `.sim` reader): per-car data from `GameData/Simulation/CarData` (86 cars).
+  - Engine torque curve and gearbox (automatic, or manual X/Z), clutch, engine braking, ABS and traction control.
+  - Per-wheel grip with weight transfer; retail wall response; `collide_cars`.
+  - Retail tick rates: forces at 32 Hz, motion at 64 Hz. Real rpm and gear on the HUD.
+  - Checked against the cars' showroom specs, not against retail driving.
+- **Car models**: textures, a textured cabin with gauges, the `.tpg` in-car camera. The audit is clean for every Porsche.
+- **Chase camera** (`chase_cam.rs`): the engine's chase view, a 75 degree field of view, wheel shadows and a soft ground shadow.
+- **AI opponents** (`ai.rs`, `aidata.rs`): drivers from `nfs5.per` with a skill factor, `.ais` speed tables, `.lsp` racing lines, and retail's leader slow-down. Opponent cars follow the menu rule. Positions and results are real.
+  - The menu's opponents and difficulty reach the race (`NFSPU_RACE`, `NFSPU_OPPONENTS`).
+- **Garage room**: a 3D garage behind the main menu, quick race and garage pages, with the chosen car turning. Clicking the car works: front for the lights, side for a door, an open door to climb into the cabin.
+- Checks: all workspace tests pass (69 formats, 200 game, 6 binary). A live monaco5 race with 7 opponents finished with real positions.
+- **Not tested**: the results screen against opponents, a whole flow from the menu with opponents, the in-car camera against retail, and garage cars other than the 356.
+- Disk: merged sessions' build folders deleted (213 GB freed); rule in AGENTS.md.

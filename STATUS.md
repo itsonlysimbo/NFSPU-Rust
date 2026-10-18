@@ -1,3 +1,31 @@
+# Latest (2026-10-18): opponents, retail physics, car models and garage merged
+
+- Master now has:
+  - AI opponents (up to 7, retail drivers and racing lines);
+  - retail car physics from the per-car `.sim` data;
+  - fixed car textures and cabins;
+  - the engine's chase camera with shadows;
+  - the 3D garage behind the menus.
+  All tests pass.
+- Verified by logs and captures:
+  - a monaco5 race with 7 opponents finishes with real positions;
+  - top speeds within 1% of the showroom specs (Boxster +4%);
+  - the garage framing and brightness are close to a retail frame (shutter door lighter).
+- **Not tested**:
+  - a full quick race played by hand from the menu with opponents;
+  - the in-car camera and handling feel against retail;
+  - garage cars other than the 356.
+- Known gaps:
+  - traffic;
+  - suspension, roll-overs and damage;
+  - mirrored tracks;
+  - the retail results screen (still a placeholder);
+  - the location screen's track room;
+  - the owned car's paint from the save;
+  - route choice at junctions.
+- Next playtest: one recording of a full quick race from the menu with opponents, with game sound on.
+
+---
 # Latest (2026-10-17): quick race end to end - first pass merged
 
 - Six parallel branches merged into master: menus, help tips, loading screen, race rules, HUD and ground fix. `main.rs` joins them into one loop: menu -> loading screen -> race -> results -> menu.
