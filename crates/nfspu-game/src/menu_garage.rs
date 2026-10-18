@@ -36,11 +36,9 @@ const FAN_RATE: [f32; 3] = [0.0, 1.0, 128.0 / 192.0];
 /// Lights fade on in about half a second (retail times them with the system clock; the length is
 /// read from data not traced yet, **guess**).
 const LIGHT_SECONDS: f32 = 0.4;
-/// Level of detail of the show car. Retail's showroom uses the garage model (level 1), the only
-/// levels (with 2) where the doors are separate parts; but the car loader draws levels 1-2 with
-/// wrong artwork on the rear quarters, so level 3 is used and the doors cannot open
-/// (`NFSPU_GARAGE_LOD=2` shows them opening).
-const SHOW_CAR_LEVEL: u8 = 3;
+/// Level of detail of the show car: the garage model (level 1), as retail's showroom. Only levels
+/// 1 and 2 have the doors as separate parts; level 3 bakes them into the body.
+const SHOW_CAR_LEVEL: u8 = 1;
 
 /// Doors: 255 steps; the step rate is not traced (**guess**: one second end to end).
 const DOOR_SECONDS: f32 = 1.0;
@@ -664,20 +662,80 @@ fn split_doors(piece: &Piece, slots: &DoorSlots) -> (Piece, Vec<(u8, [f32; 3], P
         target.uvs.push(piece.uvs[corner]);
         target.materials.push(piece.materials.get(corner).copied().unwrap_or(0));
         target.articles.push(article);
+        target.pages.push(piece.pages.get(corner).copied().unwrap_or(0));
     }
     (rest, doors)
 }
 
 /// What a show-car mesh is, for the components it gets.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum Role {
     Body,
     Cabin(bool),
-    Lamp(bool, Handle<StandardMaterial>),
+    Lamp(bool),
+}
+
+/// Spawns one car piece, page by page: body parts under `root`, door parts under their hinge.
+/// Returns the number of door triangles.
+#[allow(clippy::too_many_arguments)]
+fn place_piece(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    looks: &mut crate::CarLooks,
+    root: Entity,
+    hinges: &mut std::collections::HashMap<u8, Entity>,
+    slots: &DoorSlots,
+    piece: &Piece,
+    look: crate::Look,
+    role: Role,
+) -> usize {
+    let mut door_triangles = 0;
+    let (rest, doors) = split_doors(piece, slots);
+    let mut groups = vec![(None, rest)];
+    groups.extend(doors.into_iter().map(|(slot, pivot, p)| (Some((slot, pivot)), p)));
+    for (door, group) in groups {
+        if group.positions.is_empty() {
+            continue;
+        }
+        let parent = match door {
+            None => root,
+            Some((slot, pivot)) => {
+                door_triangles += group.positions.len() / 3;
+                *hinges.entry(slot).or_insert_with(|| {
+                    let h = commands.spawn((Transform::from_translation(Vec3::from(pivot)), Visibility::default(), ShowDoor(slot))).id();
+                    commands.entity(root).add_child(h);
+                    h
+                })
+            }
+        };
+        for (page, part) in crate::by_page(&group) {
+            let shared = looks.material(page, look, materials);
+            // lamps get their own copy of the material so they can glow
+            let material = match role {
+                Role::Lamp(_) => materials.get(&shared).cloned().map(|copy| materials.add(copy)).unwrap_or(shared),
+                _ => shared,
+            };
+            let mut e = commands.spawn((Mesh3d(meshes.add(crate::piece_mesh(&part, [1.0; 3], look.alpha()))), MeshMaterial3d(material.clone()), Transform::default()));
+            match role {
+                Role::Body => {}
+                Role::Cabin(cockpit) => {
+                    e.insert(ShowCabin { cockpit });
+                }
+                Role::Lamp(front) => {
+                    e.insert(ShowLamp { front, material });
+                }
+            }
+            let e = e.id();
+            commands.entity(parent).add_child(e);
+        }
+    }
+    door_triangles
 }
 
 /// Builds the show car under `root` with the race viewer's pages and looks
-/// (`crate::spawn_car_model`), but with the doors as separate hinged meshes and lamps that glow.
+/// (`crate::spawn_car_model`), but with the doors as separate hinged meshes, lamps that glow and
+/// no driver.
 fn spawn_show_car(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>, root: Entity, name: &str, options: &CarOptions) {
     let m = match car_model::load_car(name, options) {
         Ok(m) => m,
@@ -686,83 +744,33 @@ fn spawn_show_car(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
             return;
         }
     };
+    use crate::Look;
     let slots = door_slots(name, options.level);
-    let white = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, double_sided: true, cull_mode: None, ..default() });
-    let paint_mat = crate::page_material(&m.exterior, false, images, materials);
-    let trim_mat = crate::page_material(&m.extint, false, images, materials);
-    let trim_solid_mat = trim_mat.as_ref().and_then(|h| materials.get(h).cloned()).map(|mut copy| {
-        copy.alpha_mode = AlphaMode::Opaque;
-        materials.add(copy)
-    });
-    let glass_mat = crate::page_material(&m.glass_page, true, images, materials);
-    let cabrio_mat = crate::page_material(&m.cabrio_page, true, images, materials);
-    // the cabin as in the race viewer: flat dark grey, only the faces that point into the cabin
-    let cabin_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.16, 0.16, 0.17),
-        unlit: true,
-        double_sided: false,
-        cull_mode: Some(if nfspu_game::MIRROR_X < 0.0 { bevy::render::render_resource::Face::Back } else { bevy::render::render_resource::Face::Front }),
-        ..default()
-    });
-
-    let mut parts: Vec<(&Piece, [f32; 3], f32, Handle<StandardMaterial>, Role)> = Vec::new();
-    for (piece, flat, mat, alpha) in [
-        (&m.paint, [0.62, 0.02, 0.03], paint_mat.clone(), 1.0f32),
-        (&m.trim, [0.08, 0.08, 0.09], trim_mat.clone(), 1.0),
-        (&m.trim_solid, [0.08, 0.08, 0.09], trim_solid_mat.clone(), 1.0),
-        (&m.glass, [0.03, 0.05, 0.09], glass_mat.clone(), 0.55),
-        (&m.cabrio_glass, [0.03, 0.05, 0.09], cabrio_mat.clone(), 0.6),
-    ] {
-        let (tint, handle) = match mat {
-            Some(h) => ([1.0, 1.0, 1.0], h),
-            None => (flat, white.clone()),
-        };
-        parts.push((piece, tint, alpha, handle, Role::Body));
-    }
-    for (piece, cockpit) in [(&m.interior, true), (&m.interior_outside, false)] {
-        parts.push((piece, [1.0, 1.0, 1.0], 1.0, cabin_mat.clone(), Role::Cabin(cockpit)));
-    }
-    for (piece, front) in [(&m.headlights, true), (&m.taillights, false)] {
-        let (tint, handle) = match paint_mat.as_ref().and_then(|h| materials.get(h).cloned()) {
-            Some(copy) => ([1.0, 1.0, 1.0], materials.add(copy)),
-            None => ([0.9, 0.9, 0.9], white.clone()),
-        };
-        parts.push((piece, tint, 1.0, handle.clone(), Role::Lamp(front, handle)));
-    }
-
+    let mut looks = crate::CarLooks::new(&m, images);
     let mut hinges: std::collections::HashMap<u8, Entity> = Default::default();
     let mut door_triangles = 0;
-    for (piece, tint, alpha, material, role) in parts {
-        let (rest, doors) = split_doors(piece, &slots);
-        let mut pieces = vec![(None, rest)];
-        pieces.extend(doors.into_iter().map(|(slot, pivot, p)| (Some((slot, pivot)), p)));
-        for (door, p) in pieces {
-            if p.positions.is_empty() {
-                continue;
-            }
-            let parent = match door {
-                None => root,
-                Some((slot, pivot)) => {
-                    door_triangles += p.positions.len() / 3;
-                    *hinges.entry(slot).or_insert_with(|| {
-                        let h = commands.spawn((Transform::from_translation(Vec3::from(pivot)), Visibility::default(), ShowDoor(slot))).id();
-                        commands.entity(root).add_child(h);
-                        h
-                    })
-                }
-            };
-            let mut e = commands.spawn((Mesh3d(meshes.add(crate::piece_mesh(&p, tint, alpha))), MeshMaterial3d(material.clone()), Transform::default()));
-            match &role {
-                Role::Body => {}
-                Role::Cabin(cockpit) => {
-                    e.insert(ShowCabin { cockpit: *cockpit });
-                }
-                Role::Lamp(front, handle) => {
-                    e.insert(ShowLamp { front: *front, material: handle.clone() });
-                }
-            }
-            let e = e.id();
-            commands.entity(parent).add_child(e);
+    let parts: [(&Piece, Look, Role); 10] = [
+        (&m.paint, Look::Cut, Role::Body),
+        (&m.paint_inner, Look::Cut, Role::Body),
+        (&m.trim, Look::Cut, Role::Body),
+        (&m.trim_solid, Look::Solid, Role::Body),
+        (&m.glass, Look::Glass, Role::Body),
+        (&m.cabrio_glass, Look::Glass, Role::Body),
+        (&m.interior, Look::Cut, Role::Cabin(true)),
+        (&m.interior_outside, Look::Cut, Role::Cabin(false)),
+        (&m.headlights, Look::Cut, Role::Lamp(true)),
+        (&m.taillights, Look::Cut, Role::Lamp(false)),
+    ];
+    for (piece, look, role) in parts {
+        door_triangles += place_piece(commands, meshes, materials, &mut looks, root, &mut hinges, &slots, piece, look, role);
+    }
+    for w in &m.wheels {
+        let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default())).id();
+        commands.entity(root).add_child(wheel);
+        for (page, part) in crate::by_page(&w.piece) {
+            let mat = looks.material(page, Look::Cut, materials);
+            let e = commands.spawn((Mesh3d(meshes.add(crate::piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default())).id();
+            commands.entity(wheel).add_child(e);
         }
     }
     // one glare per headlight: the centre of the headlight triangles on each side, a little ahead
@@ -780,22 +788,15 @@ fn spawn_show_car(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
             .id();
         commands.entity(root).add_child(e);
     }
-    for w in &m.wheels {
-        let (tint, handle) = match &trim_mat {
-            Some(h) => ([1.0, 1.0, 1.0], h.clone()),
-            None => ([0.10, 0.10, 0.11], white.clone()),
-        };
-        let e = commands.spawn((Mesh3d(meshes.add(crate::piece_mesh(&w.piece, tint, 1.0))), MeshMaterial3d(handle), Transform::from_translation(Vec3::from(w.offset)))).id();
-        commands.entity(root).add_child(e);
-    }
     let mut hinge_list: Vec<(u8, [f32; 3])> = slots.values().copied().collect();
     hinge_list.sort_by(|a, b| a.0.cmp(&b.0));
     hinge_list.dedup_by_key(|h| h.0);
     crate::log_line(&format!(
-        "garage: car '{}' style '{}': {} triangles, size {:.2} x {:.2} x {:.2} m, doors {hinge_list:?} with {door_triangles} triangles",
+        "garage: car '{}' style '{}': {} triangles, {} texture pages, size {:.2} x {:.2} x {:.2} m, doors {hinge_list:?} with {door_triangles} triangles",
         m.name,
         m.style_name,
         m.triangles(),
+        m.pages.iter().flatten().count(),
         m.size[0],
         m.size[1],
         m.size[2],

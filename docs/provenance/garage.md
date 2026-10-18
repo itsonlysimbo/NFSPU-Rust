@@ -141,7 +141,7 @@ two-car compare screens (not done).
   captures pick it with `NFSPU_MENU_PICK=GenericCar.Colour=18`.
 - Retail draws the license plate with the player's name ("Greg" in the recording): not done.
 - The car is built with the race viewer's pages and looks (`car_model::load_car` + the race
-  viewer's material helpers), at level of detail 3, without a driver; doors are split off by slot.
+  viewer's `CarLooks`, `by_page`, `piece_mesh`), at level of detail 1, without a driver; doors are split off by slot.
 
 ### Inspection (from code)
 
@@ -183,11 +183,10 @@ Not done: the roof animation (the roof band is not a zone), click sounds, pointe
 hood and trunk.
 
 **Level of detail.** Retail's showroom car is the garage model (level 1). Only levels 1 and 2 have
-the doors as separate parts; level 3 bakes them into the body. Our car loader draws levels 1-2
-with wrong artwork on the rear quarters (grey panels; not the `Cabrio` article, tested), so the
-show car uses level 3 and the doors, though clicked and animated, do not visibly open.
-`NFSPU_GARAGE_LOD=2` shows them opening (`logs/garage_inspect_door_lod2.png`). Fixing levels 1-2
-in `car_model.rs` would give retail's model and working doors.
+the doors as separate parts; level 3 bakes them into the body. The show car uses level 1
+(`NFSPU_GARAGE_LOD` overrides). Before the car-fixes rework of `car_model.rs` levels 1-2 had grey
+rear quarters; after it they draw correctly (`logs/garage_inspect_door_lod1.png`,
+`garage_inspect_door_lod2.png`: the door open on its hinge, the cabin visible behind it).
 
 The turn pauses while the pointer is on the car: in `22-27-22.mp4` the car holds still for about
 4 s under the glove pointer, while in `22-40-11.mp4` (pointer elsewhere) it turns steadily. The
