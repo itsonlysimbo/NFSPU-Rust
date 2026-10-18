@@ -404,9 +404,9 @@ mod tests {
         // half-covered red keeps its colour and gets alpha 128
         c.fill_rect([0.0, 0.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.5]);
         assert_eq!(pixel(&c, 0, 0), [255, 0, 0, 128]);
-        // two half layers: alpha 0.75, colour weighted 2:1 toward the top layer
+        // two half layers: alpha 0.75 (192 after the first layer is stored as 128), colour 2:1 to the top
         c.fill_rect([0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 0.5]);
-        assert_eq!(pixel(&c, 0, 0), [85, 0, 170, 191]);
+        assert_eq!(pixel(&c, 0, 0), [85, 0, 170, 192]);
         // opaque paint is plain
         c.fill_rect([1.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(pixel(&c, 1, 0), [0, 255, 0, 255]);

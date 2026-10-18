@@ -24,9 +24,10 @@ use nfspu_game::car_model::{self, CarOptions, Piece};
 use nfspu_game::garage::{self, Fade, RoomLook, Turntable, Zone};
 
 /// Brightness of the room light rule (ambient + light from `garage::GARAGE`), applied as a
-/// linear-light vertex colour. 0.6 brings the far wall, the floor and the pit within about 10% of
-/// the retail recording (`logs/garage_compare_quickrace.png`; **fitted**, not from the code).
-const ROOM_GAIN: f32 = 0.6;
+/// linear-light vertex colour (no tonemapping). Chosen so sampled patches of wall, floor and pit
+/// come close to the retail recording (`logs/garage_compare_quickrace.png`, numbers in
+/// `docs/provenance/garage.md`; **fitted**, not from the code).
+const ROOM_GAIN: f32 = 0.5;
 
 /// Fan turn rates in turns per second, by animation slot: retail feeds slot 1 the clock / 128 and
 /// slot 2 the clock / 192 (128 Hz clock). Reading the value as whole turns is a **guess**.
@@ -35,6 +36,12 @@ const FAN_RATE: [f32; 3] = [0.0, 1.0, 128.0 / 192.0];
 /// Lights fade on in about half a second (retail times them with the system clock; the length is
 /// read from data not traced yet, **guess**).
 const LIGHT_SECONDS: f32 = 0.4;
+/// Level of detail of the show car. Retail's showroom uses the garage model (level 1), the only
+/// levels (with 2) where the doors are separate parts; but the car loader draws levels 1-2 with
+/// wrong artwork on the rear quarters, so level 3 is used and the doors cannot open
+/// (`NFSPU_GARAGE_LOD=2` shows them opening).
+const SHOW_CAR_LEVEL: u8 = 3;
+
 /// Doors: 255 steps; the step rate is not traced (**guess**: one second end to end).
 const DOOR_SECONDS: f32 = 1.0;
 
@@ -122,6 +129,28 @@ struct ShowLamp {
 #[derive(Component)]
 struct ShowCabin {
     cockpit: bool,
+}
+
+/// A soft round glare in front of a headlight, shown while the headlights are on (the retail
+/// recording shows a bright round glow on each lamp; its art and size are not traced, **guess**).
+#[derive(Component)]
+struct ShowGlare;
+
+/// Glare size in metres across.
+const GLARE_SIZE: f32 = 0.5;
+
+/// A white radial glow with alpha falling off to the edge.
+fn glare_image() -> Image {
+    const N: u32 = 64;
+    let mut rgba = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let (dx, dy) = ((x as f32 + 0.5) / N as f32 * 2.0 - 1.0, (y as f32 + 0.5) / N as f32 * 2.0 - 1.0);
+            let a = (1.0 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0).powf(2.0);
+            rgba.extend_from_slice(&[255, 255, 245, (a * 255.0) as u8]);
+        }
+    }
+    Image::new(Extent3d { width: N, height: N, depth_or_array_layers: 1 }, TextureDimension::D2, rgba, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default())
 }
 
 /// The node that shows the menu image blended over the room.
@@ -236,8 +265,11 @@ fn blend(
         blend_node.width = menu_node.width;
         blend_node.height = menu_node.height;
     }
-    if blends.get(&material.0).is_some_and(|m| m.menu != image.image) {
-        if let Some(mut m) = blends.get_mut(&material.0) {
+    // Touched every frame: the material's GPU binding is only rebuilt when the material changes,
+    // and it must follow the room texture too (recreated when the window is resized), not just a
+    // new menu image. With a still pointer nothing else changes it, and the room froze on screen.
+    if let Some(mut m) = blends.get_mut(&material.0) {
+        if m.menu != image.image {
             m.menu = image.image.clone();
         }
     }
@@ -324,7 +356,10 @@ fn stage(
             // in the showroom (retail frames).
             let holder = commands.spawn((Transform::default(), Visibility::default())).id();
             commands.entity(root).add_child(holder);
-            let options = CarOptions { level: 3, driver: 0, paint: *paint, style: *style };
+            // Levels 1 (the garage model) and 2 have the doors as separate parts; level 3 bakes them
+            // into the body. `NFSPU_GARAGE_LOD` overrides for tests.
+            let level = std::env::var("NFSPU_GARAGE_LOD").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(SHOW_CAR_LEVEL);
+            let options = CarOptions { level, driver: 0, paint: *paint, style: *style };
             let started = std::time::Instant::now();
             spawn_show_car(&mut commands, &mut meshes, &mut materials, &mut images, holder, model, &options);
             crate::log_line(&format!("garage: car '{model}' paint section {paint} style {style} built in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0));
@@ -501,6 +536,7 @@ fn animate(
     lamps: Query<&ShowLamp>,
     new_lamps: Query<(), Added<ShowLamp>>,
     mut cabins: Query<(&ShowCabin, &mut Visibility)>,
+    glares: Query<Entity, With<ShowGlare>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(look) = garage.look else { return };
@@ -536,6 +572,13 @@ fn animate(
             let level = g.doors[(door.0 - 6).min(1) as usize].level;
             let sign = if door.0 == 6 { -1.0 } else { 1.0 };
             t.rotation = Quat::from_rotation_y(sign * level * garage::DOOR_OPEN_TURNS * std::f32::consts::TAU);
+        }
+    }
+    // Glares face the camera (undo the room's turn) and grow with the headlights.
+    for e in &glares {
+        if let Ok(mut t) = transforms.get_mut(e) {
+            t.rotation = Quat::from_rotation_y(-g.turntable.yaw());
+            t.scale = Vec3::splat(g.front_lights.level);
         }
     }
     // The detailed cabin only from inside.
@@ -721,6 +764,21 @@ fn spawn_show_car(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
             let e = e.id();
             commands.entity(parent).add_child(e);
         }
+    }
+    // one glare per headlight: the centre of the headlight triangles on each side, a little ahead
+    let glare_mat = materials.add(StandardMaterial { base_color_texture: Some(images.add(glare_image())), unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, double_sided: true, ..default() });
+    let glare_mesh = meshes.add(Rectangle::new(GLARE_SIZE, GLARE_SIZE));
+    for side in [-1.0f32, 1.0] {
+        let points: Vec<&[f32; 3]> = m.headlights.positions.iter().filter(|p| p[0] * side > 0.0).collect();
+        if points.is_empty() {
+            continue;
+        }
+        let n = points.len() as f32;
+        let c = points.iter().fold([0.0f32; 3], |a, p| [a[0] + p[0] / n, a[1] + p[1] / n, a[2] + p[2] / n]);
+        let e = commands
+            .spawn((Mesh3d(glare_mesh.clone()), MeshMaterial3d(glare_mat.clone()), Transform::from_xyz(c[0], c[1], c[2] - 0.08).with_scale(Vec3::ZERO), ShowGlare))
+            .id();
+        commands.entity(root).add_child(e);
     }
     for w in &m.wheels {
         let (tint, handle) = match &trim_mat {

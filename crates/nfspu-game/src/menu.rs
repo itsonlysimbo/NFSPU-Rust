@@ -2055,8 +2055,8 @@ mod tests {
     #[test]
     fn an_unknown_control_type_is_reported_not_drawn() {
         let template = ControlTemplate {
-            id: "NFS5.3DCAR".into(),
-            description: "3D Car".into(),
+            id: "NFS5.NoSuchControl".into(),
+            description: "not a real control".into(),
             parts: vec![],
             states: vec![],
             blocks: vec![],
