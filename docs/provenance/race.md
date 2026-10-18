@@ -216,20 +216,25 @@ Per car, each tick:
    multiplied by `[1.0, 0.98, 0.95]`. Read from the exe at 0x5cc384 and 0x5cc378. So beginner
    never slows down; expert slows the most once ahead. No speed-up for cars behind was found.
 9. **Throttle / brake**: throttle in proportion to `target - speed` (times a gear factor from the
-   car spec); brake when the speed is over the target. Ours: on/off, braking over target + 2 m/s
-   (the placeholder car has only on/off pedals).
+   car spec); brake when the speed is over the target. Ours: on/off (the car's pedals are on/off),
+   braking over target + 2 m/s; no throttle while sliding sideways over 3 m/s, or above 15 m/s
+   with the steering past 70% (the target speed rises inside a bend as less of it is left ahead,
+   and without this the car runs wide at the exit). A finished opponent brakes to a stop (ours;
+   on point-to-point roads they otherwise drive off the end of the last slice).
 10. **Steering**: the target point is the average of four racing-line points (`.lsp`, x and z,
     height from the slice) starting some slices ahead (how many is computed in a part the
     decompiler hid; ours: speed x 0.6 s / 6 m, 2-12 slices). Cars close ahead (within 11 m, or
     20 m when 3 m/s slower) push the target point sideways by about the two cars' widths. The
     steer value is the normalised direction's sideways part x 256, clamped to +-126 (full lock
-    near 30 degrees). Ours: the same proportion; the avoidance is our simpler version (aim 4 m to
-    the freer side, and match the speed of a car under 7 m ahead).
+    near 30 degrees). Ours: gain 3 instead of 2 (with our look-ahead, 2 let the car drift 7 m wide
+    at a corner exit) minus 0.25 x the yaw rate (rad/s) so the retail tyre model does not swing
+    the car round; the avoidance is our simpler version (aim 4 m to the freer side, and keep under
+    3 m/s faster than a car under 7 m ahead).
 11. **Stuck**: a counter goes up while the car is under 2 m/s after the start (it resets at 2 m/s
     or more); over 160 ticks (2.5 s), or facing more than 45 degrees backwards under 10 m/s, the
     car switches to a recovery state (value 5). What state 5 does was not read. Ours: reverse
-    1.5 s with opposite lock; if the car has not been over 5 m/s for 10 s, or has fallen 30 m below
-    the road, it is put back on the racing line (guess).
+    1.5 s with opposite lock; if the car has not gone along the road at over 5 m/s for 10 s, or has
+    fallen 30 m below the road, it is put back on the racing line (guess).
 12. Junctions: at a junction the car picks a route at random with difficulty-dependent
     thresholds (exe 0x5cc390, 0x5cc398) or by route weights. Ours: always the main route.
 
@@ -238,9 +243,10 @@ Per car, each tick:
 - `GameData/Simulation/AICarData/<name>.ais` (22 files, 304 bytes): 32-byte name (`Porsche 993
   Final` style), 24 floats look-ahead in slices (8 ... 30), 40 floats target speed in m/s by bend
   (993: 72.7 down to 11.3; default: 70.7 down to 13.7), 16 unused bytes. The file name comes from
-  the car's sim record (`default.ais` when missing); at load the speed table is stretched around
-  its minimum by two car factors (not read; ours: as stored). Which model uses which file is our
-  mapping (`ai::ais_for_model`: exact name, then without `f`/`cop`/`_1`, then the nearest name).
+  the car's AI-data name in `nfs5.car` (record 0x115, e.g. `993` for a Carrera, `993T` for the
+  Turbo, empty for traffic cars), `default.ais` when there is no such file (decomp `0x49ca30`);
+  ours does the same (`ai::ais_stem`). At load the speed table is stretched around its minimum by
+  two car factors (not read; ours: as stored).
 - `GameData/Track/racer/work/<track><0|1>.lsp`: u32 version 1, then x and z per slice (the
   racing line), 0 forward and 1 backward. The decomp builds the name as `%s%s%d.lsp` and sizes it
   `slices x 8 + 4`; all 30 files match their track's slice count (`race_audit`).
@@ -251,13 +257,43 @@ Per car, each tick:
 - `prsonal.bin`, `scripts.bin`: personalities and reaction scripts (horn, swipe...), loaded into
   each car (`0x407ef0`); not used yet.
 
-Not done: car-to-car collision (cars pass through each other; the avoidance keeps it rare),
-traffic, retail's throttle/gear model, damage, mirrored tracks, junction route choice.
+Opponents drive the same retail car physics as the player (`car_sim.rs`): the car's own `.sim`
+(`car_load`, by catalogue id), an automatic gearbox, the brake held on the grid until GO, and the
+retail car-to-car impulse against each other and the player (`car::collide_cars`, every tick).
+
+Not done: traffic, retail's proportional throttle and its AI-side physics parameters
+(`TRAFCFG.DES` lists "in control" / "out of control" AI physics), damage, mirrored tracks,
+junction route choice, personalities and reaction scripts.
 
 ## Results screen
 
 Not checked: the let's play race at 10:20 goes straight back to the menus. Ours is a placeholder
 panel 2 s after the finish (the delay is a guess).
+
+## Checks run (2026-10-18, opponents)
+
+- Unit tests: `cargo test -p nfspu-game -p nfspu-formats`: all pass (9 in `ai`, the readers in
+  `aidata`, request parsing in `race_mode`).
+- `race_audit`: all 30 `.lsp` files have one point per slice; the line is 1.0-4.7 m off centre on
+  average, at most 6 m along the slice (so the x/z reading and the x mirror are right), but some
+  points lie outside the slice half-widths (worst 36 m on foothills), which is why the driving line
+  is clamped 1 m inside the road (`ai::driving_line`, ours).
+- `race_drive <track> <dir> <laps> 7 <difficulty>` (7 opponents in 993s, retail physics): monaco5
+  (2 laps, expert), coastal (beginner), forest (expert), alps backward (advanced), skidpad (3 laps,
+  expert): every opponent finishes. Expert laps on monaco5 1:26-1:36, skidpad 0:26-0:28;
+  beginners on coastal 4:08-5:09. On monaco5 one or two cars a race get stuck after a pile-up
+  around slices 170-222 and are put back on the road. On skidpad the example's own simple player
+  autopilot got stuck after being hit (the opponents were fine).
+- Live (real window, `NFSPU_RACE=monaco5,forward,1,7,2`,
+  `NFSPU_OPPONENTS=154,157,161,170,153,159,160`, seed 777, the player standing still on pole):
+  all seven opponents finished, in order Frank (GT1) 1:18.40, Machine (993 Turbo) 1:23.12,
+  Tbone, Rogue, Oconnell 1:30.76-1:31.93, Billy 1:45.15, Boomer 3:02.28 (stuck for 82 s near
+  slice 171 before being put back). The reset rule was then changed to count only progress along
+  the road; the same race again: Boomer put back after 10 s and 1:55.96, the others within 0.4 s
+  of before. The running order and the player's position (8 of 8) updated every tick.
+  **Not tested**: a race where the player finishes against opponents (the results panel with
+  driver names), and quick race started from the menu with opponents (`run_flow` passes
+  `NFSPU_RACE=...,<opponents>,<difficulty>` and `NFSPU_OPPONENTS=<catalogue ids>`).
 
 ## Checks run (2026-10-17)
 

@@ -303,7 +303,7 @@ impl Opponent {
                 let go_left = if side.abs() > 0.3 { side > 0.0 } else { room_left > room_right };
                 aim += right * if go_left { -4.0 } else { 4.0 };
                 if along < 7.0 {
-                    target_speed = target_speed.min(o.speed);
+                    target_speed = target_speed.min(o.speed + 3.0); // +3: still able to pull away from the grid
                 }
             }
         }
@@ -312,14 +312,15 @@ impl Opponent {
         let mut to = aim - car.pos;
         to.y = 0.0;
         // damped with the yaw rate so the retail tyre model does not swing the car round (ours)
-        let steer = (-(to.normalize_or_zero().dot(right) * 2.0) - 0.25 * car.sim.yaw_rate).clamp(-1.0, 1.0);
+        let steer = (-(to.normalize_or_zero().dot(right) * 3.0) - 0.25 * car.sim.yaw_rate).clamp(-1.0, 1.0);
         let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
 
         // stuck: too slow for too long, or facing back down the road
         let road = v.path.slices[self.slice].forward * v.dir.sign();
         let backwards = heading.dot(road) < -0.707 && speed.abs() < 10.0;
         self.slow_ticks = if speed.abs() < STUCK_SPEED { self.slow_ticks + 1 } else { 0 };
-        self.since_moving = if speed > MOVING_SPEED { 0 } else { self.since_moving + 1 };
+        // moving = going along the road; rocking back and forth against a wall does not count
+        self.since_moving = if speed * heading.dot(road) > MOVING_SPEED { 0 } else { self.since_moving + 1 };
         if self.reverse_ticks == 0 && (self.slow_ticks > STUCK_TICKS || backwards) {
             self.reverse_ticks = REVERSE_TICKS;
             self.slow_ticks = 0;
@@ -329,8 +330,9 @@ impl Opponent {
             self.reverse_ticks -= 1;
             return Input { brake: true, steer: -steer, ..Default::default() };
         }
-        // no throttle near full lock or while sliding: the car cannot hold a tight line at speed (ours)
-        Input { throttle: speed < target_speed && steer.abs() < 0.7 && !sliding, brake: speed > target_speed + 2.0, steer, ..Default::default() }
+        // no throttle near full lock at speed or while sliding: the car cannot hold a tight line
+        // there (ours; below 15 m/s it may, or a car off the line on the grid never starts)
+        Input { throttle: speed < target_speed && (steer.abs() < 0.7 || speed < 15.0) && !sliding, brake: speed > target_speed + 2.0, steer, ..Default::default() }
     }
 }
 
