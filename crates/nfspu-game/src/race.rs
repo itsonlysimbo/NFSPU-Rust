@@ -145,6 +145,8 @@ pub struct RaceStatus {
     pub results: Vec<ResultLine>,
     /// Sim ticks (64 Hz) since the race loaded.
     pub tick: u32,
+    /// Name of each car by race index ("You" for the player, the driver's name for opponents).
+    pub names: Vec<String>,
 }
 
 /// One line of the results table.

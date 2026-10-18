@@ -97,7 +97,12 @@ The file is picked by direction: `_FStart.scn` forward, `_BStart.scn` backward (
   half-width; 0.5 m up; facing along the slice.
 - Backwards the sides are swapped in our code (decomp flips the side when a direction product is
   -1; which global that is was not identified, so this is a guess).
-- Where the player starts in quick race was not checked; we put the player last (guess).
+- Which car gets which grid position: each racer's setup record has a grid-slot field (record
+  offset 0x174, read by `0x410580`); the front end fills racer slots with the player first and the
+  opponents after. **Footage** (let's play 10:32, an Evolution race): 5.6 s after the start the
+  HUD shows the player 1st of 8 with the seven opponents 18, 30, 42, 60, 72, 90 and 114 m behind,
+  i.e. the player started on pole. We put the player on pole (grid 0) in quick race too; that
+  quick race does the same is not checked.
 - Retail has a second layout using the lane counts (dwords 14-15) and a cop-chase layout; not used.
 
 ## Clock and countdown (decomp `0x414ff0`, `0x4152e0`, `0x4a45d0`, `0x565030`, `H321Go`)
@@ -148,10 +153,147 @@ last used key has slice 100000. The value of the key whose slice range contains 
 is used. The loader's fallback table is a single value 600, and the memory tag is `CRdrKeys`
 ("renderer keys"), so it is most likely the **draw distance in metres by slice**. Not used yet.
 
+## Opponents
+
+Code: `crates/nfspu-formats/src/aidata.rs` (file readers), `crates/nfspu-game/src/ai.rs` (driving
+and picking), `race_mode.rs` (in the race). Static reading of the decomp plus the shipped files.
+
+### Who races (front end, decomp `0x4ebba0`, `0x4e3160`, `0x4e3120`, `0x4e30e0`, `0x4e2f30`)
+
+- Quick race opponents are **drivers** from `FEData/Data/nfs5.per`, loaded at start-up as
+  44-byte records (35 records in the install):
+
+  | bytes | field | evidence |
+  |---|---|---|
+  | 0-1 | driver id (1-37, a few skipped) | data |
+  | 4-7 | name string id in `festrings.loc` (18000-18027, plus six at 2500-2505) | decomp: the name lookup returns this; data: 18000+ are names like Dylan, Wingnut |
+  | 8-9 | difficulty 0 / 1 / 2 | decomp: the pick filters on it with `Game.Difficutly`; data: 7 beginner, 7 advanced, 21 expert |
+  | 12-43 | four (skill, range) float pairs: slow bends, medium bends, fast road, default | decomp: written to the racer's `.SKILLSLOW`, `.SKILLRANGESLOW`, ... `.SKILLDEFAULT`, `.SKILLRANGEDEFAULT` fields in that order |
+
+  Beginner drivers have skills 0.40-0.60, advanced 0.60-0.80, expert 0.69-0.99; ranges 0-0.06.
+- For N opponents the game collects the drivers whose difficulty matches and draws N of them at
+  random. Whether a driver can be drawn twice was not read (ours avoids repeats while the pool
+  lasts).
+- Footage: the opponent list in the HUD names drivers (Dylan, Parise, Wingnut, Steele, Leadfoot,
+  Amazon, Backlash), so the names are what the race shows.
+
+### Opponent cars (decomp `0x4f4fa0`, called from `0x4ebba0`; rule from `OpponentCar.Car`)
+
+Seven opponent slots are always filled; each gets a random paint from the car's colour list.
+
+- Same car: the player's car for all.
+- Same era / same class / same era and class: draw `k` = random over the length of the whole car
+  list, then walk round the list counting cars that match the player's era (record 0x1b0), class
+  (0x1ac) or both, and take the one where the count passes `k`. In effect `matches[k mod count]`.
+- Random: any car of the list.
+- A named car: that car for all.
+
+### How an opponent drives (decomp `0x40b650` speed, `0x40bfe0` steering; state `AIState_Racing`)
+
+Per car, each tick:
+
+1. **Look-ahead**: `n = round(min(speed m/s x 0.2 x car factor, 23))`; the number of slices to
+   look at is entry `n` of the car's `.ais` look-ahead table (8 to 30 slices). The car factor
+   comes from the car's spec record and was not read (ours: 1).
+2. **Bend**: for slices 2..=look-ahead in front of the car's slice, the angle (degrees, acos of
+   the dot product of the slice forward vectors) to the car's slice; the largest one to the left
+   plus the largest one to the right (side by the sign of the slice's right vector dotted with
+   the current forward). Multiplied by a per-slice-range factor table (zeros in the exe's data
+   section, filled at run time; ours: 1) and a car factor (ours: 1), capped at 115.
+3. **Table speed**: entry `round(bend / 3)` of the car's `.ais` speed table (m/s).
+4. Divided by `1 + damage x 0.00667` (ours: no damage model, so 1).
+5. **Surface/drive factor** from two exe tables by the slice surface and the car's drive type,
+   clamped to 0.8-1.0 (0.5-1.0 / 0.7-1.0 in the second table, used when a weather flag is set
+   and the car is not under cover). Asphalt for a rear-drive car is 1.0. Ours: 1.
+6. **Skill**: when the kind of road changes (`bend / 3` over 20 = slow, over 10 = medium, else
+   fast), a new factor is drawn: if a random number in 0..1 is over that kind's skill, uniform in
+   `skill +- range` of that kind; otherwise uniform in the default `skill +- range`.
+7. **Narrow road**: times `min(1, (left + right half-width) / 12)`. (12 m is the default; some
+   track settings set 10 or 9; not followed.)
+8. **Lead slowdown** (only when the game mode is not 3): if this car's progress minus the player's
+   is more than `[1.0, 0.07, 0.03]` laps (beginner, advanced, expert) and the player's progress
+   since the start x 640000 / race ticks is over 35 (a lap in under about 286 s), the speed is
+   multiplied by `[1.0, 0.98, 0.95]`. Read from the exe at 0x5cc384 and 0x5cc378. So beginner
+   never slows down; expert slows the most once ahead. No speed-up for cars behind was found.
+9. **Throttle / brake**: throttle in proportion to `target - speed` (times a gear factor from the
+   car spec); brake when the speed is over the target. Ours: on/off (the car's pedals are on/off),
+   braking over target + 2 m/s; no throttle while sliding sideways over 3 m/s, or above 15 m/s
+   with the steering past 70% (the target speed rises inside a bend as less of it is left ahead,
+   and without this the car runs wide at the exit). A finished opponent brakes to a stop (ours;
+   on point-to-point roads they otherwise drive off the end of the last slice).
+10. **Steering**: the target point is the average of four racing-line points (`.lsp`, x and z,
+    height from the slice) starting some slices ahead (how many is computed in a part the
+    decompiler hid; ours: speed x 0.6 s / 6 m, 2-12 slices). Cars close ahead (within 11 m, or
+    20 m when 3 m/s slower) push the target point sideways by about the two cars' widths. The
+    steer value is the normalised direction's sideways part x 256, clamped to +-126 (full lock
+    near 30 degrees). Ours: gain 3 instead of 2 (with our look-ahead, 2 let the car drift 7 m wide
+    at a corner exit) minus 0.25 x the yaw rate (rad/s) so the retail tyre model does not swing
+    the car round; the avoidance is our simpler version (aim 4 m to the freer side, and keep under
+    3 m/s faster than a car under 7 m ahead).
+11. **Stuck**: a counter goes up while the car is under 2 m/s after the start (it resets at 2 m/s
+    or more); over 160 ticks (2.5 s), or facing more than 45 degrees backwards under 10 m/s, the
+    car switches to a recovery state (value 5). What state 5 does was not read. Ours: reverse
+    1.5 s with opposite lock; if the car has not gone along the road at over 5 m/s for 10 s, or has
+    fallen 30 m below the road, it is put back on the racing line (guess).
+12. Junctions: at a junction the car picks a route at random with difficulty-dependent
+    thresholds (exe 0x5cc390, 0x5cc398) or by route weights. Ours: always the main route.
+
+### Data files
+
+- `GameData/Simulation/AICarData/<name>.ais` (22 files, 304 bytes): 32-byte name (`Porsche 993
+  Final` style), 24 floats look-ahead in slices (8 ... 30), 40 floats target speed in m/s by bend
+  (993: 72.7 down to 11.3; default: 70.7 down to 13.7), 16 unused bytes. The file name comes from
+  the car's AI-data name in `nfs5.car` (record 0x115, e.g. `993` for a Carrera, `993T` for the
+  Turbo, empty for traffic cars), `default.ais` when there is no such file (decomp `0x49ca30`);
+  ours does the same (`ai::ais_stem`). At load the speed table is stretched around its minimum by
+  two car factors (not read; ours: as stored).
+- `GameData/Track/racer/work/<track><0|1>.lsp`: u32 version 1, then x and z per slice (the
+  racing line), 0 forward and 1 backward. The decomp builds the name as `%s%s%d.lsp` and sizes it
+  `slices x 8 + 4`; all 30 files match their track's slice count (`race_audit`).
+- `GameData/Simulation/AI/glue.bin` / `hhglue.bin` (21 fixed-point factors 1.25 ... 0.82 by the
+  player's distance in 60 m steps, from the CSV next to them) and `tuning.bin` (difficulty
+  multipliers 0.8 / 0.975 / 1.03 per old car type) are loaded, but no reader of either table was
+  found in the decomp; they look like leftovers of the earlier games' catch-up. Not used.
+- `prsonal.bin`, `scripts.bin`: personalities and reaction scripts (horn, swipe...), loaded into
+  each car (`0x407ef0`); not used yet.
+
+Opponents drive the same retail car physics as the player (`car_sim.rs`): the car's own `.sim`
+(`car_load`, by catalogue id), an automatic gearbox, the brake held on the grid until GO, and the
+retail car-to-car impulse against each other and the player (`car::collide_cars`, every tick).
+
+Not done: traffic, retail's proportional throttle and its AI-side physics parameters
+(`TRAFCFG.DES` lists "in control" / "out of control" AI physics), damage, mirrored tracks,
+junction route choice, personalities and reaction scripts.
+
 ## Results screen
 
 Not checked: the let's play race at 10:20 goes straight back to the menus. Ours is a placeholder
 panel 2 s after the finish (the delay is a guess).
+
+## Checks run (2026-10-18, opponents)
+
+- Unit tests: `cargo test -p nfspu-game -p nfspu-formats`: all pass (9 in `ai`, the readers in
+  `aidata`, request parsing in `race_mode`).
+- `race_audit`: all 30 `.lsp` files have one point per slice; the line is 1.0-4.7 m off centre on
+  average, at most 6 m along the slice (so the x/z reading and the x mirror are right), but some
+  points lie outside the slice half-widths (worst 36 m on foothills), which is why the driving line
+  is clamped 1 m inside the road (`ai::driving_line`, ours).
+- `race_drive <track> <dir> <laps> 7 <difficulty>` (7 opponents in 993s, retail physics): monaco5
+  (2 laps, expert), coastal (beginner), forest (expert), alps backward (advanced), skidpad (3 laps,
+  expert): every opponent finishes. Expert laps on monaco5 1:26-1:36, skidpad 0:26-0:28;
+  beginners on coastal 4:08-5:09. On monaco5 one or two cars a race get stuck after a pile-up
+  around slices 170-222 and are put back on the road. On skidpad the example's own simple player
+  autopilot got stuck after being hit (the opponents were fine).
+- Live (real window, `NFSPU_RACE=monaco5,forward,1,7,2`,
+  `NFSPU_OPPONENTS=154,157,161,170,153,159,160`, seed 777, the player standing still on pole):
+  all seven opponents finished, in order Frank (GT1) 1:18.40, Machine (993 Turbo) 1:23.12,
+  Tbone, Rogue, Oconnell 1:30.76-1:31.93, Billy 1:45.15, Boomer 3:02.28 (stuck for 82 s near
+  slice 171 before being put back). The reset rule was then changed to count only progress along
+  the road; the same race again: Boomer put back after 10 s and 1:55.96, the others within 0.4 s
+  of before. The running order and the player's position (8 of 8) updated every tick.
+  **Not tested**: a race where the player finishes against opponents (the results panel with
+  driver names), and quick race started from the menu with opponents (`run_flow` passes
+  `NFSPU_RACE=...,<opponents>,<difficulty>` and `NFSPU_OPPONENTS=<catalogue ids>`).
 
 ## Checks run (2026-10-17)
 

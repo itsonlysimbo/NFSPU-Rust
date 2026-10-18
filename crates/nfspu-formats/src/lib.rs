@@ -1,6 +1,7 @@
 //! Readers for Need for Speed: Porsche Unleashed data files.
 //! Original code only. No game data lives in this crate.
 
+pub mod aidata;
 pub mod asf;
 pub mod bnk;
 pub mod carsim;

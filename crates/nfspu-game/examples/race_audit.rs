@@ -1,5 +1,6 @@
 //! Offline check of the race data on all 15 tracks, both directions: road slices, route graph,
-//! circuit or point-to-point, lap length, start slice, grid, finish line, and the render keys.
+//! circuit or point-to-point, lap length, start slice, grid, finish line, the render keys and the
+//! opponents' racing line (`.lsp`).
 //! Run: `cargo run -p nfspu-game --example race_audit --release`  (writes logs/race_audit.txt too)
 
 use nfspu_formats::keys;
@@ -17,6 +18,7 @@ fn main() {
     let _ = writeln!(out, "{:<11} {:<4} {:>6} {:>4} {:>8} {:>8} {:>5} {:>6} {:>6} {:>9} {:>8}  notes", "track", "dir", "slices", "seg", "kind", "lap km", "trig", "start", "f@start", "f@finish", "keys");
     let mut problems = 0;
     let mut ground_notes = String::new();
+    let mut line_notes = String::new();
     for n in &names {
         // How much of the road path has no drivable ground from our loader under it (a car there
         // falls). This checks the ground loader, not the race data. Slice heights differ from the
@@ -69,6 +71,29 @@ fn main() {
             }
             let pole_ahead = p.fraction(spots[0].slice, d) > p.fraction(spots[7].slice, d) || (p.fraction(spots[0].slice, d) - p.fraction(spots[7].slice, d)).abs() > 0.5;
             if !pole_ahead { notes.push("pole is not ahead of the last car".into()); problems += 1; }
+            // racing line (.lsp): one point per slice, inside the road's half-widths
+            match race_path::load_racing_line(n, d) {
+                None => notes.push("no .lsp racing line".into()),
+                Some(l) if l.len() != p.slices.len() => {
+                    notes.push(format!(".lsp has {} points for {} slices", l.len(), p.slices.len()));
+                    problems += 1;
+                }
+                Some(l) => {
+                    let line = nfspu_game::ai::racing_line(p, Some(&l));
+                    let (mut outside, mut sum, mut worst, mut along) = (0usize, 0.0f32, 0.0f32, 0.0f32);
+                    for (s, q) in p.slices.iter().zip(&line) {
+                        let off = (*q - s.pos).dot(s.right);
+                        along = along.max((*q - s.pos).dot(s.forward).abs());
+                        sum += off.abs();
+                        worst = worst.max(off.abs());
+                        if off < -s.left_width - 0.5 || off > s.right_width + 0.5 {
+                            outside += 1;
+                        }
+                    }
+                    let _ = writeln!(line_notes, "{n:<11} {:<4} line: mean {:.2} m off centre, worst {worst:.1} m, max {along:.1} m along the slice, {outside} points off the road",
+                        if d == Direction::Forward { "fwd" } else { "back" }, sum / line.len().max(1) as f32);
+                }
+            }
             let key_name = format!("{n}_{}.key", if d == Direction::Forward { "forward" } else { "backwards" }).to_ascii_lowercase();
             let key = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).find(|e| e.file_name().to_string_lossy().to_ascii_lowercase() == key_name)
                 .and_then(|e| keys::parse(&std::fs::read(e.path()).ok()?));
@@ -80,6 +105,7 @@ fn main() {
     }
     let _ = writeln!(out, "problems: {problems}
 
+{line_notes}
 {ground_notes}");
     print!("{out}");
     let logs = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("logs");
