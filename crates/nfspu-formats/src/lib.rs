@@ -6,6 +6,7 @@ pub mod bnk;
 pub mod cardash;
 pub mod crp;
 pub mod fe;
+pub mod fe_room;
 pub mod ffn;
 pub mod hudcfg;
 pub mod keys;

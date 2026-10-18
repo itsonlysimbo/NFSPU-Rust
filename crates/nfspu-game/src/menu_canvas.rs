@@ -137,13 +137,16 @@ fn inside([x, y, w, h]: Rect, p: [f32; 2]) -> bool {
 }
 
 impl Canvas {
-    /// A canvas filled with an opaque colour.
+    /// A canvas filled with an opaque colour, or fully transparent when `clear`'s alpha is 0 (a
+    /// page with a 3D room behind it: the room shows wherever nothing is drawn).
     pub fn new(width: u32, height: u32, clear: [f32; 4]) -> Canvas {
-        let px = [byte(clear[0]), byte(clear[1]), byte(clear[2]), 255];
+        let px = [byte(clear[0]), byte(clear[1]), byte(clear[2]), if clear[3] <= 0.0 { 0 } else { 255 }];
         Canvas { width, height, rgba: px.repeat((width * height) as usize), mask: None }
     }
 
-    /// Blends one pixel: `src * a + dst * (1 - a)` on the stored (gamma-encoded) values.
+    /// Blends one pixel: `src * a + dst * (1 - a)` on the stored (gamma-encoded) values. Over a
+    /// see-through pixel the colours are weighted by coverage and the alpha grows ("over" with
+    /// straight alpha); on an opaque canvas this is the plain formula above.
     fn blend(&mut self, x: i32, y: i32, rgb: [u8; 3], alpha: f32) {
         if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height || alpha <= 0.0 {
             return;
@@ -156,10 +159,13 @@ impl Canvas {
         }
         let at = index * 4;
         let a = alpha.min(1.0);
+        let below = self.rgba[at + 3] as f32 / 255.0;
+        let out = a + below * (1.0 - a);
         for c in 0..3 {
             let dst = self.rgba[at + c] as f32;
-            self.rgba[at + c] = (rgb[c] as f32 * a + dst * (1.0 - a)).round() as u8;
+            self.rgba[at + c] = ((rgb[c] as f32 * a + dst * below * (1.0 - a)) / out).round() as u8;
         }
+        self.rgba[at + 3] = (out * 255.0).round() as u8;
     }
 
     /// Fills a rectangle; edges are rounded to whole pixels.
@@ -389,6 +395,21 @@ mod tests {
         c.fill_rect([0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.5]);
         assert_eq!(pixel(&c, 0, 0), [128, 128, 128, 255]);
         assert_eq!(pixel(&c, 1, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn transparent_canvas_keeps_coverage_for_the_room() {
+        let mut c = Canvas::new(3, 1, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(pixel(&c, 2, 0)[3], 0);
+        // half-covered red keeps its colour and gets alpha 128
+        c.fill_rect([0.0, 0.0, 1.0, 1.0], [1.0, 0.0, 0.0, 0.5]);
+        assert_eq!(pixel(&c, 0, 0), [255, 0, 0, 128]);
+        // two half layers: alpha 0.75, colour weighted 2:1 toward the top layer
+        c.fill_rect([0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 0.5]);
+        assert_eq!(pixel(&c, 0, 0), [85, 0, 170, 191]);
+        // opaque paint is plain
+        c.fill_rect([1.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(pixel(&c, 1, 0), [0, 255, 0, 255]);
     }
 
     #[test]

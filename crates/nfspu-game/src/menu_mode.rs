@@ -6,7 +6,8 @@
 //! `logs/m0.log` and counted in `logs/menu_audit.txt`.
 //!
 //! Layers, bottom to top (see `docs/provenance/fe.md`):
-//! 1. room (`room=ID_GARAGE`, a 3D scene) - not drawn yet, cleared to black instead;
+//! 1. room (`room=ID_GARAGE`, a 3D scene) - drawn by `menu_garage` behind a see-through image;
+//!    other rooms (`ID_TRACK`) are not drawn yet and clear to black;
 //! 2. frame (`screen=ID_MOVIEOVAL` -> `screenmovieoval.lay`) - verified mapping;
 //! 3. page (the screen asked for);
 //! 4. popup (a screen with `room=ID_NONE` opened over a page, like `selectname` over `GameSetup`)
@@ -28,6 +29,9 @@ use nfspu_formats::fe::{ControlTemplate, Locale};
 use nfspu_game::menu::{self, Draw, Hit, Screen};
 use nfspu_game::menu_canvas;
 use std::{collections::BTreeMap, path::PathBuf};
+
+#[path = "menu_garage.rs"]
+mod menu_garage;
 
 /// The layout's own coordinate space: the retail front end is authored at 640x480.
 const SCREEN_WIDTH: f32 = 640.0;
@@ -272,11 +276,14 @@ impl FrontEnd {
         }
     }
 
-    /// The colour the 640x480 image starts from, by the same rule.
+    /// The colour the 640x480 image starts from, by the same rule; see-through over a room that
+    /// is drawn (the garage), so the 3D scene shows wherever the page draws nothing.
     fn backdrop(&self) -> [f32; 4] {
         let room = self.page.room.trim();
         if room.is_empty() || room.eq_ignore_ascii_case("ID_NONE") {
             self.page.background
+        } else if nfspu_game::garage::room_for(room).is_some() {
+            [0.0, 0.0, 0.0, 0.0]
         } else {
             [0.0, 0.0, 0.0, 1.0]
         }
@@ -583,9 +590,11 @@ pub fn run(game_dir: PathBuf, start: String) -> AppExit {
         .insert_resource(Capture::from_env())
         .insert_resource(sounds)
         .insert_resource(music)
+        .add_plugins(menu_garage::MenuGarage)
         .add_systems(Startup, |mut commands: Commands, windows: Query<&Window, With<PrimaryWindow>>| {
-            // UI is drawn by a camera, so one has to exist even though the screen is one image.
-            commands.spawn(Camera2d::default());
+            // UI is drawn by a camera, so one has to exist even though the screen is one image (the
+            // garage room comes in as a texture, see `menu_garage`).
+            commands.spawn((Camera2d::default(), IsDefaultUiCamera));
             let mut node = Node::default();
             if let Ok(window) = windows.single() {
                 crate::log_line(&format!("front end: window {:.0}x{:.0} logical, camera spawned", window.width(), window.height()));
@@ -698,6 +707,10 @@ fn present(
     }
     let started = std::time::Instant::now();
     let canvas = menu_canvas::compose(&layers, Some([p.x, p.y]), backdrop, &mut state.art);
+    if backdrop[3] <= 0.0 && state.compose_ms.is_empty() {
+        let open = canvas.rgba.chunks_exact(4).filter(|px| px[3] < 255).count();
+        crate::log_line(&format!("front end: '{}' over the 3D room: {open} of {} pixels see-through", state.page.name, canvas.width * canvas.height));
+    }
     // Movies need a new picture every ~66 ms, so report how long composing takes.
     state.compose_ms.push(started.elapsed().as_secs_f32() * 1000.0);
     if state.compose_ms.len() == 300 {
@@ -897,7 +910,9 @@ fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, 
         return;
     }
     state.frames += 1;
-    if state.frames < 60 || time.elapsed_secs() < state.after {
+    // Over the 3D garage the first frames are black while the 3D shaders compile: wait 3 s.
+    let after = if nfspu_game::garage::room_for(&current.page.room).is_some() { state.after.max(3.0) } else { state.after };
+    if state.frames < 60 || time.elapsed_secs() < after {
         return;
     }
     let dir = crate::log_path().parent().map(PathBuf::from).unwrap_or_default();

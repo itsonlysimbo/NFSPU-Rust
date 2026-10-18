@@ -129,13 +129,18 @@ pub struct Screen {
     pub top: Vec<Draw>,
 }
 
-/// The layout file a frame id names: `ID_MOVIEOVAL` is `screenmovieoval.lay`. `ID_SCREEN`,
-/// `ID_NONE` and empty mean no frame. (The retail build also swaps `screenoptionoval` for a
-/// `lite` variant in some states; not modelled.)
+/// The layout file a frame id names: `ID_MOVIEOVAL` is `screenmovieoval.lay`, and `ID_SCREEN` is
+/// `screenempty.lay` (the ring of `CnstLyr` pictures around the 3D room: retail's frame lookup
+/// maps it so in its normal hardware-3D mode, and the recordings show the ring on the quick-race
+/// page). `ID_NONE` and empty mean no frame. (The retail build also swaps `screenoptionoval` for a
+/// `lite` variant in some states, and uses other frames in its low-memory mode; not modelled.)
 pub fn frame_layout(id: &str) -> Option<String> {
     let id = id.trim();
     let rest = id.strip_prefix("ID_")?;
-    if rest.is_empty() || rest.eq_ignore_ascii_case("SCREEN") || rest.eq_ignore_ascii_case("NONE") {
+    if rest.eq_ignore_ascii_case("SCREEN") {
+        return Some("screenempty".to_string());
+    }
+    if rest.is_empty() || rest.eq_ignore_ascii_case("NONE") {
         return None;
     }
     Some(format!("screen{}", rest.to_ascii_lowercase()))
@@ -612,6 +617,25 @@ fn append_control_with(
             if let Some(file) = file {
                 let flip = number("flip").unwrap_or(0.0).max(0.0) as u8;
                 screen.draw.push(Draw::Picture { file, index: frame, pos: [left, posy + number("picoffy").unwrap_or(0.0)], flip, alpha: icon_alpha });
+            }
+            true
+        }
+        // The half ring over the 3D garage (`extracircle.ctr`, "Extra Circle Thing"): its
+        // `pic0..pic7` parts are `extracircle.fsh` frames 0-7 at fixed positions (the control's
+        // own position is read-only 0,0). Seen in retail recordings as the dark lens ring around
+        // the car on the quick-race page.
+        // The 3D car draws nothing in 2D: the viewer's garage scene (`menu_garage.rs`) shows the
+        // car behind the page and reads this control's box from the layout for its clicks.
+        "NFS5.3DCAR" => true,
+        "NFS5.ExtraCircle" => {
+            if hidden(&data) {
+                return true;
+            }
+            for part in template.blocks.iter().filter(|b| b.name.starts_with("part.pic")) {
+                let Some(file) = part.get("shapePathName.value").map(|s| s.trim().to_string()) else { continue };
+                let (px, py) = part.get("pos.value").and_then(|v| eval_pair(v, &data)).unwrap_or((0.0, 0.0));
+                let index = part.get("shapeIndex.value").and_then(|v| eval_number(v, &data)).unwrap_or(0.0).max(0.0) as usize;
+                screen.draw.push(Draw::Picture { file, index, pos: [x + px, y + py], flip: 0, alpha: 1.0 });
             }
             true
         }
@@ -1654,7 +1678,7 @@ mod tests {
     fn frame_ids_name_screen_layouts() {
         assert_eq!(frame_layout("ID_MOVIEOVAL").as_deref(), Some("screenmovieoval"));
         assert_eq!(frame_layout("ID_OPTIONOVAL").as_deref(), Some("screenoptionoval"));
-        assert_eq!(frame_layout("ID_SCREEN"), None);
+        assert_eq!(frame_layout("ID_SCREEN").as_deref(), Some("screenempty"));
         assert_eq!(frame_layout("ID_NONE"), None);
         assert_eq!(frame_layout(""), None);
     }
