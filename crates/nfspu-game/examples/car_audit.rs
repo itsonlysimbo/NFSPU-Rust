@@ -4,6 +4,7 @@
 //! Run: `cargo run -p nfspu-game --example car_audit [-- car ...]`
 
 use nfspu_game::car_model::{self, CarModel, CarOptions, Page, Piece};
+
 use std::collections::BTreeMap;
 
 /// Alpha at a UV position (nearest texel, wrapping like the viewer's sampler).
@@ -28,15 +29,16 @@ fn hole_share(page: &Page, uv: &[[f32; 2]]) -> f32 {
     hits as f32 / w.len() as f32
 }
 
-/// Per article: (triangles, triangles that are mostly holes).
-fn holes(m: &CarModel, piece: &Piece, page: &Option<Page>, out: &mut BTreeMap<String, (usize, usize)>, tag: &str) {
-    let Some(page) = page else { return };
+/// Per article: (triangles, triangles that are mostly holes), each triangle checked against the
+/// page its material names. Triangles whose page has no picture count as holes.
+fn holes(m: &CarModel, piece: &Piece, out: &mut BTreeMap<String, (usize, usize)>, tag: &str) {
     for t in 0..piece.positions.len() / 3 {
         let uv = [piece.uvs[3 * t], piece.uvs[3 * t + 1], piece.uvs[3 * t + 2]];
         let name = m.article_names.get(piece.articles[3 * t] as usize).cloned().unwrap_or_default();
+        let page = m.pages.get(piece.pages[3 * t] as usize).and_then(Option::as_ref);
         let e = out.entry(format!("{tag}:{name}")).or_default();
         e.0 += 1;
-        if hole_share(page, &uv) >= 0.5 {
+        if page.is_none_or(|page| hole_share(page, &uv) >= 0.5) {
             e.1 += 1;
         }
     }
@@ -95,15 +97,24 @@ fn main() {
         };
         let mut issues: Vec<String> = Vec::new();
         let mut per: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-        holes(&m, &m.paint, &m.exterior, &mut per, "body");
-        holes(&m, &m.headlights, &m.exterior, &mut per, "head");
-        holes(&m, &m.taillights, &m.exterior, &mut per, "tail");
-        holes(&m, &m.trim, &m.extint, &mut per, "trim");
-        holes(&m, &m.glass, &m.glass_page, &mut per, "glass");
-        holes(&m, &m.driver_suit, &m.suit_page, &mut per, "suit");
-        holes(&m, &m.driver_head, &m.head_page, &mut per, "head");
+        holes(&m, &m.paint, &mut per, "body");
+        holes(&m, &m.paint_inner, &mut per, "inner");
+        holes(&m, &m.headlights, &mut per, "head");
+        holes(&m, &m.taillights, &mut per, "tail");
+        holes(&m, &m.trim, &mut per, "trim");
+        holes(&m, &m.glass, &mut per, "glass");
+        holes(&m, &m.driver_suit, &mut per, "suit");
+        holes(&m, &m.driver_head, &mut per, "head");
+        holes(&m, &m.interior, &mut per, "cabin");
         for w in &m.wheels {
-            holes(&m, &w.piece, &m.extint, &mut per, "wheel");
+            holes(&m, &w.piece, &mut per, "wheel");
+        }
+        // cabin pieces the cockpit view needs (names differ a little between cars)
+        let cabin_names: std::collections::BTreeSet<String> = m.interior.articles.iter().map(|&a| m.article_names[a as usize].clone()).collect();
+        for want in ["Dash", "Seat", "Steer"] {
+            if !cabin_names.iter().any(|n| n.starts_with(want)) {
+                issues.push(format!("cabin has no {want}"));
+            }
         }
         for (k, (n, h)) in &per {
             // handles (recessed grips) and lamp lenses have transparent artwork around their shape
@@ -111,8 +122,9 @@ fn main() {
             if k.ends_with(":Handle") || k.starts_with("head:Light") || k.starts_with("tail:Light") || k.starts_with("head:HeadLight") {
                 continue;
             }
-            // wheels have genuine transparent corners; flag only when most of an article is holes
-            let limit = if k.starts_with("wheel:") { 0.6 } else { 0.25 };
+            // wheels and cabin parts (gauge faces, grilles) have genuine transparent parts; flag only
+            // when most of an article is holes
+            let limit = if k.starts_with("wheel:") || k.starts_with("cabin:") { 0.6 } else { 0.25 };
             if *h as f32 > limit * *n as f32 && *h >= 2 {
                 issues.push(format!("holes in {k}: {h} of {n} triangles"));
             }
@@ -148,9 +160,11 @@ fn main() {
             issues.push(format!("odd size {w:.2} x {h:.2} x {l:.2}"));
         }
         println!(
-            "== {name:<14} style '{}', {} tris, {:.2} x {:.2} x {:.2} m: {}",
+            "== {name:<14} style '{}', {} tris ({} cabin), {} pages, {:.2} x {:.2} x {:.2} m: {}",
             m.style_name,
             m.triangles(),
+            m.interior.positions.len() / 3,
+            m.pages.iter().flatten().count(),
             w,
             h,
             l,

@@ -67,6 +67,9 @@ pub struct Material {
     pub kind: String,
     /// Name of the texture in the matching `.fsh` file; `None` if the field holds no text.
     pub texture: Option<String>,
+    /// The same field read as a number. In car files it holds no name but the texture page the
+    /// material is drawn with, counted from 0 (`[tpageN.details]` in the car's `.tpg` is N - 1).
+    pub page: u32,
 }
 
 /// Geometry of one article at one level of detail.
@@ -187,7 +190,7 @@ impl<'a> Crp<'a> {
 
     /// All materials in the container, in file order. Material parts are stored as
     /// `[index_lo, index_hi, 't', 'm']`; the description is at 0x10 (16 bytes) and the
-    /// 4-character texture name at 0x28.
+    /// 4-character texture name (tracks) or texture page number (cars) at 0x28.
     pub fn materials(&self) -> Vec<Material> {
         self.misc
             .iter()
@@ -196,7 +199,8 @@ impl<'a> Crp<'a> {
                 let d = self.data.get(p.offset..)?;
                 let name = d.get(0x28..0x2C)?;
                 let texture = name.iter().all(|b| (32..127).contains(b)).then(|| text_field(name)).filter(|t| !t.is_empty());
-                Some(Material { index: u16::from_le_bytes([p.tag[0], p.tag[1]]), kind: text_field(d.get(0x10..0x20)?), texture })
+                let page = u32::from_le_bytes([name[0], name[1], name[2], name[3]]);
+                Some(Material { index: u16::from_le_bytes([p.tag[0], p.tag[1]]), kind: text_field(d.get(0x10..0x20)?), texture, page })
             })
             .collect()
     }
@@ -483,7 +487,7 @@ mod tests {
         let crp = parse(&d).unwrap();
         let mats = crp.materials();
         assert_eq!(mats.len(), 2);
-        assert_eq!(mats[0], Material { index: 7, kind: "Opaque".into(), texture: Some("al01".into()) });
+        assert_eq!(mats[0], Material { index: 7, kind: "Opaque".into(), texture: Some("al01".into()), page: u32::from_le_bytes(*b"al01") });
         assert_eq!(mats[1].index, 8);
         assert_eq!(mats[1].texture, None);
     }
