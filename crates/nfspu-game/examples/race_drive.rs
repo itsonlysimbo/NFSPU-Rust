@@ -1,9 +1,13 @@
-﻿//! Offline scripted race (no window): one car starts on the retail grid, waits for the countdown,
+//! Offline scripted race (no window): one car starts on the retail grid, waits for the countdown,
 //! then an autopilot drives the road slices in race direction while `race::Race` counts laps.
 //! Checks that the countdown holds the car, laps are counted and the race finishes.
-//! Run: `cargo run -p nfspu-game --example race_drive --release -- monaco1 forward 2`
-//! (track, forward|backward, laps; with no track it runs every track once). Log: logs/race_drive.txt
+//! With opponents, AI drivers (`nfspu_game::ai`) race on the grid behind it and every car's laps
+//! and finish are logged.
+//! Run: `cargo run -p nfspu-game --example race_drive --release -- monaco1 forward 2 7 2`
+//! (track, forward|backward, laps, opponents 0-7, difficulty 0-2; with no track it runs every track
+//! once, alone). `NFSPU_AI_SEED` fixes the random draws. Log: logs/race_drive.txt
 
+use nfspu_game::ai::{self, Opponent, Other, Rng, View};
 use nfspu_game::car::{Car, Input};
 use nfspu_game::collision::WallSet;
 use nfspu_game::ground::Ground;
@@ -16,7 +20,7 @@ fn wrap(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
-fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
+fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8, out: &mut String) -> bool {
     let t = match race_path::load(name, dir) {
         Ok(t) => t,
         Err(e) => { let _ = writeln!(out, "{name}: {e}"); return false; }
@@ -25,11 +29,36 @@ fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
     let ground = Ground::new(g.tris, 16.0);
     let walls = WallSet::new(g.walls, 4.0);
     let p = &t.path;
-    let spot = grid_spot(p, t.start_slice, 0, 1, dir);
+    let cars = 1 + opponents;
+    let spots: Vec<_> = (0..cars).map(|g| grid_spot(p, t.start_slice, g, cars, dir)).collect();
+    let spot = spots[0];
     let mut car = Car::new(spot.pos + bevy::math::Vec3::Y, spot.yaw);
     let kind = if t.point_to_point() { Kind::PointToPoint } else { Kind::Circuit };
     let mut slice = spot.slice;
-    let mut r = Race::new(RaceSetup { kind, laps, cars: 1 }, &[p.fraction(slice, dir)]);
+    let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, dir)).collect();
+    let mut r = Race::new(RaceSetup { kind, laps, cars }, &fractions);
+    // opponents: retail drivers of the difficulty, all with the 993's tables
+    let game = std::path::PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
+    let seed = std::env::var("NFSPU_AI_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(12345u32);
+    let mut rng = Rng::new(seed);
+    let lsp = race_path::load_racing_line(name, dir);
+    let line = ai::driving_line(p, lsp.as_deref());
+    let (drivers, names) = ai::load_drivers(&game);
+    let (spec, _) = ai::load_ais(&game, "993").expect("993.ais");
+    let mut racers: Vec<(Car, Opponent, String)> = ai::pick_drivers(&drivers, difficulty, opponents, &mut rng)
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let s = spots[i + 1];
+            let n = names.get(&(d.name_id as u16)).cloned().unwrap_or_default();
+            (Car::new(s.pos + bevy::math::Vec3::Y, s.yaw), Opponent::new(spec.clone(), d, s.slice), n)
+        })
+        .collect();
+    let mut resets = vec![0u32; opponents];
+    let who = |c: usize, racers: &[(Car, Opponent, String)]| if c == 0 { "player".to_string() } else { racers[c - 1].2.clone() };
+    if opponents > 0 {
+        let _ = writeln!(out, "   {opponents} opponents, difficulty {difficulty}, seed {seed}, racing line {}", if lsp.as_ref().is_some_and(|l| l.len() == p.slices.len()) { "from .lsp" } else { "slice centres" });
+    }
     let _ = writeln!(out, "{name} {dir:?}: {kind:?}, {} laps, start slice {}, grid slice {}, start fraction {:.3}", r.setup.laps, t.start_slice, slice, p.fraction(slice, dir));
     let dt = 1.0 / race::TICK_HZ as f32;
     let start_pos = car.pos;
@@ -62,6 +91,34 @@ fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
             }
         };
         car.step(input, dt, &ground, &walls);
+        let player_progress = r.cars[0].progress;
+        let rate = ai::player_rate(player_progress - fractions[0], r.race_ticks());
+        let others: Vec<Other> = std::iter::once(Other { pos: car.pos, speed: car.speed }).chain(racers.iter().map(|x| Other { pos: x.0.pos, speed: x.0.speed })).collect();
+        let mut samples = vec![CarSample::default(); cars];
+        for i in 0..racers.len() {
+            let view = View { path: p, line: &line, dir, held: r.held(), finished: r.cars[i + 1].state == race::CarState::Finished, difficulty, lead: r.cars[i + 1].progress - player_progress, player_rate: rate };
+            let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != i + 1).map(|(_, o)| *o).collect();
+            let (c, brain, rname) = &mut racers[i];
+            let before_rec = brain.recoveries;
+            let input = brain.think(c, &view, &near, &mut rng);
+            if brain.recoveries != before_rec && brain.recoveries <= 5 {
+                let s = &p.slices[brain.slice];
+                let _ = writeln!(out, "      tick {:>5}: {rname} recovers at slice {} (segment {}), speed {:.1}, {:.1} m off centre, heading . road {:.2}",
+                    r.tick, brain.slice, p.segment_of(brain.slice), c.speed, (c.pos - s.pos).dot(s.right), c.heading().dot(s.forward * dir.sign()));
+            }
+            let before = c.pos;
+            c.step(input, dt, &ground, &walls);
+            brain.slice = p.track(brain.slice, c.pos);
+            let fallen = c.pos.y < p.slices[brain.slice].pos.y - 30.0;
+            if !r.held() && r.cars[i + 1].state == race::CarState::Racing && (fallen || brain.wants_reset()) {
+                let (pos, yaw) = ai::reset_pose(p, &line, brain.slice, dir);
+                *c = Car::new(pos, yaw);
+                brain.was_reset(brain.slice);
+                resets[i] += 1;
+            }
+            let crossed = t.finish.map_or(false, |(a, b)| crosses(before, c.pos, a, b));
+            samples[i + 1] = CarSample { fraction: p.fraction(brain.slice, dir), crossed_finish: crossed };
+        }
         if r.held() {
             let d = car.pos - start_pos;
             moved_before_go = moved_before_go.max((d.x * d.x + d.z * d.z).sqrt());
@@ -76,23 +133,27 @@ fn drive(name: &str, dir: Direction, laps: u32, out: &mut String) -> bool {
         if p.wrong_way(slice, vel / dt, dir) && !r.held() {
             wrong_ticks += 1;
         }
-        for e in r.step(&[CarSample { fraction: p.fraction(slice, dir), crossed_finish: crossed }]) {
+        samples[0] = CarSample { fraction: p.fraction(slice, dir), crossed_finish: crossed };
+        for e in r.step(&samples) {
             let line = match e {
                 RaceEvent::Countdown(n) => format!("   tick {:>5}: countdown {}", r.tick, if n == 0 { "GO".to_string() } else { n.to_string() }),
-                RaceEvent::Lap { lap, ticks, .. } => format!("   tick {:>5}: lap {lap} in {} (slice {slice})", r.tick, race::format_time(ticks)),
-                RaceEvent::LapOwed { .. } => format!("   tick {:>5}: crossed the line backwards (slice {slice})", r.tick),
-                RaceEvent::Finished { position, ticks, .. } => format!("   tick {:>5}: FINISHED P{position} in {}, best lap {}", r.tick, race::format_time(ticks), r.best_lap(0).map_or("-".into(), race::format_time)),
+                RaceEvent::Lap { car: c, lap, ticks } => format!("   tick {:>5}: {} lap {lap} in {}", r.tick, who(c, &racers), race::format_time(ticks)),
+                RaceEvent::LapOwed { car: c } => format!("   tick {:>5}: {} crossed the line backwards", r.tick, who(c, &racers)),
+                RaceEvent::Finished { car: c, position, ticks } => format!("   tick {:>5}: {} FINISHED P{position} in {}, best lap {}", r.tick, who(c, &racers), race::format_time(ticks), r.best_lap(c).map_or("-".into(), race::format_time)),
             };
             let _ = writeln!(out, "{line}");
         }
         let prog = r.cars[0].progress;
         if prog > best_progress + 0.002 || r.held() { best_progress = best_progress.max(prog); last_gain = r.tick; }
         if !r.held() && r.tick - last_gain > 64 * 6 && backing <= 0.0 { backing = 2.0; last_gain = r.tick; }
-        if r.race_ticks() > 64 * 60 * 25 { stuck = true; break; }
+        if r.race_ticks() > 64 * 60 * 25 { stuck = r.cars[0].state != race::CarState::Finished; break; }
+    }
+    for (i, (_, brain, n)) in racers.iter().enumerate() {
+        let _ = writeln!(out, "   {n}: progress {:.3}, {} recoveries, {} resets{}", r.cars[i + 1].progress, brain.recoveries, resets[i], if r.cars[i + 1].finish_time.is_none() { " (DID NOT FINISH)" } else { "" });
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });
-    !stuck && moved_before_go < 0.5
+    !stuck && moved_before_go < 0.5 && r.all_finished()
 }
 
 fn log_file() -> std::path::PathBuf {
@@ -108,10 +169,12 @@ fn main() {
     if let Some(name) = a.first() {
         let dir = if a.get(1).map_or(false, |d| d.starts_with('b')) { Direction::Backward } else { Direction::Forward };
         let laps = a.get(2).and_then(|l| l.parse().ok()).unwrap_or(2);
-        ok &= drive(name, dir, laps, &mut out);
+        let opponents = a.get(3).and_then(|n| n.parse().ok()).unwrap_or(0usize).min(7);
+        let difficulty = a.get(4).and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
+        ok &= drive(name, dir, laps, opponents, difficulty, &mut out);
     } else {
         for n in ["alps", "autobahn", "canyon", "castle", "coastal", "farmland", "foothills", "forest", "industrial", "monaco1", "monaco2", "monaco3", "monaco4", "monaco5", "skidpad"] {
-            ok &= drive(n, Direction::Forward, 2, &mut out);
+            ok &= drive(n, Direction::Forward, 2, 0, 0, &mut out);
             let _ = std::fs::write(log_file(), &out);
         }
     }

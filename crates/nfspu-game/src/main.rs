@@ -270,12 +270,24 @@ fn update_lamps(
     keys: Res<ButtonInput<KeyCode>>,
     mut on: ResMut<LightsOn>,
     car: Option<Res<CarRes>>,
-    lamps: Query<&Lamp>,
+    lamps: Query<(Entity, &Lamp)>,
     new_lamps: Query<(), Added<Lamp>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last: Local<Option<(bool, bool)>>,
     console: Res<console::Console>,
+    parents: Query<&ChildOf>,
+    ai: Query<&race_mode::AiBody>,
 ) {
+    // opponents' lamps follow their own brakes, every frame (a write only when it changes)
+    for (e, lamp) in &lamps {
+        let Some(body) = opponent_of(e, &parents, &ai) else { continue };
+        let want = lamp_colour(lamp.front, on.0, body.braking);
+        if materials.get(&lamp.material).is_some_and(|m| m.base_color != want) {
+            if let Some(mut m) = materials.get_mut(&lamp.material) {
+                m.base_color = want;
+            }
+        }
+    }
     if console.open {
         return;
     }
@@ -289,19 +301,34 @@ fn update_lamps(
         return;
     }
     *last = Some((on.0, braking));
-    for lamp in &lamps {
+    for (e, lamp) in &lamps {
+        if opponent_of(e, &parents, &ai).is_some() {
+            continue;
+        }
         let Some(mut m) = materials.get_mut(&lamp.material) else { continue };
-        // values above 1.0 make the unlit texture brighter than normal, which reads as glow
-        m.base_color = if lamp.front {
-            if on.0 { Color::linear_rgb(2.6, 2.6, 2.0) } else { Color::WHITE }
-        } else if braking {
-            Color::linear_rgb(3.0, 0.35, 0.35)
-        } else if on.0 {
-            Color::linear_rgb(1.5, 0.4, 0.4)
-        } else {
-            Color::WHITE
-        };
+        m.base_color = lamp_colour(lamp.front, on.0, braking);
     }
+}
+
+/// A lamp's colour. Values above 1.0 make the unlit texture brighter than normal, which reads as
+/// glow.
+fn lamp_colour(front: bool, lights_on: bool, braking: bool) -> Color {
+    if front {
+        if lights_on { Color::linear_rgb(2.6, 2.6, 2.0) } else { Color::WHITE }
+    } else if braking {
+        Color::linear_rgb(3.0, 0.35, 0.35)
+    } else if lights_on {
+        Color::linear_rgb(1.5, 0.4, 0.4)
+    } else {
+        Color::WHITE
+    }
+}
+
+/// The opponent a car part belongs to (part -> model -> body), None for the player's car.
+fn opponent_of(part: Entity, parents: &Query<&ChildOf>, ai: &Query<&race_mode::AiBody>) -> Option<race_mode::AiBody> {
+    let model = parents.get(part).ok()?.parent();
+    let body = parents.get(model).ok()?.parent();
+    ai.get(body).ok().copied()
 }
 
 #[derive(Resource)]
@@ -1289,12 +1316,13 @@ fn page_material(
     Some(materials.add(material))
 }
 
-fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(&mut Transform, &mut WheelComp)>) {
+fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(Entity, &mut Transform, &mut WheelComp)>, parents: Query<&ChildOf>, ai: Query<&race_mode::AiBody>) {
     let Some(state) = car else { return };
     let dt = time.delta_secs().min(0.05);
-    for (mut t, mut w) in &mut wheels {
-        w.spin -= state.car.speed * dt / WHEEL_RADIUS; // rolling forward turns the top toward the front
-        let steer = if w.front { state.steer * 0.45 } else { 0.0 };
+    for (e, mut t, mut w) in &mut wheels {
+        let (speed, steer) = opponent_of(e, &parents, &ai).map_or((state.car.speed, state.steer), |b| (b.speed, b.steer));
+        w.spin -= speed * dt / WHEEL_RADIUS; // rolling forward turns the top toward the front
+        let steer = if w.front { steer * 0.45 } else { 0.0 };
         t.rotation = Quat::from_rotation_y(steer) * Quat::from_rotation_x(w.spin);
     }
 }
@@ -1352,18 +1380,33 @@ fn run_flow(start: String) {
         let backward = matches!(setup.direction, D::Backward | D::BackwardMirrored);
         let mirrored = matches!(setup.direction, D::ForwardMirrored | D::BackwardMirrored);
         let loading = format!("{},{}{}{}", setup.track, setup.car_model, if backward { ",reverse" } else { "" }, if mirrored { ",mirror" } else { "" });
-        let race = format!("{},{},{}", setup.track, if backward { "backward" } else { "forward" }, setup.laps);
-        log_line(&format!("flow: race NFSPU_LOADING={loading} NFSPU_RACE={race} (opponents and traffic not simulated yet)"));
+        let race = format!("{},{},{},{},{}", setup.track, if backward { "backward" } else { "forward" }, setup.laps, setup.opponents.min(7), setup.difficulty.min(2));
+        let opponents = opponent_models(&setup).join(",");
+        log_line(&format!("flow: race NFSPU_LOADING={loading} NFSPU_RACE={race} NFSPU_OPPONENTS={opponents} (traffic not simulated yet)"));
         let run = std::process::Command::new(&exe)
             .env("NFSPU_CHILD", "1")
             .env_remove("NFSPU_MENU")
             .env("NFSPU_LOADING", &loading)
             .env("NFSPU_RACE", &race)
+            .env("NFSPU_OPPONENTS", &opponents)
             .env("NFSPU_HUD", "1")
             .status();
         log_line(&format!("flow: race closed ({run:?})"));
         screen = "quickrace".to_string();
     }
+}
+
+/// The opponents' car models for a quick race, by the menu's rule (`ai::pick_cars`) over the
+/// installed road cars of `nfs5.car`.
+fn opponent_models(setup: &nfspu_game::race_setup::RaceSetup) -> Vec<String> {
+    use nfspu_game::catalog;
+    let game = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
+    let cars = catalog::parse_cars(&fs::read(game.join("FEData").join("Data").join("nfs5.car")).unwrap_or_default());
+    let models = catalog::file_names(&game.join("GameData").join("CarModel"));
+    let list: Vec<catalog::Car> = catalog::opponent_cars(&cars, |m| models.contains(&format!("{m}.crp").to_ascii_lowercase())).into_iter().map(|i| cars[i].clone()).collect();
+    let player = cars.iter().find(|c| c.id == setup.car_id).cloned().unwrap_or_else(|| catalog::Car { model: setup.car_model.clone(), ..Default::default() });
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
+    nfspu_game::ai::pick_cars(&setup.opponent_cars, &player, &list, setup.opponents.min(7) as usize, &mut nfspu_game::ai::Rng::new(seed))
 }
 
 fn feed_hud(
@@ -1517,15 +1560,20 @@ fn camera_input(
 fn driver_visibility(
     mode: Res<CamMode>,
     drive: Res<DriveMode>,
-    mut parts: Query<&mut Visibility, (With<DriverPart>, Without<CabinPart>)>,
-    mut cabins: Query<(&mut Visibility, &CabinPart), Without<DriverPart>>,
+    mut parts: Query<(Entity, &mut Visibility), (With<DriverPart>, Without<CabinPart>)>,
+    mut cabins: Query<(Entity, &mut Visibility, &CabinPart), Without<DriverPart>>,
+    parents: Query<&ChildOf>,
+    ai: Query<&race_mode::AiBody>,
 ) {
+    // the cockpit view belongs to the player's car; opponents always show the outside cabin
     let in_cockpit = drive.0 && mode.0 == 1;
-    for mut v in &mut parts {
-        *v = if in_cockpit { Visibility::Hidden } else { Visibility::Inherited };
+    for (e, mut v) in &mut parts {
+        let hide = in_cockpit && opponent_of(e, &parents, &ai).is_none();
+        v.set_if_neq(if hide { Visibility::Hidden } else { Visibility::Inherited });
     }
-    for (mut v, cabin) in &mut cabins {
-        *v = if cabin.cockpit == in_cockpit { Visibility::Inherited } else { Visibility::Hidden };
+    for (e, mut v, cabin) in &mut cabins {
+        let cockpit = in_cockpit && opponent_of(e, &parents, &ai).is_none();
+        v.set_if_neq(if cabin.cockpit == cockpit { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 

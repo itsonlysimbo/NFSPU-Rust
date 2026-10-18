@@ -412,6 +412,13 @@ impl TrackRace {
     }
 }
 
+/// The racing line of a track and direction, `GameData/Track/racer/work/<track><0|1>.lsp` (0
+/// forward, 1 backward; `nfspu_formats::aidata::parse_lsp`), or None without one.
+pub fn load_racing_line(track: &str, dir: Direction) -> Option<Vec<[f32; 2]>> {
+    let file = crate::track::track_dir().ok()?.join("racer").join("work").join(format!("{track}{}.lsp", if dir == Direction::Forward { 0 } else { 1 }));
+    nfspu_formats::aidata::parse_lsp(&std::fs::read(file).ok()?)
+}
+
 /// Reads the slices and the start/finish scene of a track from the install.
 pub fn load(track: &str, dir: Direction) -> Result<TrackRace, String> {
     use nfspu_formats::{crp, refpack, scn, sim};
