@@ -24,6 +24,7 @@ use nfspu_game::collision::WallSet;
 use nfspu_game::ground::Ground;
 use nfspu_game::{refbuild, sky, track};
 use nfspu_game::MIRROR_X;
+mod car_probe;
 mod console;
 mod menu_mode;
 mod race_load;
@@ -134,6 +135,7 @@ fn main() {
         .insert_resource(MouseCaptured(false))
         .insert_resource(DriveMode(true))
         .insert_resource(visual_probe::Probe::from_env())
+        .insert_resource(car_probe::CarProbe::from_env())
         .insert_resource(CamMode(0))
         .insert_resource(Orbit { yaw: 0.6, pitch: 0.35, radius: 6.0 })
         .insert_resource(RetailFov::from_env())
@@ -144,6 +146,7 @@ fn main() {
         .add_plugins(nfspu_game::hud_plugin::HudPlugin)
         .add_systems(Update, feed_hud.after(drive_car))
         .add_systems(Last, visual_probe::update)
+        .add_systems(Last, car_probe::update)
         .add_systems(Update, (console::handle_input, console::apply).chain())
         .add_systems(
             Update,
@@ -155,7 +158,7 @@ fn main() {
     log_line(&msg);
     println!("{msg}");
     println!("A log was written to {}. Press Enter to close this console.", log_path().display());
-    if env::var("NFSPU_SKY_CAPTURE").as_deref() != Ok("1") {
+    if env::var("NFSPU_SKY_CAPTURE").as_deref() != Ok("1") && env::var_os("NFSPU_CAR_CAPTURE").is_none() {
         let _ = std::io::stdin().read(&mut [0u8]);
     }
 }
@@ -1078,126 +1081,172 @@ fn spawn_car_model(
     name: &str,
     options: &CarOptions,
 ) -> (Entity, usize) {
-    let mut style_count = 0;
-            let white = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, double_sided: true, cull_mode: None, ..default() });
-            // the model's origin is at ground level, the car's position is its centre
-            let model = commands.spawn((Transform::from_xyz(0.0, -RIDE_HEIGHT, 0.0), Visibility::default())).id();
-            commands.entity(root).add_child(model);
-            match car_model::load_car(name, options) {
-                Ok(m) => {
-                    style_count = m.style_count;
-                    log_line(&format!(
-                        "car '{}' style '{}': {} parts, {} triangles, {} wheels, size {:.2} x {:.2} x {:.2} m (width x height x length)",
-                        m.name, m.style_name, m.articles_used, m.triangles(), m.wheels.len(), m.size[0], m.size[1], m.size[2]
-                    ));
-                    // textured pieces use a white vertex colour (the texture gives the colour); a piece whose
-                    // page is missing falls back to a flat colour
-                    let paint_mat = page_material(&m.exterior, false, images, materials);
-                    let trim_mat = page_material(&m.extint, false, images, materials);
-                    // same page without cut-outs, for the wheel-arch liners
-                    let trim_solid_mat = trim_mat.as_ref().and_then(|h| materials.get(h).cloned()).map(|mut copy| {
-                        copy.alpha_mode = AlphaMode::Opaque;
-                        materials.add(copy)
-                    });
-                    let glass_mat = page_material(&m.glass_page, true, images, materials);
-                    let interior_mat = page_material(&m.interior_page, false, images, materials);
-                    let cabrio_mat = page_material(&m.cabrio_page, true, images, materials);
-                    let suit_mat = page_material(&m.suit_page, false, images, materials);
-                    let head_mat = page_material(&m.head_page, false, images, materials);
-                    // The cabin includes inner shell panels (roof lining, door sides) that lie almost on top of
-                    // the body skin. The file's faces are clockwise = front, which Bevy treats as back faces, so
-                    // culling `Face::Front` keeps only the faces that point into the cabin; from outside they vanish.
-                    let cabin_mat = materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.16, 0.16, 0.17),
-                        unlit: true,
-                        double_sided: false,
-                        cull_mode: Some(if MIRROR_X < 0.0 { Face::Back } else { Face::Front }),
-                        ..default()
-                    });
-                    log_line(&format!(
-                        "car pages: exterior {}, interior {}, trim/wheels {} ({}px), glass {}",
-                        paint_mat.is_some(), interior_mat.is_some(), trim_mat.is_some(), m.extint.as_ref().map_or(0, |p| p.size), glass_mat.is_some()
-                    ));
-                    let looks = [
-                        (&m.paint, [0.62, 0.02, 0.03], paint_mat.clone(), 1.0f32),
-                        (&m.trim, [0.08, 0.08, 0.09], trim_mat.clone(), 1.0),
-                        (&m.trim_solid, [0.08, 0.08, 0.09], trim_solid_mat.clone(), 1.0),
-                        // cabin: flat dark grey for now; how its texture page is assembled is not understood yet
-                        (&m.glass, [0.03, 0.05, 0.09], glass_mat.clone(), 0.55),
-                        (&m.cabrio_glass, [0.03, 0.05, 0.09], cabrio_mat.clone(), 0.6),
-                    ];
-                    for (piece, flat, mat, alpha) in looks {
-                        if piece.positions.is_empty() {
-                            continue;
-                        }
-                        let (tint, handle) = match mat {
-                            Some(h) => ([1.0, 1.0, 1.0], h),
-                            None => (flat, white.clone()),
-                        };
-                        let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(piece, tint, alpha))), MeshMaterial3d(handle), Transform::default())).id();
-                        commands.entity(model).add_child(e);
-                    }
-                    // two cabins: the detailed one only in the cockpit view, the simpler one (which fits
-                    // inside the body) in every other view
-                    for (piece, cockpit) in [(&m.interior, true), (&m.interior_outside, false)] {
-                        if piece.positions.is_empty() {
-                            continue;
-                        }
-                        let e = commands
-                            .spawn((Mesh3d(meshes.add(piece_mesh(piece, [1.0, 1.0, 1.0], 1.0))), MeshMaterial3d(cabin_mat.clone()), Transform::default(), CabinPart { cockpit }))
-                            .id();
-                        commands.entity(model).add_child(e);
-                    }
-                    // lamps get their own copy of the body material so they can glow independently
-                    for (piece, front) in [(&m.headlights, true), (&m.taillights, false)] {
-                        if piece.positions.is_empty() {
-                            continue;
-                        }
-                        let (tint, handle) = match paint_mat.as_ref().and_then(|h| materials.get(h).cloned()) {
-                            Some(copy) => ([1.0, 1.0, 1.0], materials.add(copy)),
-                            None => ([0.9, 0.9, 0.9], white.clone()),
-                        };
-                        let e = commands
-                            .spawn((Mesh3d(meshes.add(piece_mesh(piece, tint, 1.0))), MeshMaterial3d(handle.clone()), Transform::default(), Lamp { front, material: handle }))
-                            .id();
-                        commands.entity(model).add_child(e);
-                    }
-                    // the driver is hidden in the cockpit view, where the camera sits inside the head
-                    for (piece, flat, mat) in [(&m.driver_suit, [0.8, 0.8, 0.8], suit_mat.clone()), (&m.driver_head, [0.8, 0.6, 0.5], head_mat.clone())] {
-                        if piece.positions.is_empty() {
-                            continue;
-                        }
-                        let (tint, handle) = match mat {
-                            Some(h) => ([1.0, 1.0, 1.0], h),
-                            None => (flat, white.clone()),
-                        };
-                        let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(piece, tint, 1.0))), MeshMaterial3d(handle), Transform::default(), DriverPart)).id();
-                        commands.entity(model).add_child(e);
-                    }
-                    for w in &m.wheels {
-                        let (tint, handle) = match &trim_mat {
-                            Some(h) => ([1.0, 1.0, 1.0], h.clone()),
-                            None => ([0.10, 0.10, 0.11], white.clone()),
-                        };
-                        let e = commands
-                            .spawn((
-                                Mesh3d(meshes.add(piece_mesh(&w.piece, tint, 1.0))),
-                                MeshMaterial3d(handle),
-                                Transform::from_translation(Vec3::from(w.offset)),
-                                WheelComp { front: w.front, spin: 0.0 },
-                            ))
-                            .id();
-                        commands.entity(model).add_child(e);
-                    }
-                }
-                Err(e) => {
-                    log_line(&format!("car model '{}' failed ({e}); using a plain box", name));
-                    let red = materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.1, 0.1), unlit: true, ..default() });
-                    let box_mesh = commands.spawn((Mesh3d(meshes.add(Cuboid::new(1.8, 0.7, 4.4))), MeshMaterial3d(red), Transform::from_xyz(0.0, RIDE_HEIGHT, 0.0))).id();
-                    commands.entity(model).add_child(box_mesh);
-                }
-            }
-            (model, style_count)
+    // the model's origin is at ground level, the car's position is its centre
+    let model = commands.spawn((Transform::from_xyz(0.0, -RIDE_HEIGHT, 0.0), Visibility::default())).id();
+    commands.entity(root).add_child(model);
+    let m = match car_model::load_car(name, options) {
+        Ok(m) => m,
+        Err(e) => {
+            log_line(&format!("car model '{}' failed ({e}); using a plain box", name));
+            let red = materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.1, 0.1), unlit: true, ..default() });
+            let box_mesh = commands.spawn((Mesh3d(meshes.add(Cuboid::new(1.8, 0.7, 4.4))), MeshMaterial3d(red), Transform::from_xyz(0.0, RIDE_HEIGHT, 0.0))).id();
+            commands.entity(model).add_child(box_mesh);
+            return (model, 0);
+        }
+    };
+    log_line(&format!(
+        "car '{}' style '{}': {} parts, {} triangles, {} wheels, size {:.2} x {:.2} x {:.2} m (width x height x length), {} texture pages, eye {:?} turn {:?}",
+        m.name, m.style_name, m.articles_used, m.triangles(), m.wheels.len(), m.size[0], m.size[1], m.size[2], m.pages.iter().flatten().count(), m.driver_eye, m.driver_rot
+    ));
+    commands.entity(model).insert(CockpitView { eye: Vec3::from(m.driver_eye), pitch: m.driver_rot[0].to_radians(), yaw: m.driver_rot[1].to_radians() });
+    let mut looks = CarLooks::new(&m, images);
+    // Faces are drawn one-sided, as the engine does: the cabin, interior glass and the inner faces of
+    // the shell are separate parts that face inwards. Glass blends; the arch liners sample a texel
+    // whose alpha is 0 and are drawn without cut-outs.
+    let pieces = [
+        (&m.paint, Look::Cut),
+        (&m.paint_inner, Look::Cut),
+        (&m.trim, Look::Cut),
+        (&m.trim_solid, Look::Solid),
+        (&m.glass, Look::Glass),
+        (&m.cabrio_glass, Look::Glass),
+    ];
+    for (piece, look) in pieces {
+        for (page, part) in by_page(piece) {
+            let mat = looks.material(page, look, materials);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], look.alpha()))), MeshMaterial3d(mat), Transform::default())).id();
+            commands.entity(model).add_child(e);
+        }
+    }
+    // two cabins: the detailed one only in the cockpit view, the simpler one (which fits inside the
+    // body) in every other view
+    for (piece, cockpit) in [(&m.interior, true), (&m.interior_outside, false)] {
+        for (page, part) in by_page(piece) {
+            let mat = looks.material(page, Look::Cut, materials);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default(), CabinPart { cockpit })).id();
+            commands.entity(model).add_child(e);
+        }
+    }
+    // lamps get their own copy of the material so they can glow independently
+    for (piece, front) in [(&m.headlights, true), (&m.taillights, false)] {
+        for (page, part) in by_page(piece) {
+            let shared = looks.material(page, Look::Cut, materials);
+            let Some(copy) = materials.get(&shared).cloned() else { continue };
+            let handle = materials.add(copy);
+            let e = commands
+                .spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(handle.clone()), Transform::default(), Lamp { front, material: handle }))
+                .id();
+            commands.entity(model).add_child(e);
+        }
+    }
+    // the driver is hidden in the cockpit view, where the camera sits inside the head
+    for piece in [&m.driver_suit, &m.driver_head] {
+        for (page, part) in by_page(piece) {
+            let mat = looks.material(page, Look::Cut, materials);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default(), DriverPart)).id();
+            commands.entity(model).add_child(e);
+        }
+    }
+    for w in &m.wheels {
+        let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0 })).id();
+        commands.entity(model).add_child(wheel);
+        for (page, part) in by_page(&w.piece) {
+            let mat = looks.material(page, Look::Cut, materials);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default())).id();
+            commands.entity(wheel).add_child(e);
+        }
+    }
+    (model, m.style_count)
+}
+
+/// How a car part is drawn: with cut-outs where its texture is transparent, fully opaque, or as
+/// see-through glass.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Look {
+    Cut,
+    Solid,
+    Glass,
+}
+
+impl Look {
+    fn alpha(self) -> f32 {
+        if self == Look::Glass { 0.55 } else { 1.0 }
+    }
+}
+
+/// The car's texture pages as images, and one material per (page, look), made on first use.
+struct CarLooks {
+    images: Vec<Option<(Handle<Image>, bool)>>,
+    made: HashMap<(usize, Look), Handle<StandardMaterial>>,
+    grey: Option<Handle<StandardMaterial>>,
+}
+
+impl CarLooks {
+    fn new(m: &car_model::CarModel, images: &mut Assets<Image>) -> Self {
+        let mut out: Vec<Option<(Handle<Image>, bool)>> = Vec::new();
+        for (i, page) in m.pages.iter().enumerate() {
+            // a page that shows another page's picture shares its image
+            let shared = m.page_source.get(i).copied().flatten().and_then(|s| out.get(s).cloned().flatten());
+            out.push(shared.or_else(|| page.as_ref().map(|p| (images.add(page_image(p)), p.has_alpha))));
+        }
+        CarLooks { images: out, made: HashMap::new(), grey: None }
+    }
+
+    fn material(&mut self, page: u8, look: Look, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+        let page = page as usize;
+        let Some((image, has_alpha)) = self.images.get(page).cloned().flatten() else {
+            // no picture for this page: flat grey
+            return self.grey.get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::srgb(0.3, 0.3, 0.32), unlit: true, ..default() })).clone();
+        };
+        self.made
+            .entry((page, look))
+            .or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    base_color_texture: Some(image),
+                    unlit: true,
+                    // the file's front faces are clockwise; mirroring x (MIRROR_X) turns them anticlockwise
+                    cull_mode: Some(if MIRROR_X < 0.0 { Face::Back } else { Face::Front }),
+                    alpha_mode: match look {
+                        Look::Glass => AlphaMode::Blend,
+                        Look::Cut if has_alpha => AlphaMode::Mask(0.5),
+                        _ => AlphaMode::Opaque,
+                    },
+                    ..default()
+                })
+            })
+            .clone()
+    }
+}
+
+/// Splits a piece into one piece per texture page.
+fn by_page(piece: &Piece) -> Vec<(u8, Piece)> {
+    let mut out: Vec<(u8, Piece)> = Vec::new();
+    for t in 0..piece.positions.len() / 3 {
+        let page = piece.pages.get(3 * t).copied().unwrap_or(0);
+        let at = out.iter().position(|(p, _)| *p == page).unwrap_or_else(|| {
+            out.push((page, Piece::default()));
+            out.len() - 1
+        });
+        let part = &mut out[at].1;
+        for k in 3 * t..3 * t + 3 {
+            part.positions.push(piece.positions[k]);
+            part.normals.push(piece.normals[k]);
+            part.uvs.push(piece.uvs[k]);
+            part.materials.push(piece.materials[k]);
+            part.articles.push(piece.articles[k]);
+            part.pages.push(page);
+        }
+    }
+    out
+}
+
+/// The driver's eye and the in-car camera's turn for the car model under this entity.
+#[derive(Component, Clone, Copy)]
+struct CockpitView {
+    eye: Vec3,
+    pitch: f32,
+    yaw: f32,
 }
 
 #[derive(Resource)]
@@ -1248,15 +1297,8 @@ fn piece_mesh(piece: &Piece, base: [f32; 3], alpha: f32) -> Mesh {
     mesh
 }
 
-/// Turns a texture page into an unlit material (repeat sampling). Glass uses real transparency,
-/// other pages cut out fully transparent pixels. `None` if the car has no such page.
-fn page_material(
-    page: &Option<Page>,
-    blend: bool,
-    images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
-) -> Option<Handle<StandardMaterial>> {
-    let page = page.as_ref()?;
+/// Turns a car texture page into an image (repeat sampling, smooth filtering).
+fn page_image(page: &Page) -> Image {
     let mut image = Image::new(
         Extent3d { width: page.size, height: page.size, depth_or_array_layers: 1 },
         TextureDimension::D2,
@@ -1271,22 +1313,7 @@ fn page_material(
         min_filter: ImageFilterMode::Linear,
         ..default()
     });
-    let mut material = StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(images.add(image)),
-        unlit: true,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    };
-    material.alpha_mode = if blend {
-        AlphaMode::Blend
-    } else if page.has_alpha {
-        AlphaMode::Mask(0.5)
-    } else {
-        AlphaMode::Opaque
-    };
-    Some(materials.add(material))
+    image
 }
 
 fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(&mut Transform, &mut WheelComp)>) {
@@ -1535,6 +1562,7 @@ fn chase_camera(
     cam_mode: Res<CamMode>,
     orbit: Res<Orbit>,
     car: Option<Res<CarRes>>,
+    cockpit: Query<&CockpitView>,
     mut cams: Query<&mut Transform, With<FlyCamera>>,
 ) {
     let (true, Some(state)) = (mode.0, car) else { return };
@@ -1543,11 +1571,12 @@ fn chase_camera(
     for mut t in &mut cams {
         match cam_mode.0 {
             1 => {
-                // the driver's eyes: x from the car's .tpg camera position (-0.38, the left seat), height
-                // just above the model's head centre; the model's origin is at ground level
-                let eye = Vec3::new(-0.38, 1.10 - RIDE_HEIGHT, 0.15);
-                t.translation = c.pos + rot * eye;
-                t.rotation = rot;
+                // the driver's eyes, from the car's .tpg (see `car_model::driver_eye`); the model's
+                // origin is at ground level, RIDE_HEIGHT below the car's position. The camera is
+                // turned by the .tpg's `drivercamrot` (pitch down, yaw).
+                let view = cockpit.iter().next().copied().unwrap_or(CockpitView { eye: Vec3::new(-0.38, 1.05, 0.15), pitch: 0.0, yaw: 0.0 });
+                t.translation = c.pos + rot * (view.eye - Vec3::Y * RIDE_HEIGHT);
+                t.rotation = rot * Quat::from_euler(EulerRot::YXZ, -view.yaw, -view.pitch, 0.0);
             }
             2 => {
                 let target = c.pos + Vec3::Y * 0.6;
