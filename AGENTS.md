@@ -40,6 +40,7 @@ A from-scratch Rust/Bevy/wgpu rewrite of Need for Speed: Porsche Unleashed (NFS5
 ## Decomp lookups (Ghidra bridge)
 - `.mcp.json` registers the GhidraMCP bridge as the `ghidra` tool server: decompile, list and search functions, xrefs, strings. It works while the user has Ghidra open on the NFS5 project with the GhidraMCP plugin on (port 8080).
 - Its write tools (rename_*, set_*) are denied in `.claude/settings.json`, because the decomp project is read-only. Never work around that.
+- A session that started before Ghidra was opened can query the plugin directly, GET only (read-only), e.g. `curl -s "http://127.0.0.1:8080/decompile_function?address=004ae8c0"`. Other paths: `searchFunctions?query=`, `xrefs_to?address=`, `xrefs_from?address=`, `function_xrefs?name=`, `disassemble_function?address=`, `strings?filter=`. Never POST (that renames or comments).
 - Without the bridge, fall back to searching `decomp/classes` / `decomp/src` (not the whole folder; that times out).
 
 ## Environment
