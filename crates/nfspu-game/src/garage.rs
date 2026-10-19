@@ -287,7 +287,9 @@ pub fn clr_sections(text: &str) -> Vec<usize> {
 
 /// The body style (1-based, as `car_model::CarOptions::style`) whose `.tpg` name appears in the
 /// catalogue name: `'50 356 1100 Cabriolet` picks `[style2] name=Cabrio`. The first style when none
-/// matches. (**Guess** at retail's rule: the catalogue record's own style field is not traced.)
+/// matches. Superseded: the catalogue record carries the style itself (`catalog::Car::style`,
+/// byte 0x1c0), which the garage and the race now use; name matching fails on names such as
+/// `Carreracoupe`.
 pub fn style_for(car_name: &str, tpg: &str) -> usize {
     let name = car_name.to_ascii_lowercase();
     let mut style = 0usize;

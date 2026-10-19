@@ -87,8 +87,14 @@ pub struct RaceSetup {
     pub car_model: String,
     pub car_name: String,
     pub owned_car: bool,
-    /// Paint scheme: the `[sectionN]` of the model's `.clr`, counted from 0.
+    /// Paint: the colour list's position (`GenericCar.Colour`, counted from 0) ...
     pub paint: u8,
+    /// ... and the `.clr` section it names (`[sectionN]`), which is what the car model takes
+    /// (`car_model::CarOptions::paint`). Both are written so the race needs no catalogue lookup.
+    pub paint_section: usize,
+    /// Body style in the model's `.tpg` (`[styleN]`, 1-based; `car_model::CarOptions::style`),
+    /// from the catalogue record: the 356 1100 Cabriolet is 2 ("Cabrio").
+    pub car_style: usize,
     /// `settings.lay`: transmission (false manual, true automatic), ABS, traction control, roof
     /// up, damage.
     pub automatic: bool,
@@ -103,6 +109,12 @@ pub struct RaceSetup {
 }
 
 impl RaceSetup {
+    /// The player's car model options in the race: the setup's body style and paint section (the
+    /// ones the garage showed), exterior detail, a driver in the seat.
+    pub fn car_options(&self) -> crate::car_model::CarOptions {
+        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, ..Default::default() }
+    }
+
     /// `key = value` lines, one per field, in a fixed order.
     pub fn to_text(&self) -> String {
         let mut s = String::from("# quick race setup, written by the front end (nfspu-game race_setup.rs)\n");
@@ -132,6 +144,8 @@ impl RaceSetup {
         line("car_name", self.car_name.clone());
         line("owned_car", self.owned_car.to_string());
         line("paint", self.paint.to_string());
+        line("paint_section", self.paint_section.to_string());
+        line("car_style", self.car_style.to_string());
         line("automatic", self.automatic.to_string());
         line("abs", self.abs.to_string());
         line("traction_control", self.traction_control.to_string());
@@ -191,6 +205,8 @@ impl RaceSetup {
             car_name: get("car_name")?.to_string(),
             owned_car: flag("owned_car")?,
             paint: num("paint", get("paint")?)?,
+            paint_section: num("paint_section", get("paint_section")?)?,
+            car_style: num("car_style", get("car_style")?)?,
             automatic: flag("automatic")?,
             abs: flag("abs")?,
             traction_control: flag("traction_control")?,
@@ -221,6 +237,8 @@ mod tests {
             car_name: "'50 356 1100 Cabriolet".into(),
             owned_car: true,
             paint: 20,
+            paint_section: 21,
+            car_style: 2,
             automatic: true,
             abs: true,
             traction_control: false,
