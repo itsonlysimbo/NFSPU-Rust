@@ -514,6 +514,31 @@ impl CarSim {
         self.drive.slot as i32 - 1
     }
 
+    /// Puts the gearbox straight into a gear slot with the engine at road speed (tests and
+    /// teleports; no gear change time). For a forward speed `v_fwd` in m/s.
+    pub fn put_in_gear(&mut self, slot: usize, v_fwd: f32) {
+        let slot = slot.min(self.spec.top_slot());
+        let d = &mut self.drive;
+        d.slot = slot;
+        d.prev_slot = slot;
+        d.requested = slot;
+        d.shift_left = 0;
+        d.rpm = (v_fwd * self.spec.rpm_per_ms[slot]).abs();
+    }
+
+    /// The forward gear slot that puts the engine nearest to `fraction` of the redline at `v_fwd`.
+    pub fn gear_for_speed(&self, v_fwd: f32, fraction: f32) -> usize {
+        let want = self.spec.redline * fraction;
+        (FIRST..=self.spec.top_slot())
+            .filter(|&g| v_fwd * self.spec.rpm_per_ms[g] <= self.spec.redline)
+            .min_by(|&a, &b| {
+                let ea = (v_fwd * self.spec.rpm_per_ms[a] - want).abs();
+                let eb = (v_fwd * self.spec.rpm_per_ms[b] - want).abs();
+                ea.total_cmp(&eb)
+            })
+            .unwrap_or(self.spec.top_slot())
+    }
+
     /// Body accelerations (right, forward) of the last force tick, m/s^2.
     pub fn accel(&self) -> [f32; 2] {
         self.accel
@@ -734,8 +759,11 @@ impl CarSim {
         }
         self.accel = [a_right, a_fwd];
         // a front force to the right turns the nose right (negative yaw), a rear one the other
-        // way; braking harder on the left side turns the car left
-        let yaw_moment = -(lat_front - lat_rear) + (long_right - long_left);
+        // way. The left/right difference of the lengthways forces counts with retail's sign: the
+        // wheels that gain load (the outside ones) get more of the drive, and that turns the car
+        // OUT of the corner, so power steadies it (the opposite of a real car; verified in the
+        // decompiled yaw sum, and taking the physical sign makes every powerful car spin)
+        let yaw_moment = -(lat_front - lat_rear) + (long_left - long_right);
         self.vel[0] += (h[0] * a_fwd + r[0] * a_right) / FORCE_HZ;
         self.vel[1] += (h[1] * a_fwd + r[1] * a_right) / FORCE_HZ;
         self.yaw_rate = (self.yaw_rate + YAW_STEP / l * yaw_moment).clamp(-MAX_YAW_RATE, MAX_YAW_RATE);

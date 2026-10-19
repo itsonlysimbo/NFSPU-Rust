@@ -97,8 +97,19 @@ Angles in the physics are in turns (sin(x * 2 pi)); steering in 1/256 turn.
 
 - Pedals and steering arrive as bytes: throttle and brake 0..254 (divided by 252 and capped at 1),
   steering about -127..127. Full keyboard throttle is 1.0.
-- The steering moves at most 12 units per 32 Hz tick toward the input when a player-record flag is
-  set (18 in an easier mode), else jumps. **Guess:** the flag is keyboard steering; we always limit.
+- Keys read as 0 or 255 at once (no ramp in the input layer); steering = (right - left) / 4, doubled
+  in the car to about +-126.
+- The steering moves at most 12 units per 32 Hz tick toward the input when the player record's
+  **RAMPS** field is set (18 with the TINYCAR cheat), else jumps (verified; the field names come from
+  the exe's config table). The player's install has `car[0].ramps = 1` in `fe.txt`, so retail ramps
+  the steering; we always do. **RAMPG** and **RAMPB** (gas and brake ramps) are only stored with
+  replays: the car code never reads them, so retail throttle and brake are instant on keys.
+- Player record (0x580 bytes from 0x65808c) fields used by the physics: 0x0c TRANSMISSION (1 =
+  automatic), 0x14 RAMPS, 0x20 TRACTION, 0x24 ABS, 0xf0.. FINALRATIO and the gear ratios, 0x114/0x118
+  front/rear DOWNFORCE, 0x11c BRAKEBIAS, 0x120 RIDEHEIGHT, 0x124 SUSPENSIONTRAVEL, 0x128 STEERINGTOE,
+  0x134 SHOCKRATE, 0x13c/0x140 front/rear TIREPRESSURE, 0x518 TINYCAR (cheat).
+- Game globals: 0x6573f8 is **RALLY** mode (more front grip, arcade friction circle, steadier slides;
+  off in normal races and in ours), 0x6573f4 SKILL (read by the AI only, not by the physics).
 - Camber pulls the steering downhill: round(9.8 x right-axis height x 8), capped at +-64 units.
 - Automatic: at race start (tick 448) first gear is requested. Holding the brake at a standstill
   (speed under 0.2 m/s, brake over half, no throttle) selects reverse and then the pedals swap
@@ -156,8 +167,16 @@ Forces are accelerations (m/s^2). Wheel 0/1 front, 2/3 rear.
   Traction control (rear wheels, slip angle ratio under 0.15) trims to the limit without sliding.
 - The lengthways sum is divided by grip again: **lengthways grip is about 1 g whatever the tyre; the
   grip value only widens the sideways limit.**
-- Body: velocity += (sum of forces) / 32; yaw rate += (front sideways - rear sideways + left/right
-  lengthways difference) / (3.2 wheelbase) / 48 turns/s per tick; capped at 0.75 turns/s.
+- Body: velocity += (sum of forces) / 32; yaw rate += ((front sideways - rear sideways) - (wheels
+  0+2 lengthways - wheels 1+3 lengthways)) / (3.2 wheelbase) / 48 turns/s per tick, capped at 0.75
+  turns/s (sign checked in the disassembly at 0x49f9a0). Wheels 0+2 are the ones that gain load when
+  the sideways force points along the car's right axis, i.e. the outside wheels. Drive is split by
+  load, so under power the outside wheels push harder and the yaw sum turns the car **out** of the
+  corner (power steadies it); braking or lifting (negative forces, the outside wheels braking harder
+  once the inside ones reach their grip) turns it **in**. That is the opposite of a real car's
+  left/right effect, and three times as strong (same lever as the sideways forces, forces in the
+  x-grip scale). Our first port used the physical sign, which made powerful cars spin under power
+  (the user's 2026-10-19 playtest); fixed to retail's.
 - Slopes: -4.9 x forward-axis height lengthways (unless braking), -19.6 x right-axis height sideways
   (only when sliding over 1 m/s or tilted).
 - Extras: race-grip cars (grip over 2.5) lose speed in tight turns off throttle; in neutral the car
@@ -193,7 +212,7 @@ re-checked between rounds. Ours: one round, planar, then the boxes are separated
   retail runs a four-point suspension against the road slices; we keep the rigid ground follower and
   only use retail's fall gravity (9.8 x 1.16).
 - Damage (all wear factors are 0), engine misfire, slipstream, surface types, rain, upgrade parts,
-  setup sliders, the beginner/"easy" handling flags.
+  setup sliders, RALLY mode and the TINYCAR cheat.
 - Locked front wheels: retail does not turn their force back out of the wheel frame (it skips that
   step); ours does.
 
@@ -240,3 +259,26 @@ measurements of the retail game.
   it (the 959's is 120%).
 - `race_drive` (scripted autopilot, all 15 tracks): finishes everything with the made-up car, the
   '50 356, the 993 Turbo and the 959 (`RACE_DRIVE_CAR=<id>`).
+
+### Handling (2026-10-19)
+
+`cargo run -p nfspu-game --example handling_check` (log `logs/handling_check.txt`; before/after in
+`logs/handling_before.txt`, `logs/handling_after.txt`). Keyboard inputs through `Car::step`:
+step steer and lane changes at 100 and 150 km/h on flat ground, then a keyboard-style driver (full
+lock taps toward the road ahead, no yaw damping, full throttle to a corner speed, braking while
+still steering) for 90 s on alps, autobahn, canyon, coastal, forest and monaco1. Spin = slip angle
+over 35 degrees above 10 m/s (or yaw rate over 2.5 rad/s on the flat runs).
+
+| Car | track spins before | after | flat spins before | after |
+|---|---|---|---|---|
+| '50 356 1100 | 1 | 0 | 0 | 6 (five at 150 km/h, above its 140 km/h top speed so off throttle; one at 100 km/h with 2 s full lock then lift) |
+| '94 993 Carrera | 1 | 15 | 0 | 2 (2 s of full lock, then lift) |
+| '87 959 | 110 | 27 | 0 | 0 |
+| total | 112 | 42 | 0 | 8 |
+
+Before = the first port (physical yaw sign); after = retail's sign. Power-on spins (the 959's 110,
+first and second gear, full throttle, full lock) are mostly gone; what remains is braking or lifting
+with full lock, which retail's yaw sum rotates into the corner. The scripted driver brakes while
+steering at full lock, which a player braking in a straight line avoids. Whether retail's cars feel
+the same is **not tested** against the running game. race_drive still finishes all 15 tracks with
+the made-up car, the '50 356, the 993 Turbo and the 959 (3, 1 and 0 spins), and with 7 AI opponents.
