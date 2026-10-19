@@ -116,6 +116,8 @@ fn setup(world: &mut World) {
         mph: env_on("NFSPU_HUD_MPH"),
         night: env_on("NFSPU_HUD_NIGHT"),
         split: SplitTime::BestLap,
+        // retail's "opponent list" option: 1 = metres (the user's fe_out.txt), 2 = time
+        gaps: if std::env::var("NFSPU_HUD_GAPS").is_ok_and(|v| v.trim() == "time") { hud::GapMode::Time } else { hud::GapMode::Distance },
         words,
         scale: env_f32("NFSPU_HUD_SCALE").unwrap_or(1.0).clamp(0.5, 8.0),
     });

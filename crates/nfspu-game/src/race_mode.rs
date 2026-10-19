@@ -145,6 +145,7 @@ fn start_race(
     req: Res<RaceRequest>,
     car: Option<ResMut<crate::CarRes>>,
     car_name: Res<crate::CarName>,
+    player_paint: Res<crate::CarPaint>,
     mut status: ResMut<RaceStatus>,
     mut hold: ResMut<RaceHold>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -218,6 +219,8 @@ fn start_race(
     let picked = ai::pick_drivers(&drivers, req.difficulty, cars - 1, &mut rng);
     race_log(&format!("opponents: {}, difficulty {}, seed {seed}, {} drivers in nfs5.per", cars - 1, req.difficulty, drivers.len()));
     let mut racers = Vec::new();
+    // body colours by race index, for the HUD map and opponent list; the player's from its paint
+    let mut colours = vec![nfspu_game::catalog::load_paints(&game, &car_name.0).get(player_paint.0).map_or([128; 3], |p| p.body)];
     for (i, driver) in picked.into_iter().enumerate() {
         // the car: catalogue record (model, AI name) and its .sim physics
         let entry = req.opponent_cars.get(i).filter(|m| !m.is_empty()).cloned().unwrap_or_else(|| car_name.0.clone());
@@ -257,6 +260,7 @@ fn start_race(
             spec.speeds[0],
             loaded.note
         ));
+        colours.push(nfspu_game::catalog::load_paints(&game, &model).get(options.paint).map_or([128; 3], |p| p.body));
         racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, name, steer: 0.0, braking: false, resets: 0 });
     }
     // opponents that could not be set up drop out of the race
@@ -267,6 +271,9 @@ fn start_race(
     }
     *status = RaceStatus { track: req.track.clone(), backwards: req.direction == Direction::Backward, ..Default::default() };
     status.names = std::iter::once("You".to_string()).chain(racers.iter().map(|r| r.name.clone())).collect();
+    status.car_colours = colours;
+    status.lap_metres = track.lap_metres();
+    status.road = std::sync::Arc::new(road_lines(&track.path));
     race.fill_status(player, &mut status);
     hold.0 = true;
     let player_start = race.cars[player].progress;
@@ -339,6 +346,11 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
             }
         }
     }
+}
+
+/// The road's centre line as one (x, z) polyline per road run, for the HUD map.
+fn road_lines(path: &race_path::RoadPath) -> Vec<Vec<[f32; 2]>> {
+    path.segments.iter().map(|seg| (seg.first..=seg.last).filter_map(|i| path.slices.get(i)).map(|s| [s.pos.x, s.pos.z]).collect()).collect()
 }
 
 /// Puts the opponents' bodies where their cars are and shares their speed with the wheels.
@@ -423,6 +435,7 @@ fn race_tick(
     status.wrong_way = run.wrong_way;
     status.speed_kmh = car.car.speed.abs() * 3.6;
     status.rpm = Some(car.car.rpm());
+    status.car_places = std::iter::once(&car.car).chain(run.racers.iter().map(|r| &r.car)).map(|c| [c.pos.x, c.pos.z, c.yaw, c.speed]).collect();
     if status.finished {
         run.finished_for += dt;
     }

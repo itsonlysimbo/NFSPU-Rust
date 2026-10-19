@@ -1588,6 +1588,22 @@ fn feed_hud(
             best_lap: race.best_lap,
             countdown,
             finished: finished_at.map(|t| (race.position.max(1) as u32, now - t)),
+            racers: (0..race.cars)
+                .map(|i| {
+                    let place = race.car_places.get(i).copied().unwrap_or_default();
+                    nfspu_game::hud::HudRacer {
+                        name: race.names.get(i).cloned().unwrap_or_default(),
+                        colour: race.car_colours.get(i).copied().unwrap_or([128; 3]),
+                        place: [place[0], place[1], place[2]],
+                        progress: race.car_progress.get(i).copied().unwrap_or(0.0),
+                        speed: place[3],
+                    }
+                })
+                .collect(),
+            player: 0,
+            order: race.order.clone(),
+            road: race.road.clone(),
+            lap_metres: race.lap_metres,
         };
         return;
     }
@@ -1607,6 +1623,7 @@ fn feed_hud(
         best_lap: None,
         countdown: (since < 3.0).then_some(3.0 - since),
         finished: None,
+        ..Default::default()
     };
 }
 

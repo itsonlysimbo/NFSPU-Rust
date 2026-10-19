@@ -97,11 +97,13 @@ pub struct HudCanvas {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// While set, only pixels inside (x0, y0, x1, y1) are painted.
+    clip: Option<[i32; 4]>,
 }
 
 impl HudCanvas {
     pub fn new(width: u32, height: u32) -> HudCanvas {
-        HudCanvas { width, height, rgba: vec![0; (width * height * 4) as usize] }
+        HudCanvas { width, height, rgba: vec![0; (width * height * 4) as usize], clip: None }
     }
 
     pub fn clear(&mut self) {
@@ -112,6 +114,11 @@ impl HudCanvas {
     fn blend(&mut self, x: i32, y: i32, src: [f32; 4]) {
         if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height || src[3] <= 0.0 {
             return;
+        }
+        if let Some([x0, y0, x1, y1]) = self.clip {
+            if x < x0 || y < y0 || x >= x1 || y >= y1 {
+                return;
+            }
         }
         let at = ((y as u32 * self.width + x as u32) * 4) as usize;
         let a = (src[3] / 255.0).min(1.0);
@@ -129,6 +136,42 @@ impl HudCanvas {
         for py in y.round() as i32..(y + h).round() as i32 {
             for px in x.round() as i32..(x + w).round() as i32 {
                 self.blend(px, py, c);
+            }
+        }
+    }
+
+    /// Fills a rectangle with a colour running from `top` to `bottom` (per pixel row).
+    pub fn fill_gradient(&mut self, [x, y, w, h]: [f32; 4], top: [f32; 4], bottom: [f32; 4]) {
+        let (y0, y1) = (y.round() as i32, (y + h).round() as i32);
+        let rows = (y1 - y0).max(1) as f32;
+        for py in y0..y1 {
+            let t = if rows > 1.0 { (py - y0) as f32 / (rows - 1.0) } else { 0.0 };
+            let c: [f32; 4] = std::array::from_fn(|i| (top[i] + (bottom[i] - top[i]) * t).clamp(0.0, 1.0) * 255.0);
+            for px in x.round() as i32..(x + w).round() as i32 {
+                self.blend(px, py, c);
+            }
+        }
+    }
+
+    /// An anti-aliased line: pixels within `width / 2` of the segment, edges faded over a pixel.
+    pub fn draw_line(&mut self, a: [f32; 2], b: [f32; 2], colour: [f32; 4], width: f32) {
+        let half = width.max(0.5) / 2.0;
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = dx * dx + dy * dy;
+        let x0 = (a[0].min(b[0]) - half - 1.0).floor() as i32;
+        let x1 = (a[0].max(b[0]) + half + 1.0).ceil() as i32;
+        let y0 = (a[1].min(b[1]) - half - 1.0).floor() as i32;
+        let y1 = (a[1].max(b[1]) + half + 1.0).ceil() as i32;
+        let c = colour.map(|v| v.clamp(0.0, 1.0) * 255.0);
+        for py in y0.max(0)..y1.min(self.height as i32) {
+            for px in x0.max(0)..x1.min(self.width as i32) {
+                let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
+                let t = if len2 > 0.0 { (((cx - a[0]) * dx + (cy - a[1]) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                let d = (cx - a[0] - t * dx).hypot(cy - a[1] - t * dy);
+                let cover = (half + 0.5 - d).clamp(0.0, 1.0);
+                if cover > 0.0 {
+                    self.blend(px, py, [c[0], c[1], c[2], c[3] * cover]);
+                }
             }
         }
     }
@@ -199,6 +242,18 @@ pub fn paint(canvas: &mut HudCanvas, draws: &[HudDraw], art: &mut dyn HudArt) {
     for d in draws {
         match d {
             HudDraw::Fill { rect, colour } => canvas.fill_rect(*rect, *colour),
+            HudDraw::Gradient { rect, top, bottom } => canvas.fill_gradient(*rect, *top, *bottom),
+            HudDraw::Line { from, to, colour, width } => canvas.draw_line(*from, *to, *colour, *width),
+            HudDraw::Clip { rect, draws } => {
+                let previous = canvas.clip;
+                let r = [rect[0].round() as i32, rect[1].round() as i32, (rect[0] + rect[2]).round() as i32, (rect[1] + rect[3]).round() as i32];
+                canvas.clip = Some(match previous {
+                    Some(p) => [r[0].max(p[0]), r[1].max(p[1]), r[2].min(p[2]), r[3].min(p[3])],
+                    None => r,
+                });
+                paint(canvas, draws, art);
+                canvas.clip = previous;
+            }
             HudDraw::Image { file, entry, rect, tint } => {
                 if let Some(p) = art.picture(file, entry) {
                     let p = p.clone();
