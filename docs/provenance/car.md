@@ -301,26 +301,77 @@ So the quad darkens the top of the tyre, where the wheel arch shades it, and not
 ground. We now draw these quads where the model puts them, blended by the page's alpha and seen
 from both sides (not compared with the game close up).
 
-### Ground shadow (our stand-in)
+### Ground shadow
 
-The retail ground shadow is a renderer feature of its own: the graphics options have
-`ShadowMapping` and `DetailedShadows`, and the exe has a `R3DShadowMapTextureLayer` class whose
-draw step gives track triangles a second set of texture coordinates from their world positions
-through a 2 x 3 matrix, i.e. a shadow texture projected onto the road. What that texture holds,
-where the matrix comes from (sun direction, car position) and how it is blended were not traced
-(Ghidra was not running; the plain decompile does not show the setup).
+Traced in the plain decompile of `Porsche.exe` v3.5 (2026-10-19; Ghidra was not running, so
+data cross-references were followed by searching the text). The car's ground shadow is **not**
+cast by a sun and **not** the shadow-map layer: it is a dark rectangle the size of the car, laid
+on the road under it.
 
-Until that is traced we draw our own: the car's outline seen from straight above (every body,
-glass and wheel triangle filled into a 64 x 64 mask with 0.45 m of margin, grown by 2 texels and
-then blurred three times with a 5-texel box), black at up to 150/255, on one quad 5 cm above the
-model's ground, blended and drawn in front of the road with a depth bias. It moves and tilts with
-the car.
+How the engine draws it (the routine at 0x43B820, called from the car's draw step just before
+the body):
+
+- **Shape.** Four corners at (±half width, ±half length) in the car's own frame, turned and moved
+  with the car (its orientation and position). The half sizes are half of the car model's
+  bounding box (the box of one of its detail levels, measured when the car is loaded; a flag in
+  the car's data shrinks them to 0.4, not traced which cars set it). The same three fields are
+  also written by the physics set-up, as half the extent of the car's collision points; which of
+  the two runs last for a race car was not traced. The rectangle is centred on the car's
+  position, not on the middle of the model.
+- **On the road.** With the camera within about 21 m the rectangle is split into a grid of
+  `6 - round(d² / 100)` cells each way (6 up close, at least 2), otherwise it is one quad. Each
+  grid point is looked up on the road from 1.75 m above the car; if the road found there is
+  1.5 m or more off the car's own ground, the car's own ground plane is used instead. For the
+  single quad each corner drops onto the ground plane under the nearest wheel. So the shadow bends
+  over crests and kerbs instead of floating flat.
+- **Texture coordinates** run 0..1 across the rectangle (u along the width, v along the length).
+- **Picture.** The texture is looked up by the four-letter name `SHAD` in the renderer's shared
+  bank, which is `GameData/Render/common.fsh` (17 pictures: flares, sun, glints, splashes and
+  this). `SHAD` is 64 x 64 in 4444: every texel black, alpha 8/15 (0.53) over the whole picture,
+  with the outer one or two texels softer. So the shadow is a flat, even darkening with slightly
+  soft edges, not an outline of the car.
+- **Draw state.** Drawn blended with a depth offset that grows as the camera comes closer (the
+  value passed is proportional to `-20000 / d²`; its exact use by the renderer was not traced).
+- **When.** A per-car switch turns it on for every race car (the garage turns it off). The
+  player's own car skips it in one camera mode (a camera flag bit; most likely the in-car view,
+  not confirmed). In one game mode (not identified; replays are a guess) the grid is always 6.
+
+What the related pieces are, for the record:
+
+- **The shadow-map layer (`R3DShadowMapTextureLayer`, layer id 0x8102).** One of the car's own
+  material layers, alongside the environment map (0x8100), the sky map (0x8101) and two lighting
+  layers. Each frame the car looks up the nearest "type 4" article record of the track (within
+  the record's radius plus 2.5 m, octagonal distance on the ground plane); each record holds a
+  position, a radius, a texture and a 2 x 4 projection. That projection gives the **car's**
+  vertices a second set of texture coordinates from their world positions, so the car picks up
+  the track's baked shade (trees, bridges) as it drives through it. It does not shade the road.
+  It needs the highest car-detail setting and is skipped when the track's records are switched
+  off. Not implemented.
+- **The `WheelShadow` quads** (see above): the tyre tops under the arches.
+- **The car lighting direction** is the track's sun position (from the track's sky settings:
+  two offsets turned by the sky's angle, height from a paraboloid) normalised and negated, or
+  straight down under cover (tunnels). It lights the car only.
+
+The "offset to the right rear" in the recording's frames is most likely the rectangle itself
+(our reading, not tested in the game): it lies on the ground as long as the car's box, so from
+the raised chase camera its rear edge shows below the bumper, and when the car is turned
+relative to the camera the near rear corner pokes out to that side. Zoomed in, its edges are
+straight and its darkness even, as a flat rectangle would be.
+
+Ours (`car_model::GroundShadow`, `lay_ground_shadows` in `main.rs`) follows that: the rectangle
+is half the model's extent each way round the model's origin (the model's box without wheels,
+driver or shadow quads; the engine's box comes from a detail level whose exact contents were not
+checked), split by the same camera-distance rule, each grid point dropped onto our ground mesh
+from 1.75 m above the model's ground unless the surface there is 1.5 m or more off (then the
+model's own ground), raised 3 cm, painted with `SHAD` read from the player's install and drawn
+blended with a depth bias. The single-quad case uses the same road lookup instead of the wheels'
+ground planes. In the cockpit view the player's shadow is hidden.
 
 Blending: Bevy blends in linear light, the engine's renderer (like every renderer of its time)
 on screen values. A black overlay of alpha `a` on a dark road changes the screen value much less
 in linear light, so both shadows convert their alpha first: `1 - (1 - a)^2.2` (the screen value
-then drops by about the factor `1 - a`, as it would have in the game). Measured in the top-view
-capture: road pixels just behind the 993 go from (56, 40, 41) without the shadow to (28, 18, 19).
+then drops by about the factor `1 - a`, as it would have in the game). For `SHAD`'s 136/255 the
+screen value is kept at about 0.47 of the road's.
 
 ### Verification (2026-10-18)
 
@@ -334,9 +385,18 @@ has swung in). Side by side with the recording: `logs/compare_993_vs_356_chase.p
   trails the turn), which ours does not show in a still capture.
 - The trailing in corners, the speed follow, the slope lift and the 1 m ground clearance are
   covered by unit tests only; **not tested** against the game in motion.
-- Ground shadow: present (measured, see above) but hard to see by eye on alps, where our road
-  renders much darker than the recording's grey asphalt. The retail shadow is offset to the right
-  rear in both frames (cast by a sun); ours sits straight under the car. **Not matched.**
+- Ground shadow (redone 2026-10-19 from the trace above; `logs/compare_901_vs_911_shadow_zoom.png`
+  and `logs/compare_993_vs_356_shadow_zoom.png`, the recording left, ours right, both cropped
+  round the car): ours is now the same kind of shape as the recording's, a flat, even,
+  straight-edged dark band that shows past the rear bumper and along the sides. In the recording
+  the band reaches somewhat further behind the car and spills further to one side; both frames
+  have the car turned relative to the camera (the 911 shows its left flank, the 356 is
+  mid-corner), which moves the rectangle's near corner out that way, while our still capture is
+  straight behind. That explanation and the exact size (the engine's box may also be the
+  collision hull's, which is set from a second place; not settled) are **not tested**. Still hard
+  to see on alps, where our road renders much darker than the recording's grey asphalt. Bending
+  over crests and the grid steps with distance are covered by unit tests and by reading the code
+  only; **not tested** in motion.
 - Wheel shadow quads: drawn, but too dark against our black tyres to check by eye; **not tested**
   against the game.
 - Field of view: the engine's 75 degrees across at 4:3 kept vertical on wider screens is an

@@ -1003,132 +1003,70 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
     Ok(model)
 }
 
-/// A soft ground shadow for a car: an alpha mask over a square of the ground plane (model space,
-/// x and z), drawn as one blended quad under the car. Our own stand-in for the engine's projected
-/// shadow texture (see `docs/provenance/car.md`, "Ground shadow").
-#[derive(Clone, Debug)]
+/// The car's ground shadow as the engine draws it (see `docs/provenance/car.md`, "Ground shadow"):
+/// a flat rectangle as wide and as long as the model, centred on the car's origin and turned with
+/// it, laid on the road and painted with the shared `SHAD` picture. No sun is involved.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundShadow {
-    /// Corner of the square with the smallest x and z, and the one with the largest.
-    pub min: [f32; 2],
-    pub max: [f32; 2],
-    /// Mask resolution (square) and one alpha value per texel, row by row from `min` in z.
-    pub size: u32,
-    pub alpha: Vec<u8>,
+    /// Half the model's width (x) and half its length (z), metres.
+    pub half: [f32; 2],
 }
 
-/// Texels across the shadow mask.
-const SHADOW_SIZE: usize = 64;
-/// Ground left around the car's outline inside the mask (metres), room for the soft edge.
-const SHADOW_MARGIN: f32 = 0.45;
-/// Darkest alpha of the shadow (0-255), as a blend on screen values.
-const SHADOW_ALPHA: f32 = 150.0;
-/// The outline is grown by this many texels before blurring, so the soft edge shows round the car.
-const SHADOW_GROW: usize = 2;
-/// Box blur radius in texels and number of passes (three passes look close to a Gaussian).
-const SHADOW_BLUR: usize = 2;
-const SHADOW_PASSES: usize = 3;
+/// Most cells along each side of the shadow (when the camera is close).
+pub const SHADOW_MAX_CELLS: usize = 6;
 
 impl CarModel {
-    /// The car's outline seen from straight above, softened: every body, glass and wheel triangle
-    /// is filled into the mask, which is then grown a little and blurred.
-    pub fn ground_shadow(&self) -> Option<GroundShadow> {
-        let mut tris: Vec<[[f32; 2]; 3]> = Vec::new();
-        for piece in [&self.paint, &self.paint_inner, &self.trim, &self.trim_solid, &self.glass, &self.cabrio_glass, &self.headlights, &self.taillights] {
-            for t in piece.positions.chunks_exact(3) {
-                tris.push([[t[0][0], t[0][2]], [t[1][0], t[1][2]], [t[2][0], t[2][2]]]);
-            }
-        }
-        for w in &self.wheels {
-            for t in w.piece.positions.chunks_exact(3) {
-                let at = |p: [f32; 3]| [p[0] + w.offset[0], p[2] + w.offset[2]];
-                tris.push([at(t[0]), at(t[1]), at(t[2])]);
-            }
-        }
-        if tris.is_empty() {
-            return None;
-        }
-        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-        for p in tris.iter().flatten() {
-            for k in 0..2 {
-                lo[k] = lo[k].min(p[k]);
-                hi[k] = hi[k].max(p[k]);
-            }
-        }
-        // a square mask (texels the same size both ways) centred on the outline
-        let half = (hi[0] - lo[0]).max(hi[1] - lo[1]) / 2.0 + SHADOW_MARGIN;
-        let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
-        let min = [centre[0] - half, centre[1] - half];
-        let n = SHADOW_SIZE;
-        let texel = 2.0 * half / n as f32;
-        let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
-        let mut cover = vec![0.0f32; n * n];
-        for t in &tris {
-            let px = t.map(|p| [(p[0] - min[0]) / texel, (p[1] - min[1]) / texel]);
-            let area = edge(px[0], px[1], px[2]);
-            if area.abs() < 1e-6 {
-                continue;
-            }
-            let (mut x0, mut x1, mut y0, mut y1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
-            for p in &px {
-                x0 = x0.min(p[0]);
-                x1 = x1.max(p[0]);
-                y0 = y0.min(p[1]);
-                y1 = y1.max(p[1]);
-            }
-            let (x0, y0) = (x0.floor().max(0.0) as usize, y0.floor().max(0.0) as usize);
-            let (x1, y1) = ((x1.ceil().max(0.0) as usize).min(n - 1), (y1.ceil().max(0.0) as usize).min(n - 1));
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    let c = [x as f32 + 0.5, y as f32 + 0.5];
-                    // either winding: the centre is inside when all three edges agree with the area's sign
-                    if edge(px[1], px[2], c) * area >= 0.0 && edge(px[2], px[0], c) * area >= 0.0 && edge(px[0], px[1], c) * area >= 0.0 {
-                        cover[y * n + x] = 1.0;
-                    }
-                }
-            }
-        }
-        cover = grow(&cover, n, SHADOW_GROW);
-        for _ in 0..SHADOW_PASSES {
-            cover = box_blur(&cover, n, SHADOW_BLUR);
-        }
-        let alpha = cover.iter().map(|c| (c * SHADOW_ALPHA).round() as u8).collect();
-        Some(GroundShadow { min, max: [centre[0] + half, centre[1] + half], size: n as u32, alpha })
+    /// The shadow rectangle: half the model's extent each way, around the origin (not around the
+    /// middle of the model, so a model that reaches further one way gets an uneven shadow).
+    pub fn ground_shadow(&self) -> GroundShadow {
+        GroundShadow { half: [self.size[0] / 2.0, self.size[2] / 2.0] }
     }
 }
 
-/// Each texel takes the largest value within `r` texels (a square neighbourhood).
-fn grow(src: &[f32], n: usize, r: usize) -> Vec<f32> {
-    let mut out = vec![0.0; n * n];
-    for y in 0..n {
-        for x in 0..n {
-            let mut m = 0.0f32;
-            for j in y.saturating_sub(r)..=(y + r).min(n - 1) {
-                for i in x.saturating_sub(r)..=(x + r).min(n - 1) {
-                    m = m.max(src[j * n + i]);
-                }
-            }
-            out[y * n + x] = m;
-        }
-    }
-    out
+/// How many cells along each side the shadow is split into, from the camera's distance (metres):
+/// six when close, one fewer for every 100 m² of squared distance, a single quad from about 21 m.
+pub fn shadow_cells(camera_distance: f32) -> usize {
+    let fewer = (camera_distance * camera_distance * 0.01).round().min(SHADOW_MAX_CELLS as f32) as usize;
+    (SHADOW_MAX_CELLS - fewer).max(1)
 }
 
-/// One horizontal and one vertical box blur of an `n` x `n` grid (outside the grid counts as 0).
-fn box_blur(src: &[f32], n: usize, r: usize) -> Vec<f32> {
-    let w = (2 * r + 1) as f32;
-    let mut tmp = vec![0.0; n * n];
-    for y in 0..n {
-        for x in 0..n {
-            tmp[y * n + x] = (x.saturating_sub(r)..=(x + r).min(n - 1)).map(|i| src[y * n + i]).sum::<f32>() / w;
+/// The shadow's points before they are laid on the road: `(cells + 1)²` points in model space
+/// (x, z), row by row from the (-x, -z) corner, each with its texture coordinate (u along x, v
+/// along z, both 0..1), and the triangles over them.
+pub fn shadow_grid(shadow: GroundShadow, cells: usize) -> (Vec<[f32; 2]>, Vec<[f32; 2]>, Vec<u32>) {
+    let n = cells.max(1);
+    let [hx, hz] = shadow.half;
+    let (mut points, mut uvs) = (Vec::with_capacity((n + 1) * (n + 1)), Vec::with_capacity((n + 1) * (n + 1)));
+    for row in 0..=n {
+        let v = row as f32 / n as f32;
+        for col in 0..=n {
+            let u = col as f32 / n as f32;
+            points.push([-hx + 2.0 * hx * u, -hz + 2.0 * hz * v]);
+            uvs.push([u, v]);
         }
     }
-    let mut out = vec![0.0; n * n];
-    for y in 0..n {
-        for x in 0..n {
-            out[y * n + x] = (y.saturating_sub(r)..=(y + r).min(n - 1)).map(|j| tmp[j * n + x]).sum::<f32>() / w;
+    let mut indices = Vec::with_capacity(n * n * 6);
+    let at = |row: usize, col: usize| (row * (n + 1) + col) as u32;
+    for row in 0..n {
+        for col in 0..n {
+            // facing up (+y) seen from above with x right and z down the page
+            indices.extend([at(row, col), at(row + 1, col), at(row + 1, col + 1), at(row, col), at(row + 1, col + 1), at(row, col + 1)]);
         }
     }
-    out
+    (points, uvs, indices)
+}
+
+/// The engine's shadow picture: `SHAD` in `GameData/Render/common.fsh`, as RGBA (width, height,
+/// pixels). In the retail file it is 64 x 64 black at alpha 8/15 with a soft one- or two-texel rim.
+pub fn shadow_picture() -> Result<(u32, u32, Vec<u8>), String> {
+    let dir = env::var("NFSPU_GAME_DIR").map_err(|_| "NFSPU_GAME_DIR is not set".to_string())?;
+    let path = PathBuf::from(dir).join("GameData").join("Render").join("common.fsh");
+    let raw = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let data = if refpack::is_refpack(&raw) { refpack::decompress(&raw).map_err(|e| format!("{e:?}"))? } else { raw };
+    let archive = shpi::parse(&data).map_err(|e| format!("{e:?}"))?;
+    let entry = archive.find("SHAD").ok_or("no SHAD picture in common.fsh")?;
+    let rgba = shpi::decode_rgba8(&data, entry).ok_or("SHAD picture not decodable")?;
+    Ok((entry.width as u32, entry.height as u32, rgba))
 }
 
 #[cfg(test)]
@@ -1136,26 +1074,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ground_shadow_covers_the_outline_softly() {
-        let mut paint = Piece::default();
-        // a 2 m x 4 m rectangle, as two triangles of opposite windings
-        for p in [[-1.0, 0.5, -2.0], [1.0, 0.5, -2.0], [1.0, 0.5, 2.0], [-1.0, 0.5, -2.0], [-1.0, 0.5, 2.0], [1.0, 0.5, 2.0]] {
-            paint.positions.push(p);
+    fn ground_shadow_is_the_model_extent_round_the_origin() {
+        let model = CarModel { size: [1.8, 1.3, 4.4], ..empty_model() };
+        assert_eq!(model.ground_shadow(), GroundShadow { half: [0.9, 2.2] });
+    }
+
+    #[test]
+    fn shadow_cells_follow_the_camera_distance() {
+        // six cells up close, one fewer per 100 m² of squared distance, one quad from about 21 m
+        assert_eq!(shadow_cells(0.0), 6);
+        assert_eq!(shadow_cells(7.0), 6);
+        assert_eq!(shadow_cells(10.0), 5);
+        assert_eq!(shadow_cells(15.0), 4);
+        assert_eq!(shadow_cells(22.0), 1);
+        assert_eq!(shadow_cells(40.0), 1);
+    }
+
+    #[test]
+    fn shadow_grid_spans_the_rectangle_and_faces_up() {
+        let (points, uvs, indices) = shadow_grid(GroundShadow { half: [1.0, 2.0] }, 2);
+        assert_eq!(points.len(), 9);
+        assert_eq!((points[0], uvs[0]), ([-1.0, -2.0], [0.0, 0.0]));
+        assert_eq!((points[4], uvs[4]), ([0.0, 0.0], [0.5, 0.5]));
+        assert_eq!((points[8], uvs[8]), ([1.0, 2.0], [1.0, 1.0]));
+        assert_eq!(indices.len(), 2 * 2 * 6);
+        for t in indices.chunks_exact(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| points[i as usize]);
+            // y of the cross product of (b - a) and (c - a) in x-up-z space: positive faces up
+            let up = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]);
+            assert!(up > 0.0, "triangle {t:?} faces down");
         }
-        let model = CarModel { paint, ..empty_model() };
-        let s = model.ground_shadow().unwrap();
-        let n = s.size as usize;
-        let at = |x: f32, z: f32| {
-            let i = ((x - s.min[0]) / (s.max[0] - s.min[0]) * n as f32) as usize;
-            let j = ((z - s.min[1]) / (s.max[1] - s.min[1]) * n as f32) as usize;
-            s.alpha[j * n + i]
-        };
-        assert_eq!(at(0.0, 0.0), SHADOW_ALPHA as u8, "full under the middle");
-        assert_eq!(at(2.4, 0.0), 0, "nothing well outside");
-        // grown by two texels, so still dark at the outline and soft further out
-        assert!(at(1.0, 0.0) > 100, "dark at the outline: {}", at(1.0, 0.0));
-        assert!(at(1.3, 0.0) > 10 && at(1.3, 0.0) < 100, "soft outside it: {}", at(1.3, 0.0));
-        assert!((s.max[1] - s.min[1] - (4.0 + 2.0 * SHADOW_MARGIN)).abs() < 1e-4);
+        assert_eq!(shadow_grid(GroundShadow { half: [1.0, 2.0] }, 1).0.len(), 4);
     }
 
     fn empty_model() -> CarModel {
