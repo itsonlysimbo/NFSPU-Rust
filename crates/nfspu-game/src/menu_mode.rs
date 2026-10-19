@@ -843,6 +843,18 @@ fn click(
                     }
                     return;
                 }
+                // The player popup's "continue": keep the highlighted player (already applied when
+                // the row was clicked; nothing is written to the install) and close the popup. At
+                // start-up the popup opens straight over the main menu with no history to go back to.
+                "SETNAMETHENBACK" => {
+                    crate::log_line(&format!("menu: continue as player {:?}", state.profiles.selected.and_then(|i| state.profiles.names.get(i))));
+                    if let Some((page, popup)) = state.history.pop() {
+                        state.page = page;
+                        state.popup = popup;
+                    } else {
+                        state.popup = None;
+                    }
+                }
                 "TRACK1INC" | "LOOPEDINC" => state.quick.step_track(1),
                 "TRACK1DEC" | "LOOPEDDEC" => state.quick.step_track(-1),
                 other => {

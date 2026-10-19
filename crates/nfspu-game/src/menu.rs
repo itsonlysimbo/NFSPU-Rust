@@ -838,6 +838,12 @@ fn append_control_with(
                 let left = if centred { x + (w - label_width(game_dir, &font, &text)) / 2.0 } else { x + 5.0 };
                 screen.draw.push(Draw::Text { text, pos: [left, y + 2.0], size: point_size(&font), colour: [1.0, 1.0, 1.0, label_alpha], font });
             }
+            // A button with no destination that runs a game command (the player popup's
+            // `SETNAMETHENBACK`, `CREATEPLAYERENTER`, ...): the front end decides what it does.
+            let callback = data.get("callback").map(|c| c.trim().to_ascii_uppercase()).unwrap_or_default();
+            if !disabled && link.is_none() && !callback.is_empty() && callback != "GOBACK" {
+                screen.draw.push(Draw::Target { rect: [x, y, w, h], hit: Hit::Callback(callback) });
+            }
             screen.draw.push(Draw::Quad { rect: [x + 1.0, y + 1.0, w - 2.0, h - 2.0], colour: fill, hover, link, back });
             true
         }
@@ -1483,6 +1489,24 @@ mod tests {
         assert_eq!(eval_number("control.size.height", &sized), Some(348.0));
         assert_eq!(eval_number("2+", &d), None);
         assert_eq!(eval_pair("1,1", &d), Some((1.0, 1.0)));
+    }
+
+    #[test]
+    fn a_button_with_a_command_and_no_destination_is_clickable() {
+        // The player popup's "continue" (`selectname.lay`): no destination, `SETNAMETHENBACK`.
+        let mut block = button_block();
+        block.entries.retain(|(k, _)| k != "destination");
+        block.entries.push(("callback".into(), "SETNAMETHENBACK".into()));
+        let template = ControlTemplate { id: "NFS5.GOTOBUTTON".into(), ..Default::default() };
+        let mut screen = Screen::default();
+        assert!(append_control(&mut screen, &block, &template, &Locale::default(), 0));
+        assert_eq!(screen.hit_at(300.0, 262.0), Some(Hit::Callback("SETNAMETHENBACK".into())));
+        // A destination still wins over the command (the main menu's `SETTYPE...` buttons).
+        let mut screen = Screen::default();
+        let mut block = button_block();
+        block.entries.push(("callback".into(), "SETTYPEQUICKRACE".into()));
+        assert!(append_control(&mut screen, &block, &template, &Locale::default(), 0));
+        assert_eq!(screen.hit_at(300.0, 262.0), Some(Hit::Goto("quickrace".into())));
     }
 
     /// A real transition button as it appears in `singleplayer.lay`.
