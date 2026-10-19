@@ -10,6 +10,7 @@
 //! also looks). W/A/S/D move, Q/E down/up, Shift = 5x speed, mouse wheel changes the base speed.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
@@ -147,6 +148,8 @@ fn main() {
         // In-race HUD, only with NFSPU_HUD=1 for now (see hud_plugin.rs).
         .add_plugins(nfspu_game::hud_plugin::HudPlugin)
         .add_systems(Update, feed_hud.after(drive_car))
+        // after the cars' final positions for this frame are known
+        .add_systems(PostUpdate, lay_ground_shadows.after(TransformSystems::Propagate))
         .add_systems(Last, visual_probe::update)
         .add_systems(Last, car_probe::update)
         .add_systems(Update, (console::handle_input, console::apply).chain())
@@ -1186,10 +1189,16 @@ fn spawn_car_model(
         let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default())).id();
         commands.entity(model).add_child(e);
     }
-    // the ground shadow: the car's softened outline on a quad just above the road
-    if let Some(g) = m.ground_shadow() {
-        let e = commands.spawn((Mesh3d(meshes.add(ground_shadow_mesh(&g))), MeshMaterial3d(ground_shadow_material(&g, images, materials)), Transform::default())).id();
-        commands.entity(model).add_child(e);
+    // the ground shadow: a dark rectangle the size of the car laid on the road under it (its mesh
+    // is rebuilt every frame by `lay_ground_shadows`)
+    match ground_shadow_material(images, materials) {
+        Ok(mat) => {
+            let shadow = m.ground_shadow();
+            let mesh = meshes.add(ground_shadow_mesh(shadow, car_model::SHADOW_MAX_CELLS, |p| [p[0], SHADOW_LIFT, p[1]]));
+            let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default(), NoFrustumCulling, GroundShadowPart(shadow))).id();
+            commands.entity(model).add_child(e);
+        }
+        Err(e) => log_line(&format!("no ground shadow: {e}")),
     }
     for w in &m.wheels {
         let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0 })).id();
@@ -1214,8 +1223,12 @@ enum Look {
     Shadow,
 }
 
-/// How far (metres) the ground shadow is raised so it draws over the road under the car.
-const SHADOW_LIFT: f32 = 0.05;
+/// How far (metres) the ground shadow is raised above the road so it draws over it.
+const SHADOW_LIFT: f32 = 0.03;
+/// The engine looks for the road under each shadow point from this high above the car's ground
+/// (metres), and keeps the car's own ground where the road found is this far off it or more.
+const SHADOW_PROBE_UP: f32 = 1.75;
+const SHADOW_MAX_STEP: f32 = 1.5;
 
 /// The alpha that darkens a pixel as much as `a` does when blending on screen values (as the
 /// engine's renderer did). Bevy blends linear light, where a black overlay of alpha `a` changes
@@ -1226,31 +1239,32 @@ fn screen_alpha(a: u8) -> u8 {
     ((1.0 - keep.powf(2.2)) * 255.0).round() as u8
 }
 
-/// The ground shadow's quad in model space (the model's origin is on the ground).
-fn ground_shadow_mesh(g: &car_model::GroundShadow) -> Mesh {
-    let ([x0, z0], [x1, z1]) = (g.min, g.max);
-    let positions = vec![[x0, SHADOW_LIFT, z0], [x1, SHADOW_LIFT, z0], [x1, SHADOW_LIFT, z1], [x0, SHADOW_LIFT, z1]];
-    // the mask's rows run from `min` in z, its columns from `min` in x
-    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+/// Marks a car's ground shadow mesh (a child of the model entity) and holds its rectangle.
+#[derive(Component)]
+struct GroundShadowPart(car_model::GroundShadow);
+
+/// The shadow as a grid of `cells` x `cells`; `place` turns each model-space point (x, z) into the
+/// mesh position.
+fn ground_shadow_mesh(shadow: car_model::GroundShadow, cells: usize, mut place: impl FnMut([f32; 2]) -> [f32; 3]) -> Mesh {
+    let (points, uvs, indices) = car_model::shadow_grid(shadow, cells);
+    let positions: Vec<[f32; 3]> = points.into_iter().map(&mut place).collect();
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]));
+    mesh.insert_indices(Indices::U32(indices));
     mesh
 }
 
-/// Black with the mask as alpha, blended over the road and drawn in front of it.
-fn ground_shadow_material(g: &car_model::GroundShadow, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
-    let rgba: Vec<u8> = g.alpha.iter().flat_map(|&a| [0, 0, 0, screen_alpha(a)]).collect();
-    let mut image = Image::new(
-        Extent3d { width: g.size, height: g.size, depth_or_array_layers: 1 },
-        TextureDimension::D2,
-        rgba,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    );
+/// The engine's `SHAD` picture, blended over the road and drawn in front of it. Its alpha is
+/// converted for Bevy's linear-light blending (`screen_alpha`).
+fn ground_shadow_material(images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) -> Result<Handle<StandardMaterial>, String> {
+    let (width, height, mut rgba) = car_model::shadow_picture()?;
+    for px in rgba.chunks_exact_mut(4) {
+        px[3] = screen_alpha(px[3]);
+    }
+    let mut image = Image::new(Extent3d { width, height, depth_or_array_layers: 1 }, TextureDimension::D2, rgba, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor { mag_filter: ImageFilterMode::Linear, min_filter: ImageFilterMode::Linear, ..default() });
-    materials.add(StandardMaterial {
+    Ok(materials.add(StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(images.add(image)),
         unlit: true,
@@ -1258,7 +1272,44 @@ fn ground_shadow_material(g: &car_model::GroundShadow, images: &mut Assets<Image
         alpha_mode: AlphaMode::Blend,
         depth_bias: 1000.0,
         ..default()
-    })
+    }))
+}
+
+/// Lays every car's shadow on the road, as the engine does each frame: the rectangle turns with the
+/// car, is split into fewer cells the further the camera is, and each point drops onto the road
+/// found under it (the car's own ground where there is none, or where it is a step away). The
+/// player's shadow is not drawn in the cockpit view.
+fn lay_ground_shadows(
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut shadows: Query<(Entity, &GroundShadowPart, &Mesh3d, &ChildOf, &mut Visibility)>,
+    models: Query<&GlobalTransform>,
+    camera: Query<&GlobalTransform, With<FlyCamera>>,
+    ground: Option<Res<GroundRes>>,
+    mode: Res<CamMode>,
+    drive: Res<DriveMode>,
+    parents: Query<&ChildOf>,
+    ai: Query<&race_mode::AiBody>,
+) {
+    let eye = camera.iter().next().map(|t| t.translation());
+    for (e, part, mesh3d, parent, mut vis) in &mut shadows {
+        let hide = drive.0 && mode.0 == 1 && opponent_of(e, &parents, &ai).is_none();
+        vis.set_if_neq(if hide { Visibility::Hidden } else { Visibility::Inherited });
+        let Ok(model) = models.get(parent.parent()) else { continue };
+        let to_world = model.affine();
+        let to_model = to_world.inverse();
+        let origin = to_world.translation;
+        let cells = eye.map_or(car_model::SHADOW_MAX_CELLS, |eye| car_model::shadow_cells(Vec3::from(origin).distance(eye)));
+        let place = |p: [f32; 2]| {
+            let world = to_world.transform_point3(Vec3::new(p[0], 0.0, p[1]));
+            // the model's ground under this point, unless the road there is close to the car's ground
+            let road = ground.as_ref().and_then(|g| g.0.height_at(world.x, world.z, origin.y, SHADOW_PROBE_UP)).filter(|&y| (y - world.y).abs() < SHADOW_MAX_STEP);
+            let local = road.map_or(Vec3::new(p[0], 0.0, p[1]), |y| to_model.transform_point3(Vec3::new(world.x, y, world.z)));
+            [local.x, local.y + SHADOW_LIFT, local.z]
+        };
+        if let Some(mut m) = meshes.get_mut(&mesh3d.0) {
+            *m = ground_shadow_mesh(part.0, cells, place);
+        }
+    }
 }
 
 impl Look {
