@@ -148,6 +148,16 @@ fn add_sky_camera(mut commands: Commands, cams: Query<(Entity, &Transform, &Proj
     }
 }
 
+/// Removes the weather effects and the track's weather (run when a race scene is taken down).
+#[allow(clippy::type_complexity)]
+pub fn clear(mut commands: Commands, fx: Query<Entity, Or<(With<SkyCamera>, With<Precipitation>, With<HeadlightPool>, With<WetReflection>)>>, mut input: ResMut<WeatherInput>) {
+    for e in &fx {
+        commands.entity(e).try_despawn();
+    }
+    commands.remove_resource::<WeatherState>();
+    *input = WeatherInput::default();
+}
+
 fn put_sky_on_its_layer(mut commands: Commands, parts: Query<Entity, Added<SkyPart>>) {
     for e in &parts {
         commands.entity(e).insert(RenderLayers::layer(SKY_LAYER));
@@ -268,7 +278,7 @@ struct Drop {
 
 /// Rain and snow streaks round the camera.
 #[derive(Component)]
-struct Precipitation {
+pub struct Precipitation {
     snow: bool,
     drops: Vec<Drop>,
     mesh: Handle<Mesh>,
@@ -421,7 +431,7 @@ pub fn pool_points(pos: Vec3, yaw: f32) -> Vec<(f32, f32)> {
 
 /// The headlight pool on the road at night.
 #[derive(Component)]
-struct HeadlightPool {
+pub struct HeadlightPool {
     mesh: Handle<Mesh>,
 }
 
@@ -574,7 +584,7 @@ fn capture(
 
 /// The red smear of the tail lights on a wet road.
 #[derive(Component)]
-struct WetReflection {
+pub struct WetReflection {
     mesh: Handle<Mesh>,
 }
 

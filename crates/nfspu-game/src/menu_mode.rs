@@ -2,7 +2,9 @@
 //! space to the window, with hover and click navigation.
 //!
 //! Turned on with `NFSPU_MENU=<screen>` (empty means `singleplayer`, the screen `GameSetup` links
-//! to). This is milestone M6; control types the renderer does not draw yet are listed in
+//! to). It is the `AppState::Menu` part of the one program (`flow.rs`): RACE moves on to the
+//! loading screen, and the front end's state (page, history, choices, music) waits for the race to
+//! end. This is milestone M6; control types the renderer does not draw yet are listed in
 //! `logs/m0.log` and counted in `logs/menu_audit.txt`.
 //!
 //! Layers, bottom to top (see `docs/provenance/fe.md`):
@@ -24,9 +26,10 @@ use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
-use bevy::window::{PrimaryWindow, WindowResolution};
+use bevy::window::PrimaryWindow;
 use nfspu_formats::fe::{ControlTemplate, Locale};
 use nfspu_game::menu::{self, Draw, Hit, Screen};
+use crate::flow::{self, AppState};
 use nfspu_game::menu_canvas;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -207,23 +210,24 @@ impl FrontEnd {
         !room.is_empty() && !room.eq_ignore_ascii_case("ID_NONE")
     }
 
-    /// The RACE button: builds the race from the quick-race choices, logs it and writes it to
-    /// `logs/race_setup.txt` for the loading screen. Returns the file written.
-    fn start_race(&self) -> Option<PathBuf> {
+    /// The RACE button: builds the race from the quick-race choices and logs it (also to
+    /// `logs/race_setup.txt`, a log only: the race gets the setup in memory).
+    fn start_race(&self) -> nfspu_game::race_setup::RaceSetup {
         let setup = self.quick.setup(&self.locale, self.language);
-        let path = crate::log_path().parent().map(|d| d.join("race_setup.txt"))?;
         let text = setup.to_text();
         crate::log_line(&format!("front end: RACE pressed, setup: {}", text.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("; ")));
-        match std::fs::write(&path, text) {
-            Ok(()) => {
-                crate::log_line(&format!("front end: wrote {}", path.display()));
-                Some(path)
-            }
-            Err(e) => {
-                crate::log_line(&format!("front end: could not write {}: {e}", path.display()));
-                None
+        if let Some(path) = crate::log_path().parent().map(|d| d.join("race_setup.txt")) {
+            match std::fs::write(&path, text) {
+                Ok(()) => crate::log_line(&format!("front end: wrote {}", path.display())),
+                Err(e) => crate::log_line(&format!("front end: could not write {}: {e}", path.display())),
             }
         }
+        setup
+    }
+
+    /// The top screen offers RACE: the bottom bar is up and the screen allows playing.
+    fn can_race(&self) -> bool {
+        self.layers.iter().any(|l| l.name.eq_ignore_ascii_case(BOTTOM_BAR)) && self.popup.as_ref().unwrap_or(&self.page).can_play
     }
 
     /// Rebuilds the layer list from the page and popup.
@@ -421,6 +425,7 @@ fn random_u32() -> u32 {
 fn play_music(
     mut music: ResMut<Music>,
     state: Res<FrontEnd>,
+    app_state: Res<State<AppState>>,
     time: Res<Time>,
     mut commands: Commands,
     mut assets: ResMut<Assets<AudioSource>>,
@@ -431,7 +436,8 @@ fn play_music(
     use nfspu_game::menu_music::Cue;
     let volume = state.music_level as f32 / 127.0;
     let top = state.popup.as_ref().unwrap_or(&state.page);
-    if top.name != music.screen {
+    // While the race loads the music only finishes its fade (`leave_menu`).
+    if *app_state.get() == AppState::Menu && top.name != music.screen {
         music.screen = top.name.clone();
         let main_menu = top.name.eq_ignore_ascii_case("GameSetup");
         if let Some(Cue::Change { fade_ms, next }) = music.jukebox.enter_screen(&top.music, main_menu, time.elapsed_secs_f64(), random_u32()) {
@@ -478,12 +484,46 @@ fn play_music(
     }
 }
 
-/// Runs the front end until the window closes.
-/// Exit code of the menu when RACE was pressed (the setup is in `logs/race_setup.txt`).
-pub const RACE_EXIT_CODE: u8 = 10;
+/// The window title while the front end shows.
+pub const TITLE: &str = "NFS Porsche Unleashed (Rust rewrite) - front end - M6";
 
-/// Runs the front end until the window closes.
-pub fn run(game_dir: PathBuf, start: String) -> AppExit {
+/// The front end: with `Some(screen)` its screens are read at start-up and the app starts there.
+pub struct MenuPlugin(pub Option<String>);
+
+impl Plugin for MenuPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(menu_garage::MenuGarage)
+            .add_systems(OnEnter(AppState::Menu), enter_menu.run_if(resource_exists::<FrontEnd>))
+            .add_systems(OnExit(AppState::Menu), leave_menu.run_if(resource_exists::<FrontEnd>))
+            .add_systems(OnEnter(AppState::Race), stop_music.run_if(resource_exists::<Music>))
+            .add_systems(Update, (click, present, capture, flow_test_menu, quit_on_escape).chain().run_if(in_state(AppState::Menu)).run_if(resource_exists::<FrontEnd>))
+            .add_systems(Update, play_music.run_if(resource_exists::<FrontEnd>).run_if(menu_or_loading));
+        let Some(start) = &self.0 else { return };
+        let game_dir = PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
+        match front_end(game_dir, start) {
+            Some(state) => {
+                app.insert_resource(ClearColor(state.clear_colour()))
+                    .insert_resource(Capture::from_env())
+                    .insert_resource(Sounds::load(&state.game_dir))
+                    .insert_resource(Music::load(&state.game_dir))
+                    .insert_resource(state);
+            }
+            None => {
+                app.add_systems(Startup, |mut exit: MessageWriter<AppExit>| {
+                    exit.write(AppExit::error());
+                });
+            }
+        }
+    }
+}
+
+/// The menu music plays on the menu and finishes its fade while the race loads.
+fn menu_or_loading(state: Res<State<AppState>>) -> bool {
+    matches!(state.get(), AppState::Menu | AppState::Loading)
+}
+
+/// Reads the front end's data and builds its first screen (`start`: `page` or `page+popup`).
+fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
     let locale = std::fs::read(game_dir.join("FEData").join("Locale").join("festrings.csv"))
         .map(|b| Locale::parse_csv_bytes(&b))
         .unwrap_or_default();
@@ -510,11 +550,12 @@ pub fn run(game_dir: PathBuf, start: String) -> AppExit {
     // starts with no popup even where one opens by default.
     let (page_name, popup_name) = match start.split_once('+') {
         Some((page, popup)) => (page.to_string(), Some(popup.to_string())),
-        None => (start.clone(), None),
+        None => (start.to_string(), None),
     };
     let Some(screen) = menu::load_screen_with(&game_dir, &page_name, &locale, language, &templates, &profiles, false, &menu::Session::default()) else {
         eprintln!("could not load screen '{page_name}' (is NFSPU_GAME_DIR a game folder?)");
-        return AppExit::error();
+        crate::log_line(&format!("front end: could not load screen '{page_name}', quitting"));
+        return None;
     };
 
     let mut state = FrontEnd {
@@ -572,40 +613,111 @@ pub fn run(game_dir: PathBuf, start: String) -> AppExit {
         state.reload();
     }
     state.stack();
-    let clear = state.clear_colour();
-    let sounds = Sounds::load(&state.game_dir);
-    let music = Music::load(&state.game_dir);
+    Some(state)
+}
 
-    let result = App::new()
-        .add_plugins(DefaultPlugins.build().disable::<bevy::app::TerminalCtrlCHandlerPlugin>().set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "NFS Porsche Unleashed (Rust rewrite) - front end - M6".to_string(),
-                resolution: WindowResolution::new(1024, 768),
-                ..default()
-            }),
-            ..default()
-        }))
-        .insert_resource(state)
-        .insert_resource(ClearColor(clear))
-        .insert_resource(Capture::from_env())
-        .insert_resource(sounds)
-        .insert_resource(music)
-        .add_plugins(menu_garage::MenuGarage)
-        .add_systems(Startup, |mut commands: Commands, windows: Query<&Window, With<PrimaryWindow>>| {
-            // UI is drawn by a camera, so one has to exist even though the screen is one image (the
-            // garage room comes in as a texture, see `menu_garage`).
-            commands.spawn((Camera2d::default(), IsDefaultUiCamera));
-            let mut node = Node::default();
-            if let Ok(window) = windows.single() {
-                crate::log_line(&format!("front end: window {:.0}x{:.0} logical, camera spawned", window.width(), window.height()));
-                place(&mut node, window);
-            }
-            commands.spawn((MenuVisual, node, ImageNode::default()));
-        })
-        .add_systems(Update, (click, present, play_music, capture, quit_on_escape).chain())
-        .run();
-    crate::log_line(&format!("front end finished with: {result:?}"));
-    result
+/// The front end comes up (at start-up, or back from a race at the screen RACE was pressed on):
+/// its UI camera and image, the clear colour and the title (the garage's camera: `menu_garage`).
+fn enter_menu(
+    mut commands: Commands,
+    mut state: ResMut<FrontEnd>,
+    mut clear: ResMut<ClearColor>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    // UI is drawn by a camera, so one has to exist even though the screen is one image (the
+    // garage room comes in as a texture, see `menu_garage`).
+    commands.spawn((Camera2d::default(), IsDefaultUiCamera, DespawnOnExit(AppState::Menu)));
+    let mut node = Node::default();
+    if let Ok(mut window) = windows.single_mut() {
+        crate::log_line(&format!("front end: window {:.0}x{:.0} logical, camera spawned", window.width(), window.height()));
+        place(&mut node, &window);
+        window.title = TITLE.to_string();
+    }
+    commands.spawn((MenuVisual, node, ImageNode::default(), DespawnOnExit(AppState::Menu)));
+    // Screens are rebuilt (the page and popup as they were) and drawn afresh.
+    state.reload();
+    state.stack();
+    state.laid_out_for = Vec2::ZERO;
+    state.hover_key = None;
+    state.dirty = true;
+    clear.0 = state.clear_colour();
+}
+
+/// The front end goes for a race: the menu music fades out as on a screen with no music
+/// (`menu_music`); the screens and choices stay as they are for the way back.
+fn leave_menu(music: Option<ResMut<Music>>, mut images: ResMut<Assets<Image>>, visual: Query<&ImageNode, With<MenuVisual>>, time: Res<Time>) {
+    for image in &visual {
+        images.remove(&image.image);
+    }
+    let Some(mut music) = music else { return };
+    music.screen = RACE_SCREEN.to_string();
+    if let Some(nfspu_game::menu_music::Cue::Change { fade_ms, next }) = music.jukebox.enter_screen("NONE", false, time.elapsed_secs_f64(), random_u32()) {
+        if music.playing.is_some() {
+            let elapsed = music.fade.map(|f| f.0).unwrap_or(0.0);
+            music.fade = Some((elapsed, fade_ms, next));
+        }
+        crate::log_line(&format!("front end: race starting, music fades out over {fade_ms:.0} ms"));
+    }
+}
+
+/// What the music remembers as its screen during a race (no layout has this name).
+const RACE_SCREEN: &str = "<race>";
+
+/// The race is on screen: a menu song still fading out stops.
+fn stop_music(mut music: ResMut<Music>, mut commands: Commands) {
+    if let Some(e) = music.playing.take() {
+        if let Ok(mut entity) = commands.get_entity(e) {
+            entity.despawn();
+        }
+        crate::log_line("front end: menu music stopped for the race");
+    }
+    music.fade = None;
+}
+
+/// `NFSPU_FLOW_TEST`: presses RACE a few seconds after the menu shows (on the next track after the
+/// first race), and quits once every race was run.
+fn flow_test_menu(
+    time: Res<Time>,
+    mut test: ResMut<flow::FlowTest>,
+    mut state: ResMut<FrontEnd>,
+    mut commands: Commands,
+    mut next: ResMut<NextState<AppState>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !test.on() {
+        return;
+    }
+    let now = time.elapsed_secs();
+    let since = *test.since.get_or_insert(now);
+    // the garage room and its car take a few seconds to appear
+    if now - since < 5.0 {
+        return;
+    }
+    test.since = None;
+    if test.done >= test.races {
+        // A picture of the menu as it came back, then quit.
+        let path = crate::log_path().with_file_name("flow_menu_after.png");
+        crate::log_line(&format!("flow test: {} race(s) done, saving {} and quitting", test.done, path.display()));
+        test.races = 0;
+        commands.spawn(Screenshot::primary_window()).observe(move |captured: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
+            let saved = captured.image.clone().try_into_dynamic().map_err(|e| e.to_string()).and_then(|i| i.to_rgb8().save(&path).map_err(|e| e.to_string()));
+            crate::log_line(&format!("flow test: menu picture {saved:?}"));
+            exit.write(AppExit::Success);
+        });
+        return;
+    }
+    if !state.can_race() {
+        crate::log_line(&format!("flow test: RACE is not offered on '{}', quitting", state.page.name));
+        exit.write(AppExit::error());
+        return;
+    }
+    if test.done > 0 {
+        state.quick.step_track(1);
+        state.reload();
+        state.stack();
+    }
+    crate::log_line(&format!("flow test: pressing RACE for race {}", test.done + 1));
+    flow::start_race_from_menu(state.start_race(), &mut commands, &mut next);
 }
 
 fn to_color(rgba: [f32; 4]) -> Color {
@@ -741,6 +853,7 @@ fn click(
     mut state: ResMut<FrontEnd>,
     mut clear: ResMut<ClearColor>,
     mut exit: MessageWriter<AppExit>,
+    mut next: ResMut<NextState<AppState>>,
 ) {
     let Ok(window) = windows.single() else { return };
     let pointer = pointer(window);
@@ -837,10 +950,8 @@ fn click(
             sounds.play(SOUND_SELECT, &mut commands, &mut audio);
             match name.as_str() {
                 "PLAYGAME" => {
-                    if state.start_race().is_some() {
-                        crate::log_line("front end: leaving the menu for the race (hand-off file written)");
-                        exit.write(AppExit::from_code(RACE_EXIT_CODE));
-                    }
+                    crate::log_line("front end: leaving the menu for the race");
+                    flow::start_race_from_menu(state.start_race(), &mut commands, &mut next);
                     return;
                 }
                 // The player popup's "continue": keep the highlighted player (already applied when
@@ -908,16 +1019,30 @@ struct Capture {
     after: f32,
     frames: u32,
     waiting: bool,
+    /// `NFSPU_MENU_PLAY=1`: press RACE once the picture is saved (instead of quitting).
+    play: bool,
+    /// The picture is saved and RACE is to be pressed now.
+    go: bool,
 }
 
 impl Capture {
     fn from_env() -> Self {
         let after = std::env::var("NFSPU_MENU_CAPTURE_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
-        Self { enabled: std::env::var("NFSPU_MENU_CAPTURE").as_deref() == Ok("1"), after, ..default() }
+        let play = std::env::var("NFSPU_MENU_PLAY").as_deref() == Ok("1");
+        Self { enabled: std::env::var("NFSPU_MENU_CAPTURE").as_deref() == Ok("1"), after, play, ..default() }
     }
 }
 
-fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, mut commands: Commands) {
+fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, mut commands: Commands, mut next: ResMut<NextState<AppState>>) {
+    if std::mem::take(&mut state.go) {
+        if current.can_race() {
+            crate::log_line("front end: capture saved, pressing RACE (NFSPU_MENU_PLAY)");
+            flow::start_race_from_menu(current.start_race(), &mut commands, &mut next);
+        } else {
+            crate::log_line("front end: NFSPU_MENU_PLAY, but this screen has no RACE");
+        }
+        return;
+    }
     if !state.enabled || state.waiting {
         return;
     }
@@ -933,10 +1058,6 @@ fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, 
         None => current.page.name.clone(),
     };
     let safe: String = shown.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-    // `NFSPU_MENU_PLAY=1` also presses RACE after the capture (writes `logs/race_setup.txt`).
-    if std::env::var("NFSPU_MENU_PLAY").as_deref() == Ok("1") && current.layers.iter().any(|l| l.name.eq_ignore_ascii_case(BOTTOM_BAR)) && current.popup.as_ref().unwrap_or(&current.page).can_play {
-        current.start_race();
-    }
     let path = dir.join(format!("menu_{safe}.png"));
     crate::log_line(&format!("front end: capture {}", path.display()));
     state.waiting = true;
@@ -952,7 +1073,12 @@ fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, 
                 Ok(()) => {
                     crate::log_line(&format!("front end: saved {}", path.display()));
                     state.enabled = false;
-                    exit.write(AppExit::Success);
+                    // `NFSPU_MENU_PLAY=1` goes on to the race (the next frame presses RACE).
+                    if state.play {
+                        state.go = true;
+                    } else {
+                        exit.write(AppExit::Success);
+                    }
                 }
                 Err(error) => {
                     crate::log_line(&format!("front end capture FAILED: {error}"));

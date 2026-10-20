@@ -1,7 +1,8 @@
 //! Loads a race behind the retail loading screen (`nfspu_game::loading`).
 //!
-//! Without a `RaceSetup` this only adds the viewer's normal `setup`, so nothing changes. With one,
-//! the screen goes up first, the track's geometry and textures are read on a worker thread while
+//! Runs while the app is in `AppState::Loading`. Without a `RaceSetup` resource (the free viewer, a
+//! bare `NFSPU_RACE`) it runs the viewer's `setup` at once and moves on to `Race`. With one, the
+//! screen goes up first, the track's geometry and textures are read on a worker thread while
 //! the screen stays responsive, and the viewer's own `setup` then runs as usual (it finds the
 //! track already read). The stages follow retail's order:
 //!
@@ -13,8 +14,9 @@
 //! | 6 | track read | track geometry and textures decoded |
 //! | 7 | (unnamed step) | the viewer's `setup`: meshes, sky, ground, walls, car |
 //! | 8-9 | cars and AI | already done in 7: one frame each |
-//! | 10 | screen removed, race intro starts | screen removed, driving starts |
+//! | 10 | screen removed, race intro starts | screen removed, `AppState::Race` |
 
+use crate::flow::AppState;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use nfspu_game::loading::{self, LoadingStage, RaceSetup, LAST_STAGE, TRACK_ART_STAGE};
@@ -45,24 +47,33 @@ pub fn from_env() -> Option<RaceSetup> {
     std::env::var("NFSPU_LOADING").ok().and_then(|v| RaceSetup::parse(&v))
 }
 
-/// Adds the viewer's start-up: plain `setup` when `0` is `None`, the loading screen flow otherwise.
-pub struct RaceLoad(pub Option<RaceSetup>);
+/// Builds the race scene on entering `Loading`: plain `setup` without a `RaceSetup`, the loading
+/// screen flow with one.
+pub struct RaceLoad;
 
 impl Plugin for RaceLoad {
     fn build(&self, app: &mut App) {
-        match &self.0 {
-            None => {
-                app.add_systems(Startup, super::setup);
-            }
-            Some(setup) => {
-                app.add_plugins(loading::LoadingScreenPlugin)
-                    .insert_resource(setup.clone())
-                    .add_systems(Startup, begin)
-                    .add_systems(Update, advance)
-                    .add_systems(Update, report);
-            }
-        }
+        app.add_plugins(loading::LoadingScreenPlugin)
+            .add_systems(OnEnter(AppState::Loading), enter)
+            .add_systems(Update, (advance, report).chain().run_if(in_state(AppState::Loading)))
+            .add_systems(OnExit(AppState::Loading), |mut commands: Commands| commands.remove_resource::<Flow>());
     }
+}
+
+/// The loading screen for a race, or for the viewer the scene at once.
+fn enter(world: &mut World) {
+    if world.contains_resource::<RaceSetup>() {
+        if let Err(e) = world.run_system_once(begin) {
+            super::log_line(&format!("loading screen: could not start: {e}"));
+        }
+        return;
+    }
+    let started = Instant::now();
+    if let Err(e) = world.run_system_once(super::setup) {
+        super::log_line(&format!("setup failed to run: {e}"));
+    }
+    super::log_line(&format!("scene built without a loading screen in {:.2}s", started.elapsed().as_secs_f32()));
+    world.resource_mut::<NextState<AppState>>().set(AppState::Race);
 }
 
 /// Progress of the flow (the visible stage is `LoadingStage`).
@@ -131,10 +142,11 @@ fn advance(world: &mut World) {
     world.insert_resource(LoadingStage(next));
 }
 
-/// Logs the stage times once the screen is gone.
-fn report(mut finished: MessageReader<loading::LoadingFinished>, flow: Option<Res<Flow>>) {
+/// Logs the stage times once the screen is gone, and starts the race.
+fn report(mut finished: MessageReader<loading::LoadingFinished>, flow: Option<Res<Flow>>, mut next: ResMut<NextState<AppState>>) {
     for done in finished.read() {
         let times = flow.as_ref().map(|f| f.times.iter().map(|(s, t)| format!("{s}@{t:.2}s")).collect::<Vec<_>>().join(" ")).unwrap_or_default();
         super::log_line(&format!("loading screen: done for '{}' in {:.2}s; stages {times}", done.setup.track, done.seconds));
+        next.set(AppState::Race);
     }
 }

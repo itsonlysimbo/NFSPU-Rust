@@ -29,6 +29,7 @@ use nfspu_game::{refbuild, sky, track};
 use nfspu_game::MIRROR_X;
 mod car_probe;
 mod console;
+mod flow;
 mod menu_mode;
 mod race_load;
 mod race_mode;
@@ -62,11 +63,7 @@ fn log_line(msg: &str) {
 
 fn main() {
     START.get_or_init(Instant::now);
-    // A program started by the quick-race launcher (below) keeps the launcher's log.
-    let child = env::var_os("NFSPU_CHILD").is_some();
-    if !child {
-        let _ = fs::remove_file(log_path());
-    }
+    let _ = fs::remove_file(log_path());
     log_line(&format!(
         "starting: pid {}, exe {:?}, started from {:?}",
         std::process::id(),
@@ -76,7 +73,8 @@ fn main() {
 
     std::panic::set_hook(Box::new(|info| {
         log_line(&format!("PANIC: {info}"));
-        eprintln!("PANIC: {info}\nPress Enter to close this console.");
+        eprintln!("PANIC: {info}
+Press Enter to close this console.");
         let _ = std::io::stdin().read(&mut [0u8]);
     }));
 
@@ -85,65 +83,27 @@ fn main() {
     let hooked = bevy::app::ctrlc::set_handler(|| log_line("Ctrl+C / Ctrl+Break received (ignored)"));
     log_line(&format!("ctrl-c handler installed: {}", hooked.is_ok()));
 
-    // `NFSPU_MENU=<screen>` starts in the retail front end instead of the track viewer.
-    if let Ok(requested) = env::var("NFSPU_MENU") {
+    // One program for the front end and the races (`flow.rs`). `NFSPU_MENU=<screen>` starts at
+    // the front end (empty means `singleplayer`); otherwise the race or free viewer named by the
+    // arguments and `NFSPU_LOADING` / `NFSPU_RACE` starts directly.
+    let menu_start = env::var("NFSPU_MENU").ok().map(|requested| {
         let trimmed = requested.trim();
-        let start = if trimmed.is_empty() { "singleplayer".to_string() } else { trimmed.to_ascii_lowercase() };
-        // Started directly, this process launches the menu and the races as separate programs
-        // in turn (a window loop cannot restart inside one process).
-        if !child && env::var_os("NFSPU_MENU_CAPTURE").is_none() {
-            run_flow(start);
-            return;
-        }
-        let dir = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
-        let result = menu_mode::run(dir, start);
-        if result == AppExit::from_code(menu_mode::RACE_EXIT_CODE) {
-            std::process::exit(menu_mode::RACE_EXIT_CODE as i32);
-        }
-        return;
-    }
+        if trimmed.is_empty() { "singleplayer".to_string() } else { trimmed.to_ascii_lowercase() }
+    });
+    let config = flow::RaceConfig::from_env();
+    let window = match &menu_start {
+        Some(_) => Window { title: menu_mode::TITLE.to_string(), resolution: bevy::window::WindowResolution::new(1024, 768), ..default() },
+        None => Window { title: format!("NFS Porsche Unleashed (Rust rewrite) - M3 - {}", config.track), ..default() },
+    };
+    let first = if menu_start.is_some() { flow::AppState::Menu } else { flow::AppState::Loading };
+    log_line(&format!("flow: one program, starting in {first:?}"));
 
-    // `NFSPU_RACE=<track>[,<forward|backward>[,<laps>]]` starts a race on that track.
-    let race_request = race_mode::RaceRequest::from_env();
-    let track = race_request.as_ref().map(|r| r.track.clone()).or_else(|| env::args().nth(1)).unwrap_or_else(|| "alps".to_string());
-    let car_name = env::args().nth(2).unwrap_or_else(|| "993".to_string());
-    let car_style: usize = env::args().nth(3).and_then(|v| v.parse().ok()).unwrap_or(1);
-    let car_driver: u8 = env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(1);
-    let car_paint: usize = env::args().nth(5).and_then(|v| v.parse().ok()).unwrap_or(CarOptions::default().paint);
-    // `NFSPU_LOADING=<track>[,<car>]` loads that race behind the retail loading screen.
-    let loading = race_load::from_env();
-    let track = loading.as_ref().map_or(track, |s| s.track.clone());
-    let car_name = loading.as_ref().map_or(car_name, |s| s.car.clone());
-    // A quick race drives the menu's car as the garage showed it: body style and paint from
-    // `logs/race_setup.txt` (only when it names the car being loaded).
-    let quick = quick_race_setup().filter(|s| s.car_model.eq_ignore_ascii_case(&car_name));
-    let (car_style, car_paint) = quick.as_ref().map_or((car_style, car_paint), |s| (s.car_options().style, s.car_options().paint));
-    if let Some(s) = &quick {
-        log_line(&format!("player car from the menu: '{}' (id {}) model '{}' style {} paint section {} roof {}", s.car_name, s.car_id, s.car_model, car_style, car_paint, if s.roof_up { "up" } else { "down" }));
-    }
-    // Mirrored races mirror the track and race geometry; set before any track file is read. The
-    // flow passes the flag in both `NFSPU_LOADING` and `NFSPU_RACE`; either one is enough.
-    let mirrored = loading.as_ref().is_some_and(|s| s.mirrored) || race_request.as_ref().is_some_and(|r| r.mirrored);
-    nfspu_game::set_world_mirrored(mirrored);
-    if mirrored {
-        log_line("race: mirrored track layout");
-    }
-
-    let result = App::new()
-        .add_plugins(DefaultPlugins.build().disable::<bevy::app::TerminalCtrlCHandlerPlugin>().set(WindowPlugin {
-            primary_window: Some(Window {
-                title: format!("NFS Porsche Unleashed (Rust rewrite) - M3 - {track}"),
-                ..default()
-            }),
-            ..default()
-        }))
-        .insert_resource(ClearColor(Color::srgb(0.45, 0.62, 0.85)))
-        .insert_resource(TrackName(track))
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.build().disable::<bevy::app::TerminalCtrlCHandlerPlugin>().set(WindowPlugin { primary_window: Some(window), ..default() }))
+        .insert_state(first)
+        .insert_resource(flow::ReturnToMenu(menu_start.is_some()))
+        .insert_resource(ClearColor(RACE_CLEAR))
         .insert_resource(CarList(list_cars()))
-        .insert_resource(CarName(car_name))
-        .insert_resource(CarStyle(car_style))
-        .insert_resource(CarDriver(car_driver))
-        .insert_resource(CarPaint(car_paint))
         .insert_resource(LightsOn(false))
         .insert_resource(console::Console::default())
         .insert_resource(console::Pending::default())
@@ -156,34 +116,49 @@ fn main() {
         .insert_resource(CamMode(0))
         .insert_resource(Orbit { yaw: 0.6, pitch: 0.35, radius: 6.0 })
         .insert_resource(RetailFov::from_env())
-        .add_plugins(race_mode::RacePlugin(race_request))
-        // Runs `setup` directly, or behind the loading screen with NFSPU_LOADING.
-        .add_plugins(race_load::RaceLoad(loading))
-        // In-race HUD, only with NFSPU_HUD=1 for now (see hud_plugin.rs).
-        .add_plugins(nfspu_game::hud_plugin::HudPlugin)
+        .add_plugins(flow::FlowPlugin)
+        // The front end; its screens are read now only when the program starts there.
+        .add_plugins(menu_mode::MenuPlugin(menu_start.clone()))
+        .add_plugins(race_mode::RacePlugin)
+        // Runs `setup` directly, or behind the loading screen.
+        .add_plugins(race_load::RaceLoad)
+        // In-race HUD: always in a race from the menu, otherwise only with NFSPU_HUD=1.
+        .add_plugins(nfspu_game::hud_plugin::HudPlugin(flow::AppState::Race))
         // Fog, rain, snow, lightning and night headlights (weather_fx.rs).
         .add_plugins(nfspu_game::weather_fx::WeatherFxPlugin)
-        .add_systems(Update, feed_weather.after(drive_car))
-        .add_systems(Update, feed_hud.after(drive_car))
+        .add_systems(OnEnter(flow::AppState::Loading), |mut clear: ResMut<ClearColor>| clear.0 = RACE_CLEAR)
+        .add_systems(Update, feed_weather.after(drive_car).run_if(flow::in_race_scene))
+        .add_systems(Update, feed_hud.after(drive_car).run_if(flow::in_race_scene))
         // after the cars' final positions for this frame are known
-        .add_systems(PostUpdate, lay_ground_shadows.after(TransformSystems::Propagate))
-        .add_systems(Last, visual_probe::update)
-        .add_systems(Last, car_probe::update)
-        .add_systems(Update, (console::handle_input, console::apply).chain())
+        .add_systems(PostUpdate, lay_ground_shadows.after(TransformSystems::Propagate).run_if(flow::in_race_scene))
+        .add_systems(Last, (visual_probe::update, car_probe::update).run_if(flow::in_race_scene))
+        .add_systems(Update, (console::handle_input, console::apply).chain().run_if(flow::in_race_scene))
         .add_systems(
             Update,
-            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title, quit_on_f10).chain(),
+            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
+                .chain()
+                .run_if(flow::in_race_scene),
         )
-        .run();
+        .add_systems(Update, quit_on_f10);
+    // The race (or viewer) asked for at start-up; a menu start replaces it when RACE is pressed.
+    config.apply(app.world_mut());
+    let result = app.run();
 
     let msg = format!("app finished with: {result:?}");
     log_line(&msg);
     println!("{msg}");
+    // A menu start ends from the menu (its launcher waits); the viewer keeps its console open.
+    if menu_start.is_some() {
+        return;
+    }
     println!("A log was written to {}. Press Enter to close this console.", log_path().display());
     if env::var("NFSPU_SKY_CAPTURE").as_deref() != Ok("1") && env::var_os("NFSPU_CAR_CAPTURE").is_none() {
         let _ = std::io::stdin().read(&mut [0u8]);
     }
 }
+
+/// The colour behind the race's sky (the viewer's plain sky where a track has none).
+const RACE_CLEAR: Color = Color::srgb(0.45, 0.62, 0.85);
 
 #[derive(Resource)]
 struct TrackName(String);
@@ -621,6 +596,7 @@ fn spawn_fps(commands: &mut Commands) {
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
         FpsText,
+        DespawnOnExit(flow::AppState::Race),
         Text::new(""),
         TextFont { font_size: FontSize::Px(15.0), ..default() },
         TextColor(Color::srgb(0.9, 0.95, 0.9)),
@@ -901,6 +877,7 @@ fn setup(
     car_style: Res<CarStyle>,
     car_driver: Res<CarDriver>,
     car_paint: Res<CarPaint>,
+    quick: Res<flow::QuickSetup>,
 ) {
     console::spawn(&mut commands);
     spawn_fps(&mut commands);
@@ -909,7 +886,7 @@ fn setup(
         Err(e) => {
             error!("could not load track '{}': {e}", track.0);
             log_line(&format!("LOAD FAILED: {e}"));
-            commands.spawn((Camera3d::default(), FlyCamera { yaw: 0.0, pitch: 0.0 }, nfspu_game::weather_fx::WorldCamera));
+            commands.spawn((Camera3d::default(), FlyCamera { yaw: 0.0, pitch: 0.0 }, nfspu_game::weather_fx::WorldCamera, DespawnOnExit(flow::AppState::Race)));
             return;
         }
     };
@@ -921,7 +898,7 @@ fn setup(
     commands.insert_resource(TrackEntities(scene.entities));
     commands.insert_resource(GroundRes(Ground::new(g.tris, 16.0)));
     commands.insert_resource(WallRes(WallSet::new(g.walls, 4.0)));
-    commands.insert_resource(CarRes { car: player_car(g.start_pos, g.start_yaw, &car_name.0), start_pos: g.start_pos, start_yaw: g.start_yaw, steer: 0.0, braking: false });
+    commands.insert_resource(CarRes { car: player_car(g.start_pos, g.start_yaw, &car_name.0, quick.0.as_ref()), start_pos: g.start_pos, start_yaw: g.start_yaw, steer: 0.0, braking: false });
     commands.spawn((
         Camera3d::default(),
         // the sky dome sits 3 km away, so the camera has to be able to see that far
@@ -937,8 +914,9 @@ fn setup(
         scene.camera,
         FlyCamera { yaw: scene.yaw, pitch: scene.pitch },
         nfspu_game::weather_fx::WorldCamera,
+        DespawnOnExit(flow::AppState::Race),
     ));
-    let root = commands.spawn((Transform::from_translation(g.start_pos), Visibility::default(), CarBody)).id();
+    let root = commands.spawn((Transform::from_translation(g.start_pos), Visibility::default(), CarBody, DespawnOnExit(flow::AppState::Race))).id();
     let options = CarOptions { style: car_style.0, driver: car_driver.0, paint: car_paint.0, ..Default::default() };
     let (model, style_count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, root, &car_name.0, &options);
     commands.insert_resource(CarModelEntity { root, model, style_count });
@@ -1412,13 +1390,13 @@ struct GroundRes(Ground);
 struct WallRes(WallSet);
 
 /// The player's car with its retail `.sim` physics. Which car: `NFSPU_SIM=<sim stem>` if set;
-/// in a quick race the setup's catalogue car and its gearbox and aids (`logs/race_setup.txt`);
+/// in a quick race the setup's catalogue car and its gearbox and aids (`flow::QuickSetup`);
 /// otherwise the first road car using the shown model. Without an install: a made-up car.
-fn player_car(pos: Vec3, yaw: f32, model: &str) -> Car {
+fn player_car(pos: Vec3, yaw: f32, model: &str, quick: Option<&nfspu_game::race_setup::RaceSetup>) -> Car {
     use nfspu_game::car_load::{self, Pick};
     use nfspu_game::car_sim::Aids;
     let dir = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
-    let setup = quick_race_setup().filter(|s| s.car_model.eq_ignore_ascii_case(model));
+    let setup = quick.filter(|s| s.car_model.eq_ignore_ascii_case(model));
     let aids = match &setup {
         Some(s) => Aids { automatic: s.automatic, abs: s.abs, traction_control: s.traction_control, keyboard_steering: true },
         None => Aids { automatic: env::var("NFSPU_MANUAL").is_err(), ..Aids::default() },
@@ -1439,13 +1417,6 @@ fn player_car(pos: Vec3, yaw: f32, model: &str) -> Car {
             Car::with_spec(pos, yaw, nfspu_game::car_sim::Spec::generic(), aids)
         }
     }
-}
-
-/// The menu's quick-race setup (`logs/race_setup.txt`) while a race loads (`NFSPU_LOADING`).
-fn quick_race_setup() -> Option<nfspu_game::race_setup::RaceSetup> {
-    env::var_os("NFSPU_LOADING")?;
-    let text = fs::read_to_string(log_path().parent()?.join("race_setup.txt")).ok()?;
-    nfspu_game::race_setup::RaceSetup::parse(&text).map_err(|e| log_line(&format!("race setup not used: {e}"))).ok()
 }
 
 #[derive(Resource)]
@@ -1537,70 +1508,6 @@ fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, console: Res<console::Console>, 
     }
 }
 
-/// Gives the HUD (when `NFSPU_HUD=1`) the car's real speed. Rpm and gear are made up from the speed
-/// and the race fields are PLACEHOLDERS (a 3-second countdown at the start, lap 1/3, 1st of 6)
-/// until the race rules fill them.
-/// The quick-race loop: the menu runs until RACE (exit code `RACE_EXIT_CODE`, setup in
-/// `logs/race_setup.txt`), then the race runs behind the loading screen with the HUD, and after the
-/// results the menu opens again at the quick-race screen. Any other menu exit ends the loop.
-fn run_flow(start: String) {
-    let Ok(exe) = env::current_exe() else {
-        log_line("flow: cannot find our own program file");
-        return;
-    };
-    let setup_file = log_path().parent().map(|d| d.join("race_setup.txt")).unwrap_or_default();
-    let mut screen = start;
-    loop {
-        log_line(&format!("flow: menu at '{screen}'"));
-        let menu = std::process::Command::new(&exe).env("NFSPU_CHILD", "1").env("NFSPU_MENU", &screen).status();
-        let code = menu.as_ref().ok().and_then(|s| s.code());
-        if code != Some(menu_mode::RACE_EXIT_CODE as i32) {
-            log_line(&format!("flow: menu closed ({menu:?}), done"));
-            return;
-        }
-        let setup = fs::read_to_string(&setup_file).map_err(|e| e.to_string()).and_then(|t| nfspu_game::race_setup::RaceSetup::parse(&t));
-        let setup = match setup {
-            Ok(s) => s,
-            Err(e) => {
-                log_line(&format!("flow: could not read {}: {e}", setup_file.display()));
-                return;
-            }
-        };
-        use nfspu_game::race_setup::Direction as D;
-        let backward = matches!(setup.direction, D::Backward | D::BackwardMirrored);
-        let mirrored = matches!(setup.direction, D::ForwardMirrored | D::BackwardMirrored);
-        let loading = format!("{},{}{}{}", setup.track, setup.car_model, if backward { ",reverse" } else { "" }, if mirrored { ",mirror" } else { "" });
-        let dir_word = setup.direction.word();
-        let race = format!("{},{},{},{},{}", setup.track, dir_word, setup.laps, setup.opponents.min(7), setup.difficulty.min(2));
-        let opponents = opponent_cars(&setup).iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
-        log_line(&format!("flow: race NFSPU_LOADING={loading} NFSPU_RACE={race} NFSPU_OPPONENTS={opponents} (traffic not simulated yet)"));
-        let run = std::process::Command::new(&exe)
-            .args([setup.track.clone(), setup.car_model.clone(), "1".into(), "1".into(), setup.paint.to_string()])
-            .env("NFSPU_CHILD", "1")
-            .env_remove("NFSPU_MENU")
-            .env("NFSPU_LOADING", &loading)
-            .env("NFSPU_RACE", &race)
-            .env("NFSPU_OPPONENTS", &opponents)
-            .env("NFSPU_HUD", "1")
-            .status();
-        log_line(&format!("flow: race closed ({run:?})"));
-        screen = "quickrace".to_string();
-    }
-}
-
-/// The opponents' cars (catalogue ids) for a quick race, by the menu's rule (`ai::pick_cars`)
-/// over the installed road cars of `nfs5.car`.
-fn opponent_cars(setup: &nfspu_game::race_setup::RaceSetup) -> Vec<u16> {
-    use nfspu_game::catalog;
-    let game = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
-    let cars = catalog::parse_cars(&fs::read(game.join("FEData").join("Data").join("nfs5.car")).unwrap_or_default());
-    let models = catalog::file_names(&game.join("GameData").join("CarModel"));
-    let list: Vec<catalog::Car> = catalog::opponent_cars(&cars, |m| models.contains(&format!("{m}.crp").to_ascii_lowercase())).into_iter().map(|i| cars[i].clone()).collect();
-    let player = cars.iter().find(|c| c.id == setup.car_id).cloned().unwrap_or_else(|| catalog::Car { id: setup.car_id, model: setup.car_model.clone(), ..Default::default() });
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
-    nfspu_game::ai::pick_cars(&setup.opponent_cars, &player, &list, setup.opponents.min(7) as usize, &mut nfspu_game::ai::Rng::new(seed))
-}
-
 /// Hands the car to the weather effects: where it is, whether its headlights are on, and the
 /// ground under the headlight pool. On a night track the headlights start switched on.
 fn feed_weather(
@@ -1637,6 +1544,8 @@ fn feed_weather(
     }
 }
 
+/// Gives the HUD the car's speed, rpm and gear and the race's numbers; outside a race (the viewer
+/// with `NFSPU_HUD=1`) the race fields are PLACEHOLDERS (a 3-second countdown, lap 1/3, 1st of 6).
 fn feed_hud(
     time: Res<Time>,
     car: Option<Res<CarRes>>,
@@ -1656,6 +1565,9 @@ fn feed_hud(
         let countdown = race.held.then(|| (448.0 - race.tick as f32).max(0.0) / 64.0);
         if race.finished && finished_at.is_none() {
             *finished_at = Some(now);
+        } else if !race.finished {
+            // a new race in the same program
+            *finished_at = None;
         }
         feed.input = nfspu_game::hud::HudInput {
             speed_kmh,
@@ -1867,8 +1779,10 @@ fn chase_camera(
     if chase {
         let st = &mut *state;
         // the road path, for the slope ahead; loaded once per track
-        if st.path_track.as_deref() != Some(track.0.as_str()) {
-            st.path_track = Some(track.0.clone());
+        // (a mirrored race of the same track has a mirrored path)
+        let key = format!("{} {}", track.0, nfspu_game::world_mirror_x());
+        if st.path_track.as_deref() != Some(key.as_str()) {
+            st.path_track = Some(key);
             st.path = match race_path::load(&track.0, Direction::Forward) {
                 Ok(t) => Some(t.path),
                 Err(e) => {

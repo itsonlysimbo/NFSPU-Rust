@@ -2,8 +2,11 @@
 //! HUD each frame into a window-sized transparent image (`hud_render`) and shows it over the 3D
 //! view as a full-window UI image.
 //!
+//! `HudPlugin(state)` shows the HUD while the app is in `state`, when a `HudFeed` resource exists
+//! on entering it (the game inserts one for every race from the menu).
+//!
 //! Environment switches (all optional):
-//! - `NFSPU_HUD=1` turns the HUD on (off by default until the race code wires it in);
+//! - `NFSPU_HUD=1` turns the HUD on for a race started without the menu (and the free viewer);
 //! - `NFSPU_HUD_CONFIG=1..4` picks the stock layout ("Config 1" by default);
 //! - `NFSPU_HUD_SCALE=<f>` draws it bigger (1 = retail pixel sizes);
 //! - `NFSPU_HUD_MPH=1` for miles per hour, `NFSPU_HUD_NIGHT=1` for the night dial art;
@@ -33,25 +36,33 @@ pub struct HudFeed {
     pub car_model: String,
 }
 
-/// Adds the HUD when `NFSPU_HUD=1`; does nothing otherwise.
-pub struct HudPlugin;
+/// Shows the HUD while the app is in the given state (set up on entering it when a `HudFeed`
+/// exists, taken down on leaving it).
+pub struct HudPlugin<S>(pub S);
 
-impl HudPlugin {
-    pub fn enabled() -> bool {
-        std::env::var("NFSPU_HUD").map(|v| v.trim() == "1").unwrap_or(false)
+/// `NFSPU_HUD=1`: the HUD for a race started without the menu.
+pub fn enabled() -> bool {
+    std::env::var("NFSPU_HUD").map(|v| v.trim() == "1").unwrap_or(false)
+}
+
+impl<S: States> Plugin for HudPlugin<S> {
+    fn build(&self, app: &mut App) {
+        app.add_systems(OnEnter(self.0.clone()), setup.run_if(resource_exists::<HudFeed>))
+            .add_systems(OnExit(self.0.clone()), teardown)
+            .add_systems(PostUpdate, draw.run_if(in_state(self.0.clone())))
+            .add_systems(Last, capture.run_if(in_state(self.0.clone())));
     }
 }
 
-impl Plugin for HudPlugin {
-    fn build(&self, app: &mut App) {
-        if !Self::enabled() {
-            return;
-        }
-        app.insert_resource(HudFeed::default())
-            .add_systems(Startup, setup)
-            .add_systems(PostUpdate, draw)
-            .add_systems(Last, capture);
+/// Removes the HUD's picture and state (its node is despawned here too).
+fn teardown(world: &mut World) {
+    let nodes: Vec<(Entity, Handle<Image>)> = world.query_filtered::<(Entity, &ImageNode), With<HudImage>>().iter(world).map(|(e, n)| (e, n.image.clone())).collect();
+    for (e, image) in nodes {
+        world.resource_mut::<Assets<Image>>().remove(&image);
+        world.despawn(e);
     }
+    world.remove_non_send::<HudState>();
+    world.remove_resource::<HudFeed>();
 }
 
 #[derive(Component)]
@@ -156,13 +167,13 @@ fn rgba_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
 }
 
 fn draw(
-    mut state: NonSendMut<HudState>,
-    feed: Res<HudFeed>,
+    state: Option<NonSendMut<HudState>>,
+    feed: Option<Res<HudFeed>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut shown: Query<&mut ImageNode, With<HudImage>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let Ok(window) = windows.single() else { return };
+    let (Some(mut state), Some(feed), Ok(window)) = (state, feed, windows.single()) else { return };
     let screen = [window.physical_width().max(1), window.physical_height().max(1)];
     let state = &mut *state;
     // The car's dials.
@@ -218,7 +229,8 @@ fn draw(
 }
 
 /// `NFSPU_HUD_CAPTURE=1`: saves the HUD layer and a window screenshot, then exits.
-fn capture(mut state: NonSendMut<HudState>, time: Res<Time>, feed: Res<HudFeed>, mut commands: Commands) {
+fn capture(state: Option<NonSendMut<HudState>>, time: Res<Time>, feed: Option<Res<HudFeed>>, mut commands: Commands) {
+    let (Some(mut state), Some(feed)) = (state, feed) else { return };
     let Some((at, waiting)) = state.capture else { return };
     if waiting || time.elapsed_secs() - state.started < at {
         return;
