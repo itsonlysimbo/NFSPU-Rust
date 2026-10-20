@@ -24,7 +24,8 @@ pub enum Finish {
     Interior,
 }
 
-/// Triangles of one finish. `normals` are outward face normals, repeated per corner; `uvs` and
+/// Triangles of one finish. `normals` are the shading normals per corner (the file's vertex normals,
+/// see `crp::Crp::article_normals`); `uvs` and
 /// `materials` (the material index of the triangle part) are also per corner.
 #[derive(Clone, Debug, Default)]
 pub struct Piece {
@@ -113,6 +114,9 @@ pub struct CarModel {
     /// The driver's eye in car space (see `driver_eye`) and the in-car camera's turn in degrees
     /// (x: pitch, positive looks down; y: yaw), from the `.tpg` for the chosen style.
     pub driver_eye: [f32; 3],
+    /// Corners shaded with the file's vertex normals, and corners that fell back to the flat face
+    /// normal (no normals, or a vertex normal facing away from its triangle).
+    pub smoothing: [usize; 2],
     pub driver_rot: [f32; 3],
     /// Height of the engine's car centre above the ground: half the model's height, wheels included.
     pub centre_height: f32,
@@ -584,6 +588,15 @@ pub fn apply_matrix(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Turns a direction by a row-vector 4x4 matrix (its upper 3x3 part, no translation).
+pub fn rotate_by_matrix(m: &[f32; 16], d: [f32; 3]) -> [f32; 3] {
+    [
+        d[0] * m[0] + d[1] * m[4] + d[2] * m[8],
+        d[0] * m[1] + d[1] * m[5] + d[2] * m[9],
+        d[0] * m[2] + d[1] * m[6] + d[2] * m[10],
+    ]
+}
+
 /// Outward normal of a triangle in the file's winding: opposite to `(b - a) x (c - a)`.
 pub fn outward_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
     let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
@@ -617,11 +630,14 @@ pub struct CarOptions {
     /// Paint scheme: the section number in the car's `.clr` file (its `color1` is the body colour,
     /// for example 4 = red on the 993), or 0 / an unknown number for unpainted (white and grey).
     pub paint: usize,
+    /// A custom body colour (the player's own pick): replaces the scheme's `color1`, keeping its
+    /// stripe and cabin colours. With no matching section the model's first scheme is used.
+    pub body: Option<[u8; 3]>,
 }
 
 impl Default for CarOptions {
     fn default() -> Self {
-        CarOptions { level: 3, style: 1, driver: 1, paint: 4 }
+        CarOptions { level: 3, style: 1, driver: 1, paint: 4, body: None }
     }
 }
 
@@ -633,44 +649,78 @@ pub struct PaintScheme {
     pub stripe_package: usize,
 }
 
-/// Every paint scheme of a `.clr` file, by section number. Sections without a complete `color1`
-/// are left out; missing other colours are black.
+/// Every paint scheme of a `.clr` file, by section number. Each colour is stored as `colorK.h/.s/.v`
+/// (each 0-255; hue 255 is a full turn) and sometimes also as `.r/.g/.b`. Only the H/S/V values are
+/// filled in for every section: in most files only `[section1]` has real `.r/.g/.b` numbers and the
+/// other sections write 0 there (914: section 1 is h 51, s 13, v 255 = RGB 252, 255, 242; sections
+/// 2-20 have RGB 0, 0, 0). So H/S/V is used when complete, RGB otherwise. Sections without a body
+/// colour are left out; missing other colours are black.
 pub fn parse_clr(text: &str) -> std::collections::HashMap<usize, PaintScheme> {
+    #[derive(Default)]
+    struct Raw {
+        package: usize,
+        hsv: [[Option<u8>; 3]; 4],
+        rgb: [[Option<u8>; 3]; 4],
+    }
     let mut out = std::collections::HashMap::new();
     let mut current: Option<usize> = None;
-    let mut scheme = PaintScheme::default();
-    let mut has_body = [false; 3];
-    let mut flush = |section: Option<usize>, scheme: &PaintScheme, has_body: &[bool; 3]| {
-        if let (Some(n), [true, true, true]) = (section, has_body) {
-            out.insert(n, *scheme);
-        }
+    let mut raw = Raw::default();
+    let mut flush = |section: Option<usize>, raw: &Raw| {
+        let Some(n) = section else { return };
+        let colour = |k: usize| -> Option<[u8; 3]> {
+            match (raw.hsv[k], raw.rgb[k]) {
+                ([Some(h), Some(s), Some(v)], _) => Some(hsv_to_rgb(h, s, v)),
+                (_, [Some(r), Some(g), Some(b)]) => Some([r, g, b]),
+                _ => None,
+            }
+        };
+        let Some(body) = colour(0) else { return };
+        let colours = [body, colour(1).unwrap_or([0; 3]), colour(2).unwrap_or([0; 3]), colour(3).unwrap_or([0; 3])];
+        out.insert(n, PaintScheme { colours, stripe_package: raw.package });
     };
     for line in text.lines() {
         let line = line.trim();
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            flush(current, &scheme, &has_body);
+            flush(current, &raw);
             current = name.to_ascii_lowercase().strip_prefix("section").and_then(|n| n.parse().ok());
-            scheme = PaintScheme::default();
-            has_body = [false; 3];
+            raw = Raw::default();
         } else if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_ascii_lowercase();
             if key == "stripepackage" {
-                scheme.stripe_package = value.trim().parse().unwrap_or(0);
+                raw.package = value.trim().parse().unwrap_or(0);
                 continue;
             }
             let Some((colour, channel)) = key.strip_prefix("color").and_then(|r| r.split_once('.')) else { continue };
             let (Ok(colour), Ok(value)) = (colour.parse::<usize>(), value.trim().parse::<u8>()) else { continue };
-            let Some(k) = ["r", "g", "b"].iter().position(|c| *c == channel) else { continue };
-            if (1..=4).contains(&colour) {
-                scheme.colours[colour - 1][k] = value;
-                if colour == 1 {
-                    has_body[k] = true;
-                }
+            if !(1..=4).contains(&colour) {
+                continue;
+            }
+            if let Some(k) = ["h", "s", "v"].iter().position(|c| *c == channel) {
+                raw.hsv[colour - 1][k] = Some(value);
+            } else if let Some(k) = ["r", "g", "b"].iter().position(|c| *c == channel) {
+                raw.rgb[colour - 1][k] = Some(value);
             }
         }
     }
-    flush(current, &scheme, &has_body);
+    flush(current, &raw);
     out
+}
+
+/// A `.clr` colour from hue, saturation and value, each 0-255 (hue 255 is a full turn).
+pub fn hsv_to_rgb(h: u8, s: u8, v: u8) -> [u8; 3] {
+    let (h, s, v) = (h as f32 / 255.0 * 6.0, s as f32 / 255.0, v as f32);
+    let sector = (h.floor() as i32).rem_euclid(6);
+    let f = h - h.floor();
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    let (r, g, b) = match sector {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    [r.round() as u8, g.round() as u8, b.round() as u8]
 }
 
 /// How many colour bands a car's artwork can use.
@@ -746,7 +796,7 @@ pub fn tint_bands(rgba: &mut [u8], bands: &[[u8; 3]; BANDS]) {
 
 /// Loads a car (e.g. "993") built as described by `options`.
 pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
-    let CarOptions { level, style: style_number, driver, paint } = *options;
+    let CarOptions { level, style: style_number, driver, paint, body } = *options;
     let path = car_dir()?.join(format!("{name}.crp"));
     let raw = fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     // most cars are RefPack-compressed; a few (e.g. the 928) are stored plain
@@ -787,6 +837,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         pages: Vec::new(),
         page_source: Vec::new(),
         driver_eye: [0.0; 3],
+        smoothing: [0; 2],
         driver_rot: [0.0; 3],
         centre_height: 0.0,
     };
@@ -801,7 +852,16 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
     let layout = parse_tpg_layout(&tpg);
     // the paint scheme's colours, spread over the colour bands by its stripe package
     let packages = parse_packages(&fs::read_to_string(car_dir()?.join("packages.ini")).unwrap_or_default());
-    let bands = parse_clr(&fs::read_to_string(car_dir()?.join(format!("{name}.clr"))).unwrap_or_default()).get(&paint).map(|scheme| band_colours(scheme, &packages));
+    let schemes = parse_clr(&fs::read_to_string(car_dir()?.join(format!("{name}.clr"))).unwrap_or_default());
+    let scheme = match body {
+        // a custom colour: the chosen (or else the first) scheme with its body colour replaced
+        Some(rgb) => {
+            let base = schemes.get(&paint).or_else(|| schemes.keys().min().and_then(|k| schemes.get(k))).copied().unwrap_or_default();
+            Some(PaintScheme { colours: [rgb, base.colours[1], base.colours[2], base.colours[3]], ..base })
+        }
+        None => schemes.get(&paint).copied(),
+    };
+    let bands = scheme.map(|scheme| band_colours(&scheme, &packages));
     let embedded = crp.embedded_archives();
     model.pages = build_tpages(&layout, &embedded, &car_dir()?, &PageChoice { rules: &rules, style: &style, driver, bands });
     model.page_source = layout.tpages.iter().map(|t| t.source).collect();
@@ -860,6 +920,8 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         }
         let is_shadow = is_shadow_name(&article_name);
         let Some(mesh) = crp.article_mesh(a, lvl) else { continue };
+        // the modellers' own per-vertex normals (smooth shading; creases are split vertices)
+        let vertex_normals = crp.article_normals(a, lvl);
         let matrix = crp.article_transform(a, lvl);
         // WheelFront / WheelRear are the wheels; WheelWell (the arch liner) is ordinary body trim
         let is_wheel = !interior_pass && (article_name.starts_with("WheelFront") || article_name.starts_with("WheelRear"));
@@ -912,6 +974,29 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                 // mirror x (see MIRROR_X): positions and the normal, after the winding-based normal is known
                 let tri: Vec<[f32; 3]> = tri.iter().map(|p| [p[0] * MIRROR_X, p[1], p[2]]).collect();
                 let n = [n[0] * MIRROR_X, n[1], n[2]];
+                // each corner's shading normal: the file's vertex normal, turned like the part and
+                // mirrored like the positions; the face normal where the file has none or where the
+                // vertex normal points away from the face (bad data)
+                let corner_normals: Vec<[f32; 3]> = (0..3)
+                    .map(|q| {
+                        let Some(v) = vertex_normals.as_ref().and_then(|ns| ns.get(b.vertex_idx[3 * t + q] as usize)).copied() else {
+                            model.smoothing[1] += 1;
+                            return n;
+                        };
+                        let v = match (&matrix, is_wheel) {
+                            (Some(m), false) => rotate_by_matrix(m, v),
+                            _ => v,
+                        };
+                        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                        let v = [v[0] * MIRROR_X / len.max(1e-9), v[1] / len.max(1e-9), v[2] / len.max(1e-9)];
+                        if len < 1e-6 || v[0] * n[0] + v[1] * n[1] + v[2] * n[2] <= 0.0 {
+                            model.smoothing[1] += 1;
+                            return n;
+                        }
+                        model.smoothing[0] += 1;
+                        v
+                    })
+                    .collect();
                 // Body triangles whose front face points downwards into the shell (roof lining on cars with no
                 // separate `InteriorRoof` article, underbody): invisible from outside, but their body
                 // artwork would show from the cockpit and through the glass, so they get the cabin
@@ -954,7 +1039,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                 for (q, p) in tri.iter().enumerate() {
                     let p = &[p[0] + n[0] * lift, p[1] + n[1] * lift, p[2] + n[2] * lift];
                     target.positions.push(*p);
-                    target.normals.push(n);
+                    target.normals.push(corner_normals[q]);
                     target.uvs.push(corner_uvs[q]);
                     target.materials.push(b.material);
                     target.articles.push(a as u16);
@@ -1139,6 +1224,7 @@ mod tests {
             pages: Vec::new(),
             page_source: Vec::new(),
             driver_eye: [0.0; 3],
+            smoothing: [0; 2],
             driver_rot: [0.0; 3],
             centre_height: 0.0,
         }
@@ -1223,6 +1309,26 @@ width=8
         assert_eq!(paint[&4].colours[0], [255, 0, 0]);
         assert_eq!(paint.get(&9), None); // incomplete body colour
         assert!(parse_clr("").is_empty());
+        // most sections carry only H/S/V (their RGB lines are 0)
+        let hsv = parse_clr("[section2]
+color1.h=0
+color1.s=255
+color1.v=255
+color1.r=0
+color1.g=0
+color1.b=0
+");
+        assert_eq!(hsv[&2].colours[0], [255, 0, 0]);
+    }
+
+    #[test]
+    fn clr_hsv_matches_the_rgb_it_was_saved_with() {
+        // 914 section 1 and 993 section 4 store both forms
+        assert_eq!(hsv_to_rgb(51, 13, 255), [252, 255, 242]);
+        assert_eq!(hsv_to_rgb(0, 255, 255), [255, 0, 0]);
+        let teal = hsv_to_rgb(141, 255, 106);
+        assert!(teal[0] == 0 && teal[1].abs_diff(72) <= 2 && teal[2] == 106, "{teal:?}");
+        assert_eq!(hsv_to_rgb(25, 0, 255), [255, 255, 255]);
     }
 
     #[test]

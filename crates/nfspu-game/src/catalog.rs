@@ -274,14 +274,26 @@ pub struct Paint {
     pub body: [u8; 3],
 }
 
-/// Reads a `.clr` (plain `key=value` text, one `[sectionN]` per paint).
+/// Reads a `.clr` (plain `key=value` text, one `[sectionN]` per paint), in file order. The body
+/// colour is `color1.h/.s/.v` when present: most sections leave `color1.r/.g/.b` at 0 and only
+/// the H/S/V values are real (see `car_model::parse_clr`).
 pub fn parse_paints(text: &str) -> Vec<Paint> {
     let mut out: Vec<Paint> = Vec::new();
+    let mut hsv = [None::<u8>; 3];
     let mut active = false;
+    let finish = |out: &mut Vec<Paint>, hsv: &[Option<u8>; 3]| {
+        if let (Some(p), [Some(h), Some(s), Some(v)]) = (out.last_mut(), *hsv) {
+            p.body = crate::car_model::hsv_to_rgb(h, s, v);
+        }
+    };
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
+            if active {
+                finish(&mut out, &hsv);
+            }
             active = false;
+            hsv = [None; 3];
             let section = line.trim_matches(['[', ']']).to_ascii_lowercase();
             let Some(section) = section.strip_prefix("section").and_then(|n| n.parse().ok()) else { continue };
             out.push(Paint { section, body: [0; 3] });
@@ -292,12 +304,19 @@ pub fn parse_paints(text: &str) -> Vec<Paint> {
         let Some((k, v)) = line.split_once('=') else { continue };
         let Some(paint) = out.last_mut() else { continue };
         let Ok(v) = v.trim().parse::<u32>() else { continue };
+        let v = v.min(255) as u8;
         match k.trim() {
-            "color1.r" => paint.body[0] = v.min(255) as u8,
-            "color1.g" => paint.body[1] = v.min(255) as u8,
-            "color1.b" => paint.body[2] = v.min(255) as u8,
+            "color1.r" => paint.body[0] = v,
+            "color1.g" => paint.body[1] = v,
+            "color1.b" => paint.body[2] = v,
+            "color1.h" => hsv[0] = Some(v),
+            "color1.s" => hsv[1] = Some(v),
+            "color1.v" => hsv[2] = Some(v),
             _ => {}
         }
+    }
+    if active {
+        finish(&mut out, &hsv);
     }
     out
 }
@@ -436,5 +455,19 @@ mod tests {
     fn paints_read_the_body_colour_of_each_section() {
         let paints = parse_paints("[section1]\r\ncolor1.r=252\r\ncolor1.g=255\r\ncolor1.b=242\r\ncolor2.r=1\r\n\r\n[section2]\r\ncolor1.r=255\r\n");
         assert_eq!(paints, vec![Paint { section: 1, body: [252, 255, 242] }, Paint { section: 2, body: [255, 0, 0] }]);
+        // a section with H/S/V and zeroed RGB (most of them) takes its colour from H/S/V
+        let hsv = parse_paints("[section1]
+color1.h=51
+color1.s=13
+color1.v=255
+[section2]
+color1.h=0
+color1.s=255
+color1.v=255
+color1.r=0
+color1.g=0
+color1.b=0
+");
+        assert_eq!(hsv, vec![Paint { section: 1, body: [252, 255, 242] }, Paint { section: 2, body: [255, 0, 0] }]);
     }
 }
