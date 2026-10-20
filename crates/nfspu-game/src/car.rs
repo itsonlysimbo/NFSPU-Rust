@@ -3,7 +3,7 @@
 //! [`Car::rpm`], [`Car::gear`]). The model runs on the retail clock: [`Car::step`] adds up frame
 //! time and runs whole 64 Hz ticks (forces at 32 Hz). World units are metres.
 
-use crate::car_sim::{self, Aids, Body, CarSim, Contact, Controls, Spec, FALL_G, TICK_HZ};
+use crate::car_sim::{self, Aids, Body, CarSim, Contact, Controls, Spec, TICK_HZ};
 use crate::collision::WallSet;
 use crate::ground::Ground;
 use bevy::math::Vec3;
@@ -35,6 +35,11 @@ pub struct Car {
     pub hit_wall: bool,
     /// Strongest wall impact of the last step (m/s into the wall), 0 without one.
     pub impact: f32,
+    /// Speed into the road (m/s) at the most recent landing.
+    pub landing: f32,
+    /// The road is wet (set by the race from the weather). Grip drops unless the car is under
+    /// cover (retail: a surface more than 3.5 m above it).
+    pub wet: bool,
     /// The driving model.
     pub sim: CarSim,
     /// Collision box half sizes for car-against-car: length, width, height (m).
@@ -59,6 +64,15 @@ const FAR_RADIUS: f32 = 6.0;
 const FAR_DROP: f32 = 5.0;
 /// A surface may be this far above the car and still count as support (a step up).
 const STEP_UP: f32 = 1.0;
+/// The car counts as touching the road while its ballistic path is at most this far above it
+/// (retail: 5 mm).
+const AIR_GAP: f32 = 0.005;
+/// Landing: a car meeting the road faster than this (m/s, relative to the road's own vertical
+/// speed) bounces back up with this fraction of that speed (retail: asphalt's 0.7 x 0.4).
+const HARD_LANDING: f32 = 6.0;
+const BOUNCE: f32 = 0.7 * 0.4;
+/// A surface this far above the road counts as cover from the rain.
+const COVER_HEIGHT: f32 = 3.5;
 /// At most this much frame time is caught up in one step (a stalled frame does not fast-forward).
 const MAX_CATCH_UP: f32 = 0.25;
 
@@ -80,6 +94,8 @@ impl Car {
             on_ground: false,
             hit_wall: false,
             impact: 0.0,
+            landing: 0.0,
+            wet: false,
             sim: CarSim::new(spec, aids),
             half: [2.2, 0.9, 0.65],
             pending: 0.0,
@@ -88,7 +104,14 @@ impl Car {
 
     /// The same car (spec and aids) standing still at a spot.
     pub fn reset(&self, pos: Vec3, yaw: f32) -> Car {
-        Car { half: self.half, ..Car::with_spec(pos, yaw, self.sim.spec.clone(), self.sim.aids) }
+        Car { half: self.half, wet: self.wet, ..Car::with_spec(pos, yaw, self.sim.spec.clone(), self.sim.aids) }
+    }
+
+    /// Pitch and roll for drawing the body: the slope under the car plus the lean from braking,
+    /// power and cornering.
+    pub fn body_tilt(&self) -> (f32, f32) {
+        let (p, r) = self.sim.body_lean();
+        (self.pitch + p, self.roll + r)
     }
 
     /// Unit vector the car is facing (yaw 0 faces -Z).
@@ -146,7 +169,11 @@ impl Car {
         let dt = 1.0 / TICK_HZ;
         let (sp, cp) = self.pitch.sin_cos();
         let (sr, cr) = self.roll.sin_cos();
-        let contact = Contact { front_grounded: self.on_ground, rear_grounded: self.on_ground, forward_y: sp, right_y: sr, up_y: cp * cr };
+        let wet = self.wet && {
+            let base = self.pos.y - RIDE_HEIGHT;
+            ground.surface_near(self.pos.x, self.pos.z, 0.5, base + COVER_HEIGHT, base + 60.0).is_none()
+        };
+        let contact = Contact { front_grounded: self.on_ground, rear_grounded: self.on_ground, forward_y: sp, right_y: sr, up_y: cp * cr, wet };
         self.sim.tick(self.yaw, ctl, contact);
         self.yaw += self.sim.yaw_rate * dt;
         self.pos.x += self.sim.vel[0] * dt;
@@ -187,13 +214,30 @@ impl Car {
         // speed when the road drops away and only leaves a crest that falls faster than gravity
         // (retail's body carries its vertical speed the same way). Sudden steps (seams between
         // track pieces) are capped so they do not launch the car.
+        // Airborne, retail's gravity applies (stronger at speed through the rear downforce). A car
+        // landing hard bounces back up; otherwise it takes the road's vertical speed.
         let y0 = self.pos.y;
-        let vy_air = self.vy - FALL_G * dt;
+        let fall = self.sim.spec.fall_accel(self.sim.forward_speed(self.yaw), cp * cr);
+        let vy_air = self.vy - fall * dt;
         let y_air = y0 + vy_air * dt;
         match support {
-            Some(sy) if y_air <= sy + RIDE_HEIGHT + 0.05 => {
+            Some(sy) if y_air <= sy + RIDE_HEIGHT + AIR_GAP => {
                 let target = sy + RIDE_HEIGHT;
-                self.vy = ((target - y0) / dt).min(self.speed.abs() * 0.4 + 1.0);
+                let cap = self.speed.abs() * 0.4 + 1.0;
+                if self.on_ground {
+                    self.vy = ((target - y0) / dt).min(cap);
+                } else {
+                    // the road's own vertical speed under the car, from its slope along the path
+                    let (vx, vz) = (self.sim.vel[0], self.sim.vel[1]);
+                    let ahead = Vec3::new(self.pos.x + vx * 0.1, 0.0, self.pos.z + vz * 0.1);
+                    let road_vy = ground
+                        .surface_near(ahead.x, ahead.z, PROBE_RADIUS, sy - 2.0, sy + 2.0)
+                        .map_or(0.0, |ay| (ay - sy) / 0.1)
+                        .min(cap);
+                    let into = road_vy - vy_air;
+                    self.vy = if into > HARD_LANDING { road_vy + BOUNCE * into } else { road_vy };
+                    self.landing = into.max(0.0);
+                }
                 self.pos.y = target;
                 self.on_ground = true;
             }
@@ -413,5 +457,55 @@ mod tests {
         assert!(a.speed < 30.0 && b.speed > 10.0, "a {} b {}", a.speed, b.speed);
         b.pos.y += 5.0;
         assert!(collide_cars(&mut a, &mut b).is_none(), "different heights");
+    }
+
+    #[test]
+    fn falls_with_retail_gravity_and_bounces_on_a_hard_landing() {
+        let g = plane(0.0, 0.0);
+        let walls = WallSet::new(vec![], 4.0);
+        // standing still: g x 1.16
+        let mut car = Car::new(Vec3::new(0.0, 3.0, 0.0), 0.0);
+        car.step(Input::default(), 1.0 / 64.0, &g, &walls);
+        assert!((car.vy + 9.8 * 1.16 / 64.0).abs() < 1e-4, "vy {}", car.vy);
+        // fast and upright: the rear downforce pulls harder
+        assert!(car.sim.spec.fall_accel(40.0, 1.0) > car.sim.spec.fall_accel(4.0, 1.0));
+        assert_eq!(car.sim.spec.fall_accel(40.0, 0.0), car.sim.spec.fall_accel(4.0, 1.0));
+        // dropped from 3 m it lands at about 8 m/s and bounces back up
+        let mut bounced = false;
+        for _ in 0..64 {
+            car.step(Input::default(), 1.0 / 64.0, &g, &walls);
+            bounced |= car.on_ground && car.vy > 1.0;
+        }
+        assert!(car.landing > 6.0, "landing {}", car.landing);
+        assert!(bounced, "no bounce");
+        // a soft landing does not bounce
+        let mut car = Car::new(Vec3::new(0.0, 1.0, 0.0), 0.0);
+        for _ in 0..64 {
+            car.step(Input::default(), 1.0 / 64.0, &g, &walls);
+            assert!(car.vy < 0.5, "vy {}", car.vy);
+        }
+    }
+
+    #[test]
+    fn wet_road_grips_less_and_body_leans() {
+        let g = plane(0.0, 0.0);
+        let input = Input { throttle: true, steer: 1.0, ..Default::default() };
+        let mut dry = Car::new(Vec3::new(0.0, 0.45, 0.0), 0.0);
+        dry.set_speed(25.0);
+        let mut wet = dry.clone();
+        wet.wet = true;
+        run(&mut dry, input, 3.0, &g);
+        run(&mut wet, input, 3.0, &g);
+        let turned = |c: &Car| c.yaw.abs();
+        assert!(turned(&wet) != turned(&dry), "wet {} dry {}", turned(&wet), turned(&dry));
+        // braking dives the nose, a left turn rolls the right side down
+        let mut car = Car::new(Vec3::new(0.0, 0.45, 0.0), 0.0);
+        car.set_speed(30.0);
+        run(&mut car, Input { brake: true, ..Default::default() }, 0.5, &g);
+        assert!(car.sim.body_lean().0 < -0.01, "lean {:?}", car.sim.body_lean());
+        let mut car = Car::new(Vec3::new(0.0, 0.45, 0.0), 0.0);
+        car.set_speed(25.0);
+        run(&mut car, Input { steer: 1.0, ..Default::default() }, 1.0, &g);
+        assert!(car.sim.body_lean().1 < -0.01, "lean {:?}", car.sim.body_lean());
     }
 }

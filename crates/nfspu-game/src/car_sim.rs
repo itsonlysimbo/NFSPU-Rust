@@ -20,10 +20,28 @@ pub const TICK_HZ: f32 = 64.0;
 pub const FORCE_HZ: f32 = 32.0;
 /// Gravity used for wheel loads.
 pub const G: f32 = 9.8;
-/// Gravity while falling: retail scales g by 1.16.
-pub const FALL_G: f32 = 9.8 * 1.16;
+/// Gravity while airborne: retail scales g by 1.16 ...
+pub const FALL_G: f32 = G * 1.16;
+/// ... and adds a pull of 8 x the rear downforce setting per m/s of forward speed, while the car
+/// is upright and faster than 5 m/s (an intact rear wing; damage weakens it in retail, not here).
+const FALL_DOWNFORCE: f32 = 8.0;
+/// Rear-up component above which the car counts as upright for that pull (a guess).
+const FALL_UPRIGHT: f32 = 0.5;
 /// Yaw rate limit: 0.75 turns per second.
 pub const MAX_YAW_RATE: f32 = 0.75 * TAU;
+
+/// Body lean (retail's suspension pass, per force tick): the lengthways input takes 0.175 of the
+/// spring value under braking and 0.125 under power, the sideways one 0.25 of the damper value;
+/// both lag by 0.8 a tick. The lean settles at about 8 x the input as a height difference over
+/// the wheelbase or the track, within the suspension travel at each end. The directions are
+/// physical (retail's signs are not resolved) and the track width is a guess.
+const LEAN_DIVE: f32 = 0.175;
+const LEAN_SQUAT: f32 = 0.125;
+const LEAN_SIDE: f32 = 0.25;
+const LEAN_LAG: f32 = 0.8;
+const LEAN_LEVER: f32 = 8.0;
+const LEAN_TRAVEL: f32 = 0.1;
+const LEAN_TRACK: f32 = 1.5;
 
 /// Gear slots: 0 reverse, 1 neutral, 2.. first and up (as in the `.sim` ratio table).
 pub const REVERSE: usize = 0;
@@ -38,8 +56,6 @@ const YAW_LEVER: f32 = 3.2 / TAU;
 const YAW_STEP: f32 = TAU / (48.0 * 3.2);
 /// Tyre classes: how far grip drops once sliding (force falls by 1/k of the limit).
 const SLIDE_K: [f32; 3] = [8.0, 8.0, 6.0];
-/// Dry asphalt grip per tyre class (road, class 1, race).
-const ASPHALT: [f32; 3] = [1.0, 0.9, 1.1];
 /// Rpm added per force tick while blipping the throttle on a downshift, by target gear slot,
 /// with the brake released / pressed.
 const BLIP_OPEN: [f32; 8] = [0.0, 0.0, 250.0, 200.0, 175.0, 150.0, 125.0, 0.0];
@@ -130,6 +146,10 @@ pub struct Spec {
     pub toe: f32,
     pub brake_decel: f32,
     pub front_brake: f32,
+    /// Body lean per m/s^2 of lengthways and sideways acceleration (the `.sim` spring and damper
+    /// values, x 0.001).
+    pub lean_spring: f32,
+    pub lean_damper: f32,
     /// Extra wheel load per m/s of speed (m/s^2), per front and rear wheel.
     pub downforce_front: f32,
     pub downforce_rear: f32,
@@ -150,6 +170,13 @@ impl Spec {
         let i = ((rpm / TORQUE_STEP_RPM) as usize).min(TORQUE_POINTS - 2);
         let frac = (rpm - i as f32 * TORQUE_STEP_RPM) / TORQUE_STEP_RPM;
         self.torque[i] + (self.torque[i + 1] - self.torque[i]) * frac
+    }
+
+    /// Gravity while airborne (m/s^2), at a forward speed and the world-up part of the car's up
+    /// axis.
+    pub fn fall_accel(&self, v_fwd: f32, up_y: f32) -> f32 {
+        let pull = if v_fwd > 5.0 && up_y > FALL_UPRIGHT { FALL_DOWNFORCE * self.downforce_rear * v_fwd } else { 0.0 };
+        FALL_G + G * pull
     }
 
     /// The last forward gear slot.
@@ -205,6 +232,8 @@ impl Spec {
             front_brake: sim.front_brake_pct * 0.01,
             downforce_front: sim.downforce_front * 0.001,
             downforce_rear: sim.downforce_rear * 0.001,
+            lean_spring: sim.suspension[2] * 0.001,
+            lean_damper: sim.suspension[3] * 0.001,
             drag: 0.0,
             circumference,
             tyres: opts.tyres,
@@ -321,6 +350,8 @@ pub struct Contact {
     pub forward_y: f32,
     pub right_y: f32,
     pub up_y: f32,
+    /// A wet road (and the car not under cover): the wet grip table applies.
+    pub wet: bool,
 }
 
 impl Default for Contact {
@@ -331,6 +362,7 @@ impl Default for Contact {
             forward_y: 0.0,
             right_y: 0.0,
             up_y: 1.0,
+            wet: false,
         }
     }
 }
@@ -418,6 +450,8 @@ pub struct CarSim {
     steer_units: f32,
     /// Last force tick's body accelerations (right, forward), for weight transfer.
     accel: [f32; 2],
+    /// Lagged lean inputs (lengthways, sideways) behind the body's pitch and roll.
+    lean: [f32; 2],
     /// Effective pedals of the last force tick.
     throttle: f32,
     brake: f32,
@@ -485,6 +519,7 @@ impl CarSim {
             wheels: [Wheel::default(); 4],
             steer_units: 0.0,
             accel: [0.0; 2],
+            lean: [0.0; 2],
             throttle: 0.0,
             brake: 0.0,
             last_up: false,
@@ -493,6 +528,17 @@ impl CarSim {
             was_held: false,
             tick: 0,
         }
+    }
+
+    /// Body lean from the car's accelerations: (pitch, roll) in radians, nose up and right side
+    /// up positive. It dives under braking, squats under power and rolls to the outside of a
+    /// turn; it is for looks only and does not change the driving.
+    pub fn body_lean(&self) -> (f32, f32) {
+        let travel = 2.0 * LEAN_TRAVEL;
+        let pitch = (LEAN_LEVER * self.lean[0]).clamp(-travel, travel) / self.spec.wheelbase.max(1.0);
+        let side = LEAN_LEVER * (1.0 - 0.2 * self.throttle) * self.lean[1];
+        let roll = side.clamp(-travel, travel) / LEAN_TRACK;
+        (pitch.atan(), roll.atan())
     }
 
     /// Forward speed (m/s, negative reversing) for a heading.
@@ -758,6 +804,9 @@ impl CarSim {
             a_right += -19.6 * c.right_y;
         }
         self.accel = [a_right, a_fwd];
+        let dive = if a_fwd <= 0.0 { LEAN_DIVE } else { LEAN_SQUAT };
+        self.lean[0] = spec.lean_spring * a_fwd * dive + LEAN_LAG * self.lean[0];
+        self.lean[1] = spec.lean_damper * a_right * LEAN_SIDE + LEAN_LAG * self.lean[1];
         // a front force to the right turns the nose right (negative yaw), a rear one the other
         // way. The left/right difference of the lengthways forces counts with retail's sign: the
         // wheels that gain load (the outside ones) get more of the drive, and that turns the car
@@ -793,7 +842,7 @@ impl CarSim {
     /// Wheel loads from weight, the last tick's accelerations and downforce.
     fn update_loads(&mut self, spec: &Spec, c: Contact, v_fwd: f32, slip_ratio: f32, throttle: f32) {
         let weight = c.up_y * spec.grip * G;
-        let surface = ASPHALT[spec.tyres.index()];
+        let surface = crate::weather::asphalt_grip(spec.tyres.index(), c.wet);
         let front = surface * spec.front_weight * weight * 0.5;
         let rear = surface * (1.0 - spec.front_weight) * weight * 0.5;
         let mut loads = [front, front, rear, rear];

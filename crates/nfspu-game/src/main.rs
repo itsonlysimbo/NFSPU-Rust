@@ -1650,9 +1650,11 @@ fn drive_car(
     car: Option<ResMut<CarRes>>,
     console: Res<console::Console>,
     hold: Res<race_mode::RaceHold>,
+    weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
     mut bodies: Query<&mut Transform, With<CarBody>>,
 ) {
     let (Some(ground), Some(walls), Some(mut state)) = (ground, walls, car) else { return };
+    state.car.wet = weather.is_some_and(|w| w.track.wet);
     if console.open {
         return;
     }
@@ -1684,7 +1686,8 @@ fn drive_car(
     }
     for mut t in &mut bodies {
         t.translation = state.car.pos;
-        t.rotation = Quat::from_euler(EulerRot::YXZ, state.car.yaw, state.car.pitch, state.car.roll);
+        let (pitch, roll) = state.car.body_tilt();
+        t.rotation = Quat::from_euler(EulerRot::YXZ, state.car.yaw, pitch, roll);
     }
 }
 

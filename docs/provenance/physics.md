@@ -50,7 +50,7 @@ All little-endian, floats unless noted.
 | 0x10c, 0x110 | downforce front / rear | x 0.001: extra wheel load in m/s^2 per m/s of speed |
 | 0x114, 0x118 | suspension front / rear | percent; used by the tumbling (airborne/roll-over) code, not decoded |
 | 0x11c | transfer stiffness | divides weight transfer; also scales grip by (x + 9) / 10 at load |
-| 0x120..0x12c | suspension | x 0.001: ride height (overwritten by the setup screen), travel, spring, damper (not used by our model) |
+| 0x120..0x12c | suspension | x 0.001: ride height (overwritten by the setup screen), travel, spring, damper; spring and damper set the body lean (section 7b) |
 | 0x130 | lateral split | left/right weight-transfer split (1.0..1.1) |
 | 0x134..0x144 | five values | mostly 1.0; 0x140 is scaled by the AI-data loader (AI value) |
 
@@ -206,12 +206,44 @@ the box volume / 2 (the `.sim` mass is not used) and inertia 1/(6 m); the impuls
 perfectly inelastic one (x1.25 for hits of 80 and over); yaw kicks x1.5 (x3 for big hits); walls are
 re-checked between rounds. Ours: one round, planar, then the boxes are separated by mass.
 
+## 7b. Gravity, landings and body lean (verified, 32 Hz)
+
+The vertical pass runs once per force tick for the player (the level-of-detail tables give rate 32
+and one tick).
+
+- **Gravity** applies only while the body is more than 5 mm above the road: 9.8 m/s^2 times a
+  factor. The factor is 1.16, plus, while the car is upright and faster than 5 m/s,
+  8 x rear downforce (`.sim` 0x110 x 0.001) x forward speed x a wing-damage term (1 for an intact
+  car; damage is not modelled). With the usual rear downforce of 1.0-1.1 that is 1.16 at a crawl,
+  about 1.5 at 140 km/h and 1.7 at 220 km/h: a fast car comes down noticeably harder than g.
+- **On the road** the body takes the road's vertical speed (the change of the four wheels' average
+  contact height). When both the car and the road are moving up, the larger wins, so a car
+  leaving a ramp keeps its upward speed.
+- **Hard landing**: when the road comes up at the car more than 6 m/s faster than the car moves,
+  the car bounces: vertical speed = road speed + restitution x 0.4 x that difference. Restitution
+  comes from a per-surface table (asphalt 0.7), so on asphalt the bounce keeps 28% of the impact.
+- **Body lean**, per tick, from the last tick's accelerations: lengthways input = spring (0x128)
+  x acceleration x (0.175 braking, 0.125 under power) + 0.8 x last value; sideways input = damper
+  (0x12c) x sideways acceleration x 0.25 + 0.8 x last value. The pitch and roll rates add these to
+  the height differences of the wheels (/8), are clamped by the setup's shock rates and settle with
+  a 0.75 x 0.925 decay (pitch); the roll input is scaled by 1 - throttle / 1275 (throttle 0..255).
+  Each end is limited by the suspension travel (0.1 m). In steady state that is a lean of about
+  8 x the input as a height difference over the wheelbase (pitch) or the track (roll): about 5
+  degrees nose down under hard braking (the travel limit), 1-2 degrees of squat and up to about
+  7.5 degrees of roll at 1 g (again the travel limit).
+
+Ours: gravity, the 5 mm gap, the hard-landing bounce (asphalt restitution everywhere) and the lean
+inputs are retail's. The road speed under a landing car is taken from the road's slope along its
+path. The lean is drawn on the body only (it does not move weight or change grip; retail's lean
+feeds back into its suspension) and its directions are physical: retail's signs are **not
+resolved**, and the 1.5 m track width is a guess. The camera follows the road slope, not the lean.
+
 ## 8. Not in our model (yet)
 
-- Suspension and the full 3D body (pitch/roll dynamics, tumbling, jumps with angular motion):
-  retail runs a four-point suspension against the road slices; we keep the rigid ground follower and
-  only use retail's fall gravity (9.8 x 1.16).
-- Damage (all wear factors are 0), engine misfire, slipstream, surface types, rain, upgrade parts,
+- The four-point suspension against the road slices, tumbling and jumps with angular motion: we
+  keep the rigid ground follower with retail's gravity and landings (section 7b).
+- Damage (all wear factors are 0), engine misfire, slipstream, surface types other than asphalt,
+  upgrade parts,
   setup sliders, RALLY mode and the TINYCAR cheat.
 - Locked front wheels: retail does not turn their force back out of the wheel frame (it skips that
   step); ours does.
@@ -223,7 +255,8 @@ re-checked between rounds. Ours: one round, planar, then the boxes are separated
 | Outside a race the automatic puts first gear in when the throttle is pressed | retail only does it at the race start (tick 448) |
 | The wall swing-round (section 6) only for hits over 1 m/s | our walls are mesh faces; pressing into a corner of two of them locked the steering |
 | Walls are checked every 64 Hz tick with two axle circles | we have wall triangles, not retail's road-edge polygons |
-| The rigid ground follower carries vertical speed along the road, with sudden rises capped at 0.4 x speed + 1 m/s | stands in for retail's four-point suspension; without it the car flew off every crest |
+| The rigid ground follower carries vertical speed along the road, with sudden rises capped at 0.4 x speed + 1 m/s | stands in for retail's four-point suspension; the cap keeps seams between track pieces from launching the car |
+| Wet road: the wet asphalt grip row (weather tables) unless a surface is 3.5 m or more above the car | retail's rule; we probe our ground mesh for the cover |
 | Car against car: one impulse round, boxes separated by mass | retail re-checks walls up to four times |
 | Speed is the true ground speed | retail uses max + quarter of min of the x/z components |
 

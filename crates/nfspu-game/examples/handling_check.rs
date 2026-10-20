@@ -191,6 +191,64 @@ fn track_run(base: &Car, name: &str, seconds: f32) -> Option<(u32, u32, f32, Vec
     Some((spins, walls_hit, dist, notes))
 }
 
+/// A road along -Z whose height follows `h(distance)`, 60 m wide, in 1 m strips.
+fn profile_ground(h: impl Fn(f32) -> f32) -> Ground {
+    let mut t: Vec<Tri> = Vec::new();
+    let (a, b) = (-30.0f32, 30.0f32);
+    for i in -50..600 {
+        let (d0, d1) = (i as f32, i as f32 + 1.0);
+        let (z0, z1) = (-d0, -d1);
+        let (h0, h1) = (h(d0), h(d1));
+        t.push([[a, h0, z0], [b, h0, z0], [a, h1, z1]]);
+        t.push([[b, h0, z0], [b, h1, z1], [a, h1, z1]]);
+    }
+    Ground::new(t, 8.0)
+}
+
+/// Crest shapes: a gentle hill top, a sharp crest and a kicker (short ramp, then a 1.6 m drop).
+fn crest_height(kind: &str, d: f32) -> f32 {
+    let d = d - 100.0;
+    match kind {
+        "hill" => if d < 0.0 { 0.0 } else if d < 40.0 { d * 0.08 } else { 3.2 - (d - 40.0) * 0.08 },
+        "crest" => if d < 0.0 { 0.0 } else if d < 30.0 { d * 0.12 } else { 3.6 - (d - 30.0) * 0.18 },
+        _ => if (0.0..8.0).contains(&d) { d * 0.2 } else { 0.0 },
+    }
+}
+
+/// Drives over a crest at a speed: (airtime s, highest gap above the road m, worst landing speed
+/// into the road m/s, metres flown).
+fn crest_run(base: &Car, kind: &str, kmh: f32) -> (f32, f32, f32, f32) {
+    let ground = profile_ground(|d| crest_height(kind, d));
+    let walls = WallSet::new(vec![], 8.0);
+    let mut car = base.reset(Vec3::new(0.0, nfspu_game::car::RIDE_HEIGHT, 0.0), 0.0);
+    let target = kmh / 3.6;
+    car.set_speed(target);
+    let gear = car.sim.gear_for_speed(target, 0.75);
+    car.sim.put_in_gear(gear, target);
+    let dt = 1.0 / 64.0;
+    let (mut air, mut gap, mut land, mut flown) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let mut was_air = false;
+    for _ in 0..(8.0 * 64.0) as usize {
+        let input = Input { throttle: car.speed < target, ..Default::default() };
+        let before = car.pos;
+        car.step(input, dt, &ground, &walls);
+        let road = crest_height(kind, -car.pos.z) + nfspu_game::car::RIDE_HEIGHT;
+        if !car.on_ground {
+            air += dt;
+            flown += (car.pos - before).length();
+            gap = gap.max(car.pos.y - road);
+        } else if was_air {
+            land = land.max(car.landing);
+        }
+        if !car.on_ground {
+            land = land.max(0.0);
+        }
+        was_air = !car.on_ground;
+        let _ = before;
+    }
+    (air, gap, land, flown)
+}
+
 fn main() {
     let game = PathBuf::from(env::var("NFSPU_GAME_DIR").expect("set NFSPU_GAME_DIR"));
     let cars = car_load::catalogue(&game);
@@ -233,6 +291,12 @@ fn main() {
                     r.max_yaw,
                     if r.spun { "SPIN" } else if r.slid { "slide" } else { "ok" }
                 );
+            }
+        }
+        for kind in ["hill", "crest", "kicker"] {
+            for kmh in [100.0, 150.0] {
+                let (air, gap, land, flown) = crest_run(&base, kind, kmh);
+                let _ = writeln!(out, "   {kind:<6} {kmh:>3.0} km/h: airborne {air:.2} s over {flown:.1} m, highest {gap:.2} m above the road, landing {land:.1} m/s");
             }
         }
         if env::var_os("HANDLING_FLAT_ONLY").is_none() {

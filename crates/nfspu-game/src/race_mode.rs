@@ -335,6 +335,7 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
         let r = &mut run.racers[i];
         let input = r.brain.think(&r.car, &view, &near, &mut run.rng);
         r.car.sim.held = held; // on the grid the brake is held on until GO (retail)
+        r.car.wet = player.wet;
         let before = r.car.pos;
         r.car.step(input, dt, ground, walls);
         r.steer = input.steer;
@@ -382,7 +383,8 @@ fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform,
     for r in &run.racers {
         if let Ok((mut t, mut b)) = bodies.get_mut(r.body) {
             t.translation = r.car.pos;
-            t.rotation = Quat::from_euler(EulerRot::YXZ, r.car.yaw, r.car.pitch, r.car.roll);
+            let (pitch, roll) = r.car.body_tilt();
+            t.rotation = Quat::from_euler(EulerRot::YXZ, r.car.yaw, pitch, roll);
             *b = AiBody { speed: r.car.speed, steer: r.steer, braking: r.braking };
         }
     }
