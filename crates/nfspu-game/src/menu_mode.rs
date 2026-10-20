@@ -798,14 +798,16 @@ fn present(
     }
     let p = pointer(window);
     // The hover sound plays when the pointer moves onto another control that does something.
-    let hovered = state.hit_at(p.x, p.y);
+    let hovered = state.hit_at(p.x, p.y).filter(|h| *h != Hit::Inert);
+    // Over an open list nothing under it shows a tip.
+    let over_list = matches!(state.hit_at(p.x, p.y), Some(Hit::Inert | Hit::ComboPick(..) | Hit::ComboScroll(..)));
     if hovered.is_some() && hovered != state.last_hover {
         sounds.play(SOUND_HOVER, &mut commands, &mut audio);
     }
     state.last_hover = hovered;
     let state = &mut *state;
     // Help tip for the control under the pointer on the topmost interactive layer, drawn above all.
-    let help = state.layers.iter().zip(&state.interactive).enumerate().rev().filter(|(_, (_, on))| **on).find_map(|(i, (s, _))| nfspu_game::menu_help::at(&s.help, [p.x, p.y]).map(|h| (i, h)));
+    let help = if over_list { None } else { state.layers.iter().zip(&state.interactive).enumerate().rev().filter(|(_, (_, on))| **on).find_map(|(i, (s, _))| nfspu_game::menu_help::at(&s.help, [p.x, p.y]).map(|h| (i, h))) };
     let tip = state.help.update(help, [p.x, p.y], time.delta_secs() * 1000.0, menu_canvas::Art::font(&mut state.art, nfspu_game::menu_help::FONT));
     state.dirty |= tip != state.tip;
     state.tip = tip;
@@ -873,11 +875,14 @@ fn click(
 
     let action = if back { Some(Hit::Back) } else { state.hit_at(pointer.x, pointer.y) };
     // An open dropdown closes on any click that is not on it (the click then acts as usual).
-    if state.session.open_combo.is_some() && !matches!(action, Some(Hit::ComboToggle(_)) | Some(Hit::ComboPick(..)) | Some(Hit::ComboScroll(..))) {
+    if state.session.open_combo.is_some() && !matches!(action, Some(Hit::ComboToggle(_)) | Some(Hit::ComboPick(..)) | Some(Hit::ComboScroll(..)) | Some(Hit::Inert)) {
         sounds.play(SOUND_CLOSE, &mut commands, &mut audio);
         state.slide_combo(false);
     }
     let Some(action) = action else { return };
+    if action == Hit::Inert {
+        return;
+    }
     let from = state.popup.as_ref().unwrap_or(&state.page).name.clone();
     match action {
         Hit::Goto(name) => {
@@ -975,6 +980,7 @@ fn click(
             }
             state.reload();
         }
+        Hit::Inert => return,
         Hit::Select(row) => {
             if state.profiles.selected == Some(row) {
                 return;

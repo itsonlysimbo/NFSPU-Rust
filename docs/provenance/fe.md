@@ -522,3 +522,22 @@ the capture, for checks without a human at the window. `NFSPU_MENU_PICK=zMergedL
 * How a `.lay` screen is *navigated*: `destination=` names a screen, but the transition, the
   modal/oval screen variants and the `Screen*Oval` family need the retail build to compare
   against.
+
+### Dropdown input interception (2026-10-20 resume)
+The user reported clicks reaching controls behind an open list. Claude's preserved menu
+worktree patch adds an inert target after the list's rows and arrows, so headers, borders
+and scrollbar gaps consume clicks without choosing a value. While the pointer is over a
+list, underlying hover sounds, help tips and hover artwork are suppressed. This follows
+the reported interaction requirement; exact retail transition animation is not established.
+
+Review found that filtering hidden draws before numbering the hover cache could reuse a
+key for a different control. The resumed patch numbers all flattened draws first; a new
+regression covers moving from a button into a list row. Runtime behaviour is **not tested**
+until the restricted-environment build succeeds and the menu is playtested.
+
+During the opening/closing slide, the inert target now follows only the revealed list
+body. A regression places a clickable control behind it and checks that the visible
+portion absorbs the click while the unrevealed portion still reaches that control.
+Build environment: the configured external sccache executable was denied; validation
+uses `cargo --config logs/build_without_cache.toml` with an empty rustc wrapper.
+This configuration lives only in ignored logs; system configuration is unchanged.

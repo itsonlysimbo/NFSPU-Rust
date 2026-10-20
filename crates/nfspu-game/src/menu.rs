@@ -74,6 +74,9 @@ pub enum Hit {
     ComboScroll(String, i32),
     /// A named script hook from a control's `callback=` (`PLAYGAME`, `TRACK1INC`, ...).
     Callback(String),
+    /// Inside an open dropdown list but on nothing choosable (a section title, the scroll bar's
+    /// track, the edge): the click is used up, so nothing under the list reacts.
+    Inert,
 }
 
 /// One row of a dropdown list: a centred section title, or a choosable item with an optional
@@ -703,6 +706,12 @@ fn append_control_with(
                 let pieces = combo_list(&choice, [x, y + h, list_w, max_h], scroll, &accessor, &font, reveal >= 1.0, game_dir, &mut screen.top);
                 let full = list_height(&choice.rows).min(max_h);
                 let shown = [x, y + h, list_w + 4.0, (full + 5.0) * reveal];
+                // Only the revealed body catches input while sliding; rows/arrows added
+                // above take precedence once the list is fully open.
+                screen.top.push(Draw::Target {
+                    rect: [x, y + h, list_w, full.min(shown[3])],
+                    hit: Hit::Inert,
+                });
                 screen.top.push(Draw::Clipped { rect: shown, draws: pieces });
             }
             if !disabled && items > 0 {
@@ -1904,8 +1913,10 @@ mod tests {
         let sliding = Context { combo_reveal: 0.5, ..open };
         let mut half = Screen::default();
         assert!(append_control_with(&mut half, &b, &template, &locale, 0, &sliding));
+        half.draw.push(Draw::Target { rect: [243.0, 224.0, 152.0, 60.0], hit: Hit::Callback("BEHIND".into()) });
         lift_top(&mut half);
-        assert_eq!(half.hit_at(250.0, 226.0), None);
+        assert_eq!(half.hit_at(250.0, 226.0), Some(Hit::Inert), "visible rows consume clicks while sliding");
+        assert_eq!(half.hit_at(250.0, 254.0), Some(Hit::Callback("BEHIND".into())), "the unrevealed area does not intercept input");
     }
 
     /// What `load_screen_with` does once every control is placed.
@@ -1930,7 +1941,8 @@ mod tests {
         assert!(append_control_with(&mut screen, &b, &template, &Locale::default(), 0, &context));
         lift_top(&mut screen);
         // List top 65; the header is 13 tall, so item 0 starts at 78.
-        assert_eq!(screen.hit_at(160.0, 70.0), None, "a header takes no click");
+        assert_eq!(screen.hit_at(160.0, 70.0), Some(Hit::Inert), "a header is not choosable, but the click stops there");
+        assert_eq!(screen.hit_at(152.0 + 262.0 - 6.0, 140.0), Some(Hit::Inert), "so does the scroll bar's track");
         assert_eq!(screen.hit_at(160.0, 80.0), Some(Hit::ComboPick("zMergedList.Car".into(), 0)));
         assert_eq!(screen.hit_at(160.0, 94.0), Some(Hit::ComboPick("zMergedList.Car".into(), 1)));
         assert_eq!(screen.hit_at(152.0 + 262.0 - 6.0, 70.0), Some(Hit::ComboScroll("zMergedList.Car".into(), -1)));

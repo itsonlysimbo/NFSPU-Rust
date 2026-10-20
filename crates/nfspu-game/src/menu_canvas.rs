@@ -262,12 +262,32 @@ fn stencil_mask(stencil: &[Draw], art: &mut dyn Art) -> Option<Vec<bool>> {
 /// bevel); `pointer` is in layout units.
 pub fn compose(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>, clear: [f32; 4], art: &mut dyn Art) -> Canvas {
     let mut canvas = Canvas::new(640, 480, clear);
-    for (screen, live) in layers {
-        for draw in screen.draw.iter().rev() {
-            draw_one(&mut canvas, draw, *live, pointer, art);
+    let owner = list_under(layers, pointer);
+    for (l, (screen, live)) in layers.iter().enumerate() {
+        for (i, draw) in screen.draw.iter().enumerate().rev() {
+            draw_one(&mut canvas, draw, *live, seen_pointer(owner, l, i, pointer), art);
         }
     }
     canvas
+}
+
+/// The open dropdown list under the pointer, as (layer, draw index) of its clipped group: the
+/// topmost live layer's clipped group containing the pointer.
+fn list_under(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>) -> Option<(usize, usize)> {
+    let p = pointer?;
+    layers.iter().enumerate().rev().filter(|(_, (_, live))| *live).find_map(|(l, (screen, _))| {
+        screen.draw.iter().position(|d| matches!(d, Draw::Clipped { rect, .. } if inside(*rect, p))).map(|i| (l, i))
+    })
+}
+
+/// The pointer as one draw sees it: while it is over an open list, everything in that layer and
+/// below except the list itself is treated as not under the pointer (no hover look through the
+/// list; layers above stay as they are).
+fn seen_pointer(owner: Option<(usize, usize)>, layer: usize, index: usize, pointer: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    match owner {
+        Some((ol, oi)) if layer < ol || (layer == ol && index != oi) => None,
+        _ => pointer,
+    }
 }
 
 /// Paints one draw command.
@@ -344,16 +364,29 @@ fn draw_one(canvas: &mut Canvas, draw: &Draw, live: bool, pointer: Option<[f32; 
 pub fn hover_key(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>) -> Vec<(usize, usize)> {
     let Some(p) = pointer else { return Vec::new() };
     let mut key = Vec::new();
+    let owner = list_under(layers, pointer);
     for (l, (screen, live)) in layers.iter().enumerate() {
         if !live {
             continue;
         }
-        // Pieces inside clipped groups count too (an open dropdown's rows).
-        let flat: Vec<&Draw> = screen.draw.iter().flat_map(|d| match d {
-            Draw::Clipped { draws, .. } => draws.iter().collect::<Vec<_>>(),
-            other => vec![other],
-        }).collect();
-        for (i, draw) in flat.into_iter().enumerate() {
+        // Pieces inside clipped groups count too (an open dropdown's rows); under an open list
+        // only the list's own pieces do.
+        // Keep each flattened draw's identity even when pointer ownership hides it.
+        // Filtering before enumeration can give a different control the same cache key.
+        let flat: Vec<(bool, &Draw)> = screen
+            .draw
+            .iter()
+            .enumerate()
+            .flat_map(|(i, d)| {
+                let visible = seen_pointer(owner, l, i, pointer).is_some();
+                match d {
+                    Draw::Clipped { draws, .. } => draws.iter().map(|d| (visible, d)).collect::<Vec<_>>(),
+                    other => vec![(visible, other)],
+                }
+            })
+            .collect();
+        for (i, (visible, draw)) in flat.into_iter().enumerate() {
+            if !visible { continue; }
             let rect = match draw {
                 Draw::Quad { rect, hover: Some(_), .. } => Some(*rect),
                 Draw::Gradient { when: Show::Idle(r) | Show::Hover(r), .. } => Some(*r),
@@ -475,6 +508,34 @@ mod tests {
         assert_eq!(pixel(&c, 0, 0), [255, 0, 0, 255], "left edge shows the frame's red");
         assert_eq!(pixel(&c, 1, 1), [0, 0, 0, 255], "outside the stencil stays clear");
         assert_eq!(pixel(&c, 3, 0), [0, 0, 255, 255], "stencil rectangle shows the frame's blue");
+    }
+
+    /// Under an open dropdown list nothing else lights up (playtest 2026-10-20).
+    #[test]
+    fn an_open_list_hides_hover_underneath() {
+        let red = [1.0, 0.0, 0.0, 1.0];
+        let yellow = [1.0, 1.0, 0.0, 1.0];
+        let button = Draw::Quad { rect: [0.0, 0.0, 20.0, 20.0], colour: red, hover: Some(yellow), link: None, back: false };
+        // A list (topmost, first) covering the button's right half, with a hoverable row.
+        let list = Draw::Clipped { rect: [10.0, 0.0, 10.0, 20.0], draws: vec![Draw::Quad { rect: [10.0, 0.0, 10.0, 5.0], colour: red, hover: Some(yellow), link: None, back: false }] };
+        let screen = Screen { draw: vec![list, button], ..Default::default() };
+        let left = compose(&[(&screen, true)], Some([5.0, 10.0]), [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&left, 5, 10), [255, 255, 0, 255], "the button lights up beside the list");
+        let under = compose(&[(&screen, true)], Some([15.0, 10.0]), [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&under, 5, 10), [255, 0, 0, 255], "but not through the list");
+        let row = compose(&[(&screen, true)], Some([15.0, 2.0]), [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&row, 15, 2), [255, 255, 0, 255], "the list's own row does");
+        assert_eq!(hover_key(&[(&screen, true)], Some([15.0, 10.0])), Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn entering_a_list_changes_the_hover_cache_key() {
+        let button = Draw::Quad { rect: [0.0, 0.0, 10.0, 10.0], colour: [1.0; 4], hover: Some([0.5; 4]), link: None, back: false };
+        let row = Draw::Quad { rect: [10.0, 0.0, 10.0, 10.0], colour: [1.0; 4], hover: Some([0.5; 4]), link: None, back: false };
+        let list = Draw::Clipped { rect: [10.0, 0.0, 10.0, 10.0], draws: vec![row] };
+        let screen = Screen { draw: vec![button, list], ..Default::default() };
+        let layers = [(&screen, true)];
+        assert_ne!(hover_key(&layers, Some([5.0, 5.0])), hover_key(&layers, Some([15.0, 5.0])), "moving from a button to a list row must redraw the canvas");
     }
 
     #[test]
