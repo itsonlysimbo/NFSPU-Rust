@@ -43,6 +43,88 @@ pub enum Draw {
     /// shown only where the `stencil` pieces (rectangles and pictures) cover; an empty stencil
     /// shows the whole rectangle.
     Movie { rect: Rect, source: String, stencil: Vec<Draw> },
+    /// An animated icon (`NFS5.BOTTOMBARBUTTON`): frames of `file`, from `idle`, from `hover` while
+    /// the pointer is over `rect`, or from `down` while it is also pressed; otherwise as `Picture`.
+    Anim { file: String, idle: Frames, hover: Frames, down: Frames, rect: Rect, pos: [f32; 2], flip: u8, alpha: f32 },
+}
+
+/// A looping run of archive frames (`startframe`, `endframe`, `totalticks` in the layouts, and
+/// the `hover...` and `hovermousedown...` sets). Retail's animating button shows
+/// `start + elapsed * (end - start) / ticks` and restarts once `ticks` have passed (the bottom
+/// bar's buttons have no delay between loops); a set with 0 ticks holds its first frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Frames {
+    pub start: usize,
+    pub end: usize,
+    /// Length of one run in 1/128 s ticks of the front-end clock.
+    pub ticks: u32,
+}
+
+impl Frames {
+    /// The frame shown `clock` ticks into the front end.
+    pub fn at(&self, clock: u32) -> usize {
+        if self.ticks == 0 || self.end <= self.start {
+            return self.start;
+        }
+        let elapsed = (clock % (self.ticks + 1)) as usize;
+        self.start + elapsed * (self.end - self.start) / self.ticks as usize
+    }
+}
+
+/// How a control comes on and goes off when its screen changes (`transon=` / `transoff=`):
+/// bit set of `TRANS_LEFT` .. `TRANS_FADE`.
+pub const TRANS_SAME: u8 = 1;
+pub const TRANS_LEFT: u8 = 2;
+pub const TRANS_RIGHT: u8 = 4;
+pub const TRANS_TOP: u8 = 8;
+pub const TRANS_BOTTOM: u8 = 16;
+pub const TRANS_FADE: u8 = 32;
+
+/// One `transon` / `transoff` word as retail reads it (case ignored): `same`, `left`, `right`,
+/// `top`, `bottom`, `fade`; anything else is no movement.
+pub fn trans_flag(word: &str) -> u8 {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "same" => TRANS_SAME,
+        "left" => TRANS_LEFT,
+        "right" => TRANS_RIGHT,
+        "top" => TRANS_TOP,
+        "bottom" => TRANS_BOTTOM,
+        "fade" => TRANS_FADE,
+        _ => 0,
+    }
+}
+
+/// A control's (on, off) transitions: `SAME` on one side copies the other side; both `SAME`
+/// means none (retail's control set-up does exactly this).
+pub fn transitions(on: &str, off: &str) -> (u8, u8) {
+    let (on, off) = (trans_flag(on), trans_flag(off));
+    match (on & TRANS_SAME != 0, off & TRANS_SAME != 0) {
+        (true, true) => (0, 0),
+        (true, false) => (off, off),
+        (false, true) => (on, on),
+        (false, false) => (on, off),
+    }
+}
+
+/// Where a transitioning control is drawn: shifted by a full screen width (left/right) or height
+/// (top/bottom) times `away` (0 in place, 1 fully off), and faded to `1 - away` (fade). Retail:
+/// offset `640 * p / 512`, alpha `255 - 255 * p / 512` with `p` the menu's 0..512 progress.
+pub fn trans_offset(flags: u8, away: f32) -> ([f32; 2], f32) {
+    let mut shift = [0.0, 0.0];
+    if flags & TRANS_LEFT != 0 {
+        shift[0] -= 640.0 * away;
+    }
+    if flags & TRANS_RIGHT != 0 {
+        shift[0] += 640.0 * away;
+    }
+    if flags & TRANS_TOP != 0 {
+        shift[1] -= 480.0 * away;
+    }
+    if flags & TRANS_BOTTOM != 0 {
+        shift[1] += 480.0 * away;
+    }
+    let alpha = if flags & TRANS_FADE != 0 { 1.0 - away } else { 1.0 };
+    (shift, alpha)
 }
 
 /// When a draw command is visible, for pieces that change with the pointer.
@@ -74,6 +156,9 @@ pub enum Hit {
     ComboScroll(String, i32),
     /// A named script hook from a control's `callback=` (`PLAYGAME`, `TRACK1INC`, ...).
     Callback(String),
+    /// Inside an open dropdown list but on nothing choosable (a section title, the scroll bar's
+    /// track, the edge): the click is used up, so nothing under the list reacts.
+    Inert,
 }
 
 /// One row of a dropdown list: a centred section title, or a choosable item with an optional
@@ -127,6 +212,19 @@ pub struct Screen {
     /// Draws that go above every section (an open dropdown's list), topmost first; moved to the
     /// front of `draw` once the screen is built.
     pub top: Vec<Draw>,
+    /// Each control's draws as `(first, end)` indices into `draw` with its (on, off)
+    /// transitions; the open list (`top`) does not move.
+    pub trans: Vec<(usize, usize, u8, u8)>,
+    /// A screen change in progress for this layer: (going off, how far away 0..=1). Set by the
+    /// viewer on the copy it draws.
+    pub moving: Option<(bool, f32)>,
+}
+
+impl Screen {
+    /// The (on, off) transitions of the control that owns draw `index`.
+    pub fn trans_of(&self, index: usize) -> (u8, u8) {
+        self.trans.iter().find(|(a, b, _, _)| index >= *a && index < *b).map(|(_, _, on, off)| (*on, *off)).unwrap_or((0, 0))
+    }
 }
 
 /// The layout file a frame id names: `ID_MOVIEOVAL` is `screenmovieoval.lay`, and `ID_SCREEN` is
@@ -381,6 +479,10 @@ pub fn load_screen_with(
         if !append_control_with(&mut screen, block, template, locale, language, &context) {
             screen.skipped.push(id.to_string());
         }
+        let (on, off) = transitions(block.get("transon").unwrap_or(""), block.get("transoff").unwrap_or(""));
+        if on | off != 0 && screen.draw.len() > drawn {
+            screen.trans.push((drawn, screen.draw.len(), on, off));
+        }
         // Retail shows help only for enabled controls.
         if let Some(help) = crate::menu_help::target(block, &screen.draw[drawn..], locale, language).filter(|_| !disabled) {
             screen.help.push(help);
@@ -396,7 +498,12 @@ pub fn load_screen_with(
         }
     }
     let top = std::mem::take(&mut screen.top);
+    let lifted = top.len();
     screen.draw.splice(0..0, top);
+    for t in &mut screen.trans {
+        t.0 += lifted;
+        t.1 += lifted;
+    }
     Some(screen)
 }
 
@@ -611,12 +718,38 @@ fn append_control_with(
                 // RACE (`PLAYGAME`), the location arrows (`TRACK1INC`, ...), options.
                 screen.draw.push(Draw::Target { rect: [left, posy, total, height], hit: Hit::Callback(callback.clone()) });
             }
+            let area = [left, posy, total, height];
             if let Some(text) = text {
-                screen.draw.push(Draw::Text { text, pos: [left + pic_w + space, posy + 8.0], size, colour: label_colour, font });
+                let label = |colour| Draw::Text { text: text.clone(), pos: [left + pic_w + space, posy + 8.0], size, colour, font: font.clone() };
+                if off {
+                    screen.draw.push(label(label_colour));
+                } else {
+                    // The label turns `hoverlabel` yellow (0xffffbb00, `BottomBarButton.ctr`) under
+                    // the pointer.
+                    let yellow = data.get("hoverlabel").and_then(|c| eval_colour(c, &data)).unwrap_or([1.0, 0.733, 0.0, 1.0]);
+                    screen.draw.push(Draw::Shown { when: Show::Hover(area), draw: Box::new(label(yellow)) });
+                    screen.draw.push(Draw::Shown { when: Show::Idle(area), draw: Box::new(label(label_colour)) });
+                }
             }
             if let Some(file) = file {
                 let flip = number("flip").unwrap_or(0.0).max(0.0) as u8;
-                screen.draw.push(Draw::Picture { file, index: frame, pos: [left, posy + number("picoffy").unwrap_or(0.0)], flip, alpha: icon_alpha });
+                let pos = [left, posy + number("picoffy").unwrap_or(0.0)];
+                // The icon animates like retail's animating button: the idle frames loop, the
+                // hover frames while the pointer is over it, the mouse-down frames while it is
+                // pressed (with `seperatehovermousedown=1`; otherwise the hover set). A grey button
+                // holds its first frame.
+                let set = |prefix: &str| Frames {
+                    start: number(&format!("{prefix}startframe")).unwrap_or(frame as f32).max(0.0) as usize,
+                    end: number(&format!("{prefix}endframe")).unwrap_or(frame as f32).max(0.0) as usize,
+                    ticks: number(&format!("{prefix}totalticks")).unwrap_or(0.0).max(0.0) as u32,
+                };
+                let (idle, hover) = (set(""), set("hover"));
+                let down = if number("seperatehovermousedown").unwrap_or(0.0) as i32 == 1 { set("hovermousedown") } else { hover };
+                if off {
+                    screen.draw.push(Draw::Picture { file, index: frame, pos, flip, alpha: icon_alpha });
+                } else {
+                    screen.draw.push(Draw::Anim { file, idle, hover, down, rect: area, pos, flip, alpha: icon_alpha });
+                }
             }
             true
         }
@@ -1215,6 +1348,9 @@ fn combo_list(choice: &Choice, area: Rect, scroll: usize, accessor: &str, font: 
         pieces.push(quad([sx - 1.0, top, 1.0, height], black));
     }
     pieces.extend(button_shadow([x, top, w, height], 4.0, 4.0));
+    // The whole list catches the pointer, after its rows and arrows (which take the click first):
+    // nothing under an open list can be clicked (playtest 2026-10-20: clicks went through).
+    targets.push(Draw::Target { rect: [x, top, w, height], hit: Hit::Inert });
     pieces
 }
 
@@ -1900,12 +2036,12 @@ mod tests {
         let clipped: Vec<&Draw> = screen.draw.iter().filter_map(|d| if let Draw::Clipped { draws, .. } = d { Some(draws.iter()) } else { None }).flatten().collect();
         let rows = clipped.iter().filter(|d| matches!(d, Draw::Shown { .. })).count();
         assert_eq!(rows, 6, "each of three rows has a hover and an idle text, inside the sliding clip");
-        // Half-way through the slide the rows are painted but not clickable yet.
+        // Half-way through the slide the rows are painted but not choosable yet (the list still catches the click).
         let sliding = Context { combo_reveal: 0.5, ..open };
         let mut half = Screen::default();
         assert!(append_control_with(&mut half, &b, &template, &locale, 0, &sliding));
         lift_top(&mut half);
-        assert_eq!(half.hit_at(250.0, 226.0), None);
+        assert_eq!(half.hit_at(250.0, 226.0), Some(Hit::Inert), "the list already covers the page");
     }
 
     /// What `load_screen_with` does once every control is placed.
@@ -1930,7 +2066,8 @@ mod tests {
         assert!(append_control_with(&mut screen, &b, &template, &Locale::default(), 0, &context));
         lift_top(&mut screen);
         // List top 65; the header is 13 tall, so item 0 starts at 78.
-        assert_eq!(screen.hit_at(160.0, 70.0), None, "a header takes no click");
+        assert_eq!(screen.hit_at(160.0, 70.0), Some(Hit::Inert), "a header is not choosable, but the click stops there");
+        assert_eq!(screen.hit_at(152.0 + 262.0 - 6.0, 140.0), Some(Hit::Inert), "so does the scroll bar's track");
         assert_eq!(screen.hit_at(160.0, 80.0), Some(Hit::ComboPick("zMergedList.Car".into(), 0)));
         assert_eq!(screen.hit_at(160.0, 94.0), Some(Hit::ComboPick("zMergedList.Car".into(), 1)));
         assert_eq!(screen.hit_at(152.0 + 262.0 - 6.0, 70.0), Some(Hit::ComboScroll("zMergedList.Car".into(), -1)));
@@ -1965,7 +2102,7 @@ mod tests {
         let mut screen = Screen::default();
         assert!(append_control(&mut screen, &arrow, &template, &Locale::default(), 0));
         assert_eq!(screen.hit_at(505.0, 270.0), Some(Hit::Callback("TRACK1INC".into())));
-        assert!(screen.draw.iter().any(|d| matches!(d, Draw::Picture { flip: 1, .. })));
+        assert!(screen.draw.iter().any(|d| matches!(d, Draw::Anim { flip: 1, .. })));
     }
 
     /// One of two controls at the same place is hidden by name; watches and the logo read the
@@ -2028,7 +2165,38 @@ mod tests {
         let text_w = 4.0 * 6.5 * 17.0 / 11.0;
         let left = 635.0 - (20.0 + 4.0 + text_w);
         assert_eq!(screen.hit_at(634.0, 460.0), Some(Hit::Quit));
-        assert!(screen.draw.contains(&Draw::Picture { file: "backbutton.fsh".into(), index: 32, pos: [left, 458.0], flip: 0, alpha: 1.0 }));
+        assert!(screen.draw.iter().any(|d| matches!(d, Draw::Anim { file, idle, pos, .. } if file == "backbutton.fsh" && idle.start == 32 && *pos == [left, 458.0])));
+    }
+
+    /// `bottombar.lay`'s exit button: idle frame 32, hover 32..51 over 128 ticks, mouse-down 52;
+    /// the label turns yellow under the pointer.
+    #[test]
+    fn bottom_bar_icons_animate_and_labels_light_up() {
+        let template = ControlTemplate { id: "NFS5.BOTTOMBARBUTTON".into(), description: String::new(), parts: vec![], states: vec![], blocks: vec![] };
+        let locale = Locale::parse_csv("String ID,ENGLISH_IDS\n10500,exit\n");
+        let b = block(&[
+            ("id", "NFS5.BOTTOMBARBUTTON"), ("stringID", "10500"), ("callback", "QUIT"), ("posx", "635"), ("posy", "452"), ("align", "1"), ("shapePathName", "backbutton.fsh"),
+            ("seperatehovermousedown", "1"), ("startframe", "32"), ("endframe", "32"), ("totalticks", "0"), ("hoverstartframe", "32"), ("hoverendframe", "51"), ("hovertotalticks", "128"),
+            ("hovermousedownstartframe", "52"), ("hovermousedownendframe", "52"), ("hovermousedowntotalticks", "0"),
+        ]);
+        let mut screen = Screen::default();
+        assert!(append_control(&mut screen, &b, &template, &locale, 0));
+        let anim = screen.draw.iter().find_map(|d| if let Draw::Anim { idle, hover, down, .. } = d { Some((*idle, *hover, *down)) } else { None }).expect("an animated icon");
+        assert_eq!(anim, (Frames { start: 32, end: 32, ticks: 0 }, Frames { start: 32, end: 51, ticks: 128 }, Frames { start: 52, end: 52, ticks: 0 }));
+        let labels: Vec<Show> = screen.draw.iter().filter_map(|d| if let Draw::Shown { when, draw } = d { matches!(**draw, Draw::Text { .. }).then_some(*when) } else { None }).collect();
+        assert!(matches!(labels[..], [Show::Hover(_), Show::Idle(_)]), "yellow label under the pointer, white otherwise");
+    }
+
+    /// `transon=` / `transoff=` words, and `SAME` taking the other side's.
+    #[test]
+    fn transition_words_follow_retail() {
+        assert_eq!(transitions("LEFT", "SAME"), (TRANS_LEFT, TRANS_LEFT));
+        assert_eq!(transitions("SAME", "FADE"), (TRANS_FADE, TRANS_FADE));
+        assert_eq!(transitions("SAME", "SAME"), (0, 0));
+        assert_eq!(transitions("RIGHT", "top"), (TRANS_RIGHT, TRANS_TOP));
+        assert_eq!(transitions("", "nonsense"), (0, 0));
+        assert_eq!(trans_offset(TRANS_LEFT, 0.5), ([-320.0, 0.0], 1.0));
+        assert_eq!(trans_offset(TRANS_BOTTOM | TRANS_FADE, 0.25), ([0.0, 120.0], 0.75));
     }
 
     /// `selectname.lay`'s list outline: 152x102, black, 1 unit.

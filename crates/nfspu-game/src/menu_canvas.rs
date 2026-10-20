@@ -20,6 +20,11 @@ pub struct Canvas {
     pub rgba: Vec<u8>,
     /// While set, only pixels marked true are drawn (a movie's oval stencil).
     mask: Option<Vec<bool>>,
+    /// A control in a screen transition: drawn moved by `shift` pixels with its opacity scaled
+    /// by `fade` (the mask is tested where the pixel would be without the move, so clipped and
+    /// stencilled pieces move with their control).
+    shift: (i32, i32),
+    fade: f32,
 }
 
 /// Where the compositor gets images and fonts. `ArtCache` reads them from the game folder.
@@ -35,6 +40,11 @@ pub trait Art {
     fn overlay(&mut self, _source: &str, _rect: Rect) -> Vec<Draw> {
         Vec::new()
     }
+    /// The front-end clock in 1/128 s ticks and whether the mouse button is held (animated
+    /// bottom-bar icons).
+    fn clock(&self) -> (u32, bool) {
+        (0, false)
+    }
 }
 
 /// Decoded front-end art and fonts, loaded on first use and kept (a miss is remembered too, and
@@ -49,11 +59,14 @@ pub struct ArtCache {
     progress: Option<crate::menu_movie::CareerProgress>,
     /// Messages about art or fonts that could not be loaded, for the caller to log.
     pub misses: Vec<String>,
+    /// The front-end clock (1/128 s ticks) and the mouse button, set by the viewer each frame.
+    pub ticks: u32,
+    pub pressed: bool,
 }
 
 impl ArtCache {
     pub fn new(game_dir: PathBuf) -> ArtCache {
-        ArtCache { game_dir, shapes: HashMap::new(), fonts: HashMap::new(), movies: HashMap::new(), overlays: HashMap::new(), progress: None, misses: Vec::new() }
+        ArtCache { game_dir, shapes: HashMap::new(), fonts: HashMap::new(), movies: HashMap::new(), overlays: HashMap::new(), progress: None, misses: Vec::new(), ticks: 0, pressed: false }
     }
 
     /// Sets the selected player's progress; a change restarts the movies with the new playlist.
@@ -126,6 +139,10 @@ impl Art for ArtCache {
         let overlay = self.overlays.entry(source.to_string()).or_insert_with(|| crate::menu_movie::Overlay::new(rect, 0x5EED));
         overlay.draws(&fonts)
     }
+
+    fn clock(&self) -> (u32, bool) {
+        (self.ticks, self.pressed)
+    }
 }
 
 fn byte(v: f32) -> u8 {
@@ -141,7 +158,7 @@ impl Canvas {
     /// page with a 3D room behind it: the room shows wherever nothing is drawn).
     pub fn new(width: u32, height: u32, clear: [f32; 4]) -> Canvas {
         let px = [byte(clear[0]), byte(clear[1]), byte(clear[2]), if clear[3] <= 0.0 { 0 } else { 255 }];
-        Canvas { width, height, rgba: px.repeat((width * height) as usize), mask: None }
+        Canvas { width, height, rgba: px.repeat((width * height) as usize), mask: None, shift: (0, 0), fade: 1.0 }
     }
 
     /// Blends one pixel: `src * a + dst * (1 - a)` on the stored (gamma-encoded) values. Over a
@@ -157,7 +174,12 @@ impl Canvas {
                 return;
             }
         }
-        let at = index * 4;
+        let (x, y) = (x + self.shift.0, y + self.shift.1);
+        let alpha = alpha * self.fade;
+        if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height || alpha <= 0.0 {
+            return;
+        }
+        let at = (y as u32 * self.width + x as u32) as usize * 4;
         let a = alpha.min(1.0);
         let below = self.rgba[at + 3] as f32 / 255.0;
         let out = a + below * (1.0 - a);
@@ -262,12 +284,55 @@ fn stencil_mask(stencil: &[Draw], art: &mut dyn Art) -> Option<Vec<bool>> {
 /// bevel); `pointer` is in layout units.
 pub fn compose(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>, clear: [f32; 4], art: &mut dyn Art) -> Canvas {
     let mut canvas = Canvas::new(640, 480, clear);
-    for (screen, live) in layers {
-        for draw in screen.draw.iter().rev() {
-            draw_one(&mut canvas, draw, *live, pointer, art);
+    let owner = list_under(layers, pointer);
+    for (l, (screen, live)) in layers.iter().enumerate() {
+        for (i, draw) in screen.draw.iter().enumerate().rev() {
+            // A layer changing screens: each control moves and fades by its own transition.
+            if let Some((going_off, away)) = screen.moving {
+                let (on, off) = screen.trans_of(i);
+                let (shift, fade) = crate::menu::trans_offset(if going_off { off } else { on }, away);
+                canvas.shift = (shift[0].round() as i32, shift[1].round() as i32);
+                canvas.fade = fade;
+            }
+            draw_one(&mut canvas, draw, *live, seen_pointer(owner, l, i, pointer), art);
+            canvas.shift = (0, 0);
+            canvas.fade = 1.0;
         }
     }
     canvas
+}
+
+/// The frame every animated icon shows now, for deciding when to recompose.
+pub fn anim_frames(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>, clock: (u32, bool)) -> Vec<usize> {
+    layers.iter().flat_map(|(screen, live)| screen.draw.iter().filter_map(move |d| anim_frame(d, *live, pointer, clock))).collect()
+}
+
+/// The frame an animated icon shows: the mouse-down set while pressed over it, the hover set
+/// while over it, the idle set otherwise.
+fn anim_frame(draw: &Draw, live: bool, pointer: Option<[f32; 2]>, (ticks, pressed): (u32, bool)) -> Option<usize> {
+    let Draw::Anim { idle, hover, down, rect, .. } = draw else { return None };
+    let over = live && pointer.map(|p| inside(*rect, p)).unwrap_or(false);
+    let set = if over && pressed { down } else if over { hover } else { idle };
+    Some(set.at(ticks))
+}
+
+/// The open dropdown list under the pointer, as (layer, draw index) of its clipped group: the
+/// topmost live layer's clipped group containing the pointer.
+fn list_under(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>) -> Option<(usize, usize)> {
+    let p = pointer?;
+    layers.iter().enumerate().rev().filter(|(_, (_, live))| *live).find_map(|(l, (screen, _))| {
+        screen.draw.iter().position(|d| matches!(d, Draw::Clipped { rect, .. } if inside(*rect, p))).map(|i| (l, i))
+    })
+}
+
+/// The pointer as one draw sees it: while it is over an open list, everything in that layer and
+/// below except the list itself is treated as not under the pointer (no hover look through the
+/// list; layers above stay as they are).
+fn seen_pointer(owner: Option<(usize, usize)>, layer: usize, index: usize, pointer: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    match owner {
+        Some((ol, oi)) if layer < ol || (layer == ol && index != oi) => None,
+        _ => pointer,
+    }
 }
 
 /// Paints one draw command.
@@ -300,6 +365,12 @@ fn draw_one(canvas: &mut Canvas, draw: &Draw, live: bool, pointer: Option<[f32; 
         }
         Draw::Picture { file, index, pos, flip, alpha } => {
             let Some(shape) = art.shape(file, *index) else { return };
+            canvas.draw_image(pos[0].round() as i32, pos[1].round() as i32, shape.width, shape.height, &shape.rgba, *flip, *alpha);
+        }
+        Draw::Anim { file, pos, flip, alpha, .. } => {
+            let clock = art.clock();
+            let Some(index) = anim_frame(draw, live, pointer, clock) else { return };
+            let Some(shape) = art.shape(file, index) else { return };
             canvas.draw_image(pos[0].round() as i32, pos[1].round() as i32, shape.width, shape.height, &shape.rgba, *flip, *alpha);
         }
         Draw::Target { .. } => {}
@@ -344,15 +415,23 @@ fn draw_one(canvas: &mut Canvas, draw: &Draw, live: bool, pointer: Option<[f32; 
 pub fn hover_key(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>) -> Vec<(usize, usize)> {
     let Some(p) = pointer else { return Vec::new() };
     let mut key = Vec::new();
+    let owner = list_under(layers, pointer);
     for (l, (screen, live)) in layers.iter().enumerate() {
         if !live {
             continue;
         }
-        // Pieces inside clipped groups count too (an open dropdown's rows).
-        let flat: Vec<&Draw> = screen.draw.iter().flat_map(|d| match d {
-            Draw::Clipped { draws, .. } => draws.iter().collect::<Vec<_>>(),
-            other => vec![other],
-        }).collect();
+        // Pieces inside clipped groups count too (an open dropdown's rows); under an open list
+        // only the list's own pieces do.
+        let flat: Vec<&Draw> = screen
+            .draw
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| seen_pointer(owner, l, *i, pointer).is_some())
+            .flat_map(|(_, d)| match d {
+                Draw::Clipped { draws, .. } => draws.iter().collect::<Vec<_>>(),
+                other => vec![other],
+            })
+            .collect();
         for (i, draw) in flat.into_iter().enumerate() {
             let rect = match draw {
                 Draw::Quad { rect, hover: Some(_), .. } => Some(*rect),
@@ -475,6 +554,67 @@ mod tests {
         assert_eq!(pixel(&c, 0, 0), [255, 0, 0, 255], "left edge shows the frame's red");
         assert_eq!(pixel(&c, 1, 1), [0, 0, 0, 255], "outside the stencil stays clear");
         assert_eq!(pixel(&c, 3, 0), [0, 0, 255, 255], "stencil rectangle shows the frame's blue");
+    }
+
+    /// Under an open dropdown list nothing else lights up (playtest 2026-10-20).
+    #[test]
+    fn an_open_list_hides_hover_underneath() {
+        let red = [1.0, 0.0, 0.0, 1.0];
+        let yellow = [1.0, 1.0, 0.0, 1.0];
+        let button = Draw::Quad { rect: [0.0, 0.0, 20.0, 20.0], colour: red, hover: Some(yellow), link: None, back: false };
+        // A list (topmost, first) covering the button's right half, with a hoverable row.
+        let list = Draw::Clipped { rect: [10.0, 0.0, 10.0, 20.0], draws: vec![Draw::Quad { rect: [10.0, 0.0, 10.0, 5.0], colour: red, hover: Some(yellow), link: None, back: false }] };
+        let screen = Screen { draw: vec![list, button], ..Default::default() };
+        let left = compose(&[(&screen, true)], Some([5.0, 10.0]), [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&left, 5, 10), [255, 255, 0, 255], "the button lights up beside the list");
+        let under = compose(&[(&screen, true)], Some([15.0, 10.0]), [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&under, 5, 10), [255, 0, 0, 255], "but not through the list");
+        let row = compose(&[(&screen, true)], Some([15.0, 2.0]), [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&row, 15, 2), [255, 255, 0, 255], "the list's own row does");
+        assert_eq!(hover_key(&[(&screen, true)], Some([15.0, 10.0])), Vec::<(usize, usize)>::new());
+    }
+
+    /// A control going off to the left with `fade` too: moved by 640 * away and faded.
+    #[test]
+    fn a_transition_moves_and_fades_each_control() {
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let mut screen = Screen {
+            draw: vec![
+                Draw::Quad { rect: [0.0, 0.0, 2.0, 1.0], colour: white, hover: None, link: None, back: false },
+                Draw::Quad { rect: [4.0, 0.0, 2.0, 1.0], colour: white, hover: None, link: None, back: false },
+            ],
+            trans: vec![(0, 1, crate::menu::TRANS_LEFT, crate::menu::TRANS_RIGHT), (1, 2, crate::menu::TRANS_FADE, crate::menu::TRANS_FADE)],
+            ..Default::default()
+        };
+        // Coming on, 1/320 of the way out: the left control is 2 pixels left of its place, the
+        // fading one at full strength minus 1/320.
+        screen.moving = Some((false, 2.0 / 640.0));
+        let c = compose(&[(&screen, false)], None, [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&c, 0, 0)[0], 0, "moved off its place");
+        assert_eq!(pixel(&c, 1, 0)[0], 0);
+        assert_eq!(pixel(&c, 4, 0)[0], 254, "nearly opaque");
+        // Going off, half way: the first control (off = right) is 320 to the right, the other half
+        // faded.
+        screen.moving = Some((true, 0.5));
+        let c = compose(&[(&screen, false)], None, [0.0, 0.0, 0.0, 1.0], &mut NoArt);
+        assert_eq!(pixel(&c, 320, 0)[0], 255);
+        assert_eq!(pixel(&c, 0, 0)[0], 0);
+        assert_eq!(pixel(&c, 4, 0)[0], 128);
+    }
+
+    /// The RACE icon: idle frames 0..29 over 128 ticks, hover 30..59 over 64.
+    #[test]
+    fn animated_icons_pick_their_frame_set() {
+        let f = |start, end, ticks| crate::menu::Frames { start, end, ticks };
+        let icon = Draw::Anim { file: "racebutton.fsh".into(), idle: f(0, 29, 128), hover: f(30, 59, 64), down: f(30, 59, 64), rect: [330.0, 456.0, 20.0, 24.0], pos: [330.0, 456.0], flip: 0, alpha: 1.0 };
+        let screen = Screen { draw: vec![icon], ..Default::default() };
+        let layers = [(&screen, true)];
+        assert_eq!(anim_frames(&layers, None, (0, false)), vec![0]);
+        assert_eq!(anim_frames(&layers, None, (64, false)), vec![14], "half way through the idle run");
+        assert_eq!(anim_frames(&layers, Some([335.0, 460.0]), (32, false)), vec![44], "hover set, half way");
+        assert_eq!(anim_frames(&layers, Some([335.0, 460.0]), (64, true)), vec![59]);
+        assert_eq!(anim_frames(&layers, Some([335.0, 460.0]), (65, true)), vec![30], "and round again");
+        assert_eq!(f(11, 11, 0).at(500), 11, "a held frame");
     }
 
     #[test]
