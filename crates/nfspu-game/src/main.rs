@@ -936,7 +936,10 @@ fn setup(
         DespawnOnExit(flow::AppState::Race),
     ));
     let root = commands.spawn((Transform::from_translation(g.start_pos), Visibility::default(), CarBody, DespawnOnExit(flow::AppState::Race))).id();
-    let options = CarOptions { style: car_style.0, driver: car_driver.0, paint: car_paint.0, ..Default::default() };
+    // the menu's custom body colour, when the race is the menu's choice for this car
+    let body = quick.0.as_ref().filter(|q| q.car_model.eq_ignore_ascii_case(&car_name.0)).and_then(|q| q.custom_colour);
+    let options = CarOptions { style: car_style.0, driver: car_driver.0, paint: car_paint.0, body, ..Default::default() };
+    log_line(&format!("race car '{}': paint section {}, custom body colour {:?}", car_name.0, car_paint.0, body));
     let (model, style_count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, root, &car_name.0, &options);
     commands.insert_resource(CarModelEntity { root, model, style_count });
 }

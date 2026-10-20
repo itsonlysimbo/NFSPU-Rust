@@ -1,6 +1,7 @@
-//! Opt-in car captures for checking the car models by eye: `NFSPU_CAR_CAPTURE=993,959/2,boxster`
-//! loads each car (an optional `/style` picks the body style), takes a screenshot from the chase,
-//! cockpit and four orbit views, saves them as `logs/car_<name>_s<style>_<view>.png` and exits.
+//! Opt-in car captures for checking the car models by eye: `NFSPU_CAR_CAPTURE=993,959/2,914/1/7`
+//! loads each car (an optional `/style` picks the body style, a further `/N` the `.clr` paint
+//! section or `/#rrggbb` a custom body colour), takes a screenshot from the chase, cockpit and four
+//! orbit views, saves them as `logs/car_<name>_s<style>[_p<paint>]_<view>.png` and exits.
 //! Normal play is unaffected when the variable is not set.
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
@@ -15,9 +16,38 @@ const VIEWS: [(&str, u8, [f32; 3]); 6] = [
     ("top", 2, [0.9, 1.0, 5.5]),
 ];
 
+/// One car to capture: model, body style, and paint (a section, or a custom colour), if given.
+#[derive(Clone, Debug, PartialEq)]
+struct Entry {
+    car: String,
+    style: usize,
+    paint: Option<usize>,
+    body: Option<[u8; 3]>,
+    /// File-name tag for the paint (`_p7`, `_p0080ff`), empty without one.
+    tag: String,
+}
+
+fn parse_entry(text: &str) -> Entry {
+    let mut parts = text.trim().split('/');
+    let car = parts.next().unwrap_or_default().to_string();
+    let style = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let (mut paint, mut body, mut tag) = (None, None, String::new());
+    if let Some(p) = parts.next() {
+        if let Some(hex) = p.strip_prefix('#').filter(|h| h.len() == 6) {
+            let v = u32::from_str_radix(hex, 16).unwrap_or(0);
+            body = Some([(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+            tag = format!("_p{}", hex.to_ascii_lowercase());
+        } else if let Ok(n) = p.parse() {
+            paint = Some(n);
+            tag = format!("_p{n}");
+        }
+    }
+    Entry { car, style, paint, body, tag }
+}
+
 #[derive(Resource, Default)]
 pub struct CarProbe {
-    cars: Vec<(String, usize)>,
+    cars: Vec<Entry>,
     car: usize,
     view: usize,
     frames: u32,
@@ -33,10 +63,7 @@ impl CarProbe {
             .map(|v| {
                 v.split(',')
                     .filter(|s| !s.trim().is_empty())
-                    .map(|s| match s.trim().split_once('/') {
-                        Some((n, st)) => (n.to_string(), st.parse().unwrap_or(1)),
-                        None => (s.trim().to_string(), 1),
-                    })
+                    .map(parse_entry)
                     .collect()
             })
             .unwrap_or_default();
@@ -71,12 +98,13 @@ pub fn update(
         exit.write(AppExit::Success);
         return;
     }
-    let (car, car_style) = probe.cars[probe.car].clone();
+    let entry = probe.cars[probe.car].clone();
+    let (car, car_style) = (entry.car.clone(), entry.style);
     if !probe.loaded {
         commands.entity(holder.model).despawn();
         name.0 = car.clone();
         style.0 = car_style;
-        let options = car_model_options(car_style, driver.0, paint.0);
+        let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, ..Default::default() };
         let (model, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car, &options);
         holder.model = model;
         holder.style_count = count;
@@ -101,7 +129,7 @@ pub fn update(
         return;
     }
     let safe: String = car.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-    let path = super::log_path().parent().unwrap().join(format!("car_{safe}_s{car_style}_{view_name}.png"));
+    let path = super::log_path().parent().unwrap().join(format!("car_{safe}_s{car_style}{}_{view_name}.png", entry.tag));
     probe.waiting = true;
     commands.spawn(Screenshot::primary_window()).observe(move |captured: On<ScreenshotCaptured>, mut probe: ResMut<CarProbe>| {
         let result = captured.image.clone().try_into_dynamic().map_err(|e| e.to_string()).and_then(|image| image.to_rgb8().save(&path).map_err(|e| e.to_string()));
@@ -118,6 +146,15 @@ pub fn update(
     });
 }
 
-fn car_model_options(style: usize, driver: u8, paint: usize) -> nfspu_game::car_model::CarOptions {
-    nfspu_game::car_model::CarOptions { style, driver, paint, ..Default::default() }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entries_name_style_and_paint() {
+        assert_eq!(parse_entry("993"), Entry { car: "993".into(), style: 1, paint: None, body: None, tag: String::new() });
+        assert_eq!(parse_entry("914/1/7").paint, Some(7));
+        let custom = parse_entry("914/2/#0080FF");
+        assert_eq!((custom.style, custom.body, custom.tag.as_str()), (2, Some([0, 128, 255]), "_p0080ff"));
+    }
 }

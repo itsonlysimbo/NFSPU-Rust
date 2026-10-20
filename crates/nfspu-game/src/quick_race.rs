@@ -92,6 +92,20 @@ pub struct QuickRace {
     pub damage: usize,
 }
 
+/// The custom colours offered after the model's own paints (not in retail): twelve hues at three
+/// strengths, then six greys from white to black. Picking one keeps the model's first paint scheme
+/// for stripes and cabin and replaces only its body colour.
+pub fn custom_palette() -> Vec<[u8; 3]> {
+    let mut out = Vec::new();
+    for v in [255u8, 176, 96] {
+        for hue in 0..12u32 {
+            out.push(crate::car_model::hsv_to_rgb((hue * 255 / 12) as u8, 255, v));
+        }
+    }
+    out.extend([255u8, 204, 153, 102, 51, 0].map(|g| [g, g, g]));
+    out
+}
+
 /// A save value clamped to a list length (0 when absent).
 fn saved(save: Option<&[u8]>, name: &str, len: usize, default: usize) -> usize {
     save.and_then(|s| crate::menu::save_value(s, name)).map(|v| v as usize).unwrap_or(default).min(len.saturating_sub(1))
@@ -187,7 +201,12 @@ impl QuickRace {
                 self.colour = pos;
             }
         }
-        self.colour = self.colour.min(self.paints.len().saturating_sub(1));
+        self.colour = self.colour.min((self.paints.len() + custom_palette().len()).saturating_sub(1));
+    }
+
+    /// The custom body colour picked from the palette after the model's paints, if any.
+    pub fn custom_colour(&self) -> Option<[u8; 3]> {
+        self.colour.checked_sub(self.paints.len()).and_then(|i| custom_palette().get(i).copied())
     }
 
     pub fn chosen_track(&self) -> Option<&Track> {
@@ -273,9 +292,13 @@ impl QuickRace {
         let closed = self.chosen_car().map(|(i, _)| self.cars[i].short.clone()).unwrap_or_default();
         out.insert(CAR.to_string(), Choice { rows, selected: self.car, closed, closed_swatch: None });
 
-        // Paint: one swatch per `.clr` section.
-        let rows = self.paints.iter().map(|p| Row::Item { lead: None, text: String::new(), swatch: Some(p.body), divider: false }).collect();
-        out.insert(COLOUR.to_string(), Choice { rows, selected: self.colour, closed: String::new(), closed_swatch: self.paints.get(self.colour).map(|p| p.body) });
+        // Paint: one swatch per `.clr` section, then the custom palette under its own title.
+        let swatch = |rgb: [u8; 3]| Row::Item { lead: None, text: String::new(), swatch: Some(rgb), divider: false };
+        let mut rows: Vec<Row> = self.paints.iter().map(|p| swatch(p.body)).collect();
+        rows.push(Row::Header("CUSTOM".into()));
+        rows.extend(custom_palette().into_iter().map(swatch));
+        let closed_swatch = self.custom_colour().or_else(|| self.paints.get(self.colour).map(|p| p.body));
+        out.insert(COLOUR.to_string(), Choice { rows, selected: self.colour, closed: String::new(), closed_swatch });
 
         // Location: the full name in the list, the short name when closed.
         let rows = self.track_list.iter().map(|i| Row::item(s(self.tracks[*i].name_string))).collect();
@@ -331,8 +354,7 @@ impl QuickRace {
     pub fn car_look(&self) -> Option<(String, usize, usize)> {
         let (i, _) = self.chosen_car()?;
         let car = &self.cars[i];
-        let paint = self.paints.get(self.colour).map(|p| p.section).unwrap_or(crate::car_model::CarOptions::default().paint);
-        Some((car.model.clone(), paint, car.style.max(1)))
+        Some((car.model.clone(), self.paint_section_or(crate::car_model::CarOptions::default().paint), car.style.max(1)))
     }
 
     /// The chosen car's logo (`NFS5.CarLogo`): archive file and logo number (two entries each).
@@ -349,7 +371,13 @@ impl QuickRace {
 
     /// Renderer paint identifier (`[sectionN]`), distinct from the colour dropdown's file-order index.
     pub fn paint_section(&self) -> usize {
-        self.paints.get(self.colour).map_or(4, |p| p.section)
+        self.paint_section_or(4)
+    }
+
+    /// The chosen `.clr` section; a custom colour uses the model's first section underneath.
+    fn paint_section_or(&self, default: usize) -> usize {
+        let at = if self.custom_colour().is_some() { 0 } else { self.colour };
+        self.paints.get(at).map_or(default, |p| p.section)
     }
 
     /// The race these choices make.
@@ -381,6 +409,7 @@ impl QuickRace {
             owned_car: owned,
             paint: self.colour.min(255) as u8,
             paint_section,
+            custom_colour: self.custom_colour(),
             car_style,
             automatic: self.transmission == 1,
             abs: self.abs == 1,
@@ -467,6 +496,26 @@ mod tests {
         assert_eq!(s.opponents, 7);
         assert_eq!(s.opponent_cars, OpponentCars::Car { id: 108, model: "356b".into() });
         assert!(s.automatic && s.damage && s.roof_up && !s.abs);
+    }
+
+    #[test]
+    fn the_palette_after_the_paints_is_a_custom_colour() {
+        let mut q = sample();
+        q.paints = catalog::parse_paints("[section1]
+color1.r=252
+[section5]
+color1.r=100
+");
+        q.paints_for = q.chosen_car().map(|(i, _)| q.cars[i].model.clone()).unwrap_or_default();
+        q.colour = 1;
+        assert_eq!(q.custom_colour(), None);
+        assert_eq!(q.paint_section(), 5);
+        q.colour = 2; // the first palette swatch: pure red
+        assert_eq!(q.custom_colour(), Some([255, 0, 0]));
+        assert_eq!(q.paint_section(), 1, "stripes and cabin come from the first scheme");
+        q.pick(COLOUR, 2 + custom_palette().len() + 10);
+        assert_eq!(q.custom_colour(), Some([0, 0, 0]), "clamped to the last swatch (black)");
+        assert_eq!(custom_palette().len(), 42);
     }
 
     #[test]

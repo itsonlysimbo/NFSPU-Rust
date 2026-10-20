@@ -191,3 +191,11 @@ window *the game* (choosing track, car and race), and M9 needs that flow to exis
 largest single piece (path following, personalities, catch-up, traffic). Each milestone keeps the
 project's rule: parse and audit the data first, keep guesses labelled, draw last.
 
+
+## Resume playtest fixes (2026-10-20)
+Finish the preserved dropdown interception patch first: headers and scrollbar gaps must consume
+clicks, and list hover must suppress underlying controls. Check that hover cache identities stay
+stable when the pointer enters/leaves a list, add regressions, then run library tests and build
+the game binary in debug with -j 2. Keep the source worktree intact and leave changes uncommitted.
+Remaining handoff work: transitions/hover animations, smooth car shading/full custom paints,
+flare occlusion, and physics tuning. Retail visual/handling parity requires playtesting.

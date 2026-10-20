@@ -59,6 +59,10 @@ fn main() {
                     corners[0], corners[1], corners[2], corners[3], colours[0][3], colours[1][3], colours[2][3], colours[3][3],
                 )),
                 Draw::Picture { file, index, pos, flip, .. } => say(format!("  pic   [{:>5.1},{:>5.1}] {file} #{index} flip {flip}", pos[0], pos[1])),
+                Draw::Anim { file, idle, hover, down, pos, .. } => say(format!(
+                    "  anim  [{:>5.1},{:>5.1}] {file} idle {}..{}/{} hover {}..{}/{} down {}..{}/{}",
+                    pos[0], pos[1], idle.start, idle.end, idle.ticks, hover.start, hover.end, hover.ticks, down.start, down.end, down.ticks,
+                )),
                 Draw::Movie { rect, source, stencil } => say(format!("  movie [{:>5.1},{:>5.1} {:>5.1}x{:<5.1}] {source} ({} stencil pieces)", rect[0], rect[1], rect[2], rect[3], stencil.len())),
                 Draw::Shown { when, .. } => say(format!("  shown {when:?}")),
                 Draw::Clipped { draws, .. } => say(format!("  clipped group of {}", draws.len())),
