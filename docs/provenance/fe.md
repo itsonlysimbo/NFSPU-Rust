@@ -514,6 +514,61 @@ the race in memory: the same program moves on to the loading screen (`docs/DESIG
 program for menu and race"). `NFSPU_MENU_PLAY=1` with `NFSPU_MENU_CAPTURE=1` presses RACE after
 the capture, for checks without a human at the window. `NFSPU_MENU_PICK=zMergedList.Car=5;Track1.Track=2` makes choices before the first frame.
 
+### Screen transitions (`transon` / `transoff`, 2026-10-20)
+From the retail executable (Ghidra, read-only; described, not copied):
+- **Words**: each control reads `data.transon` and `data.transoff` into a bit set: `same` 1,
+  `left` 2, `right` 4, `top` 8, `bottom` 16, `fade` 32 (case ignored; anything else 0). `SAME` on
+  one side takes the other side's value; both `SAME` means no transition.
+- **Per menu**: every menu (page, popup, bottom bar) has a phase (0 gone, 1 coming on, 2 shown,
+  3 going off) and a progress 0..512. Starting either way first waits 3 frames, then the
+  progress runs from the start time on the 128 Hz front-end clock: `p = elapsed * 512 / (rate / 2)`,
+  so a full run is 64 ticks = **0.5 s**. Coming on shows `512 - p` (down to 0, then "shown");
+  going off shows `p` (up to 512, then "gone").
+- **Per control**: while its menu is coming on it uses `transon`, while going off `transoff`
+  (a control in a sub-menu follows its parent menu's phase). Left/right move it by
+  `640 * progress / 512`, top/bottom by `480 * progress / 512`; `fade` sets its alpha to
+  `255 - 255 * progress / 512`. A global switch (`FEFADESENABLED` area) can turn all of this off.
+- **Order** (retail recording 2026-10-16 and the code): the old screen's controls go off, then
+  the new screen's come on (singleplayer → quick race: the ring buttons slide off sideways, then
+  the quick-race buttons slide in).
+
+Ours (`menu.rs` `transitions`/`trans_offset`, `menu_canvas::compose`, `menu_mode` `Transition`):
+- Each control's draw range keeps its (on, off) bits. On a screen change, layers whose screen is
+  gone go off (drawn from the picture before the change), then new layers come on; a page that
+  stays under a new popup, and the bottom bar, do not move. The front end also comes on at start.
+- Input waits while a change runs (no clicks, no hover). `NFSPU_MENU_NOTRANS=1` turns it off.
+- **Not modelled**: the room behind (the 3D garage) does not fade; the fade through black seen
+  between single player and quick race in the recording is not traced; per-menu timing
+  differences beyond the shared 0.5 s.
+
+### Bottom-bar hover animation (`NFS5.BOTTOMBARBUTTON`, 2026-10-20)
+The animating-button class reads three frame sets from the layout: idle (`startframe`,
+`endframe`, `totalticks`), hover (`hover...`) and mouse-down (`hovermousedown...`, used when
+`seperatehovermousedown=1`), each with `mindelay`/`maxdelay`. It shows the mouse-down set while
+pressed over the button, the hover set while over it, else the idle set: frame
+`start + elapsed * (end - start) / ticks`, restarting after `ticks` (all bottom-bar delays are 0,
+so the runs loop without a pause). The run timer is shared by the three sets, so a hover run does
+not start from its first frame.
+
+| Button | Idle | Hover | Mouse down |
+|---|---|---|---|
+| back (`backbutton.fsh`) | 0 | 0..9 in 64 ticks | 10 |
+| options | 11 | 11..30 in 128 ticks | 31 |
+| RACE (`racebutton.fsh`) | 0..29 in 128 ticks (always moving) | 30..59 in 64 ticks | 30..59 in 64 ticks |
+| exit | 32 | 32..51 in 128 ticks | 52 |
+
+- The label turns `hoverlabel` yellow (0xffffbb00) under the pointer.
+- Ours runs every icon on one front-end clock (so runs are in step); the random pause between
+  runs (`mindelay`/`maxdelay`) is not modelled, as the bottom bar does not use it. A grey button
+  holds its first frame. **Not checked** frame by frame against a retail recording.
+
+### Open dropdown lists catch the pointer (2026-10-20)
+- Playtest: clicks on an open list's section titles, scroll-bar track or edge went through to
+  the buttons underneath (only item rows took clicks). Now the whole list is a click target
+  (`Hit::Inert` where nothing is choosable), and nothing under it lights up, plays its hover
+  sound or shows its tip while the pointer is over the list. Matches retail, where the list is a
+  window over the page (by eye in the recordings).
+
 ## What is still open
 
 * What each `[part.*]` and `flags=` token renders as, and how `callback`/`callbacklist` hook into
