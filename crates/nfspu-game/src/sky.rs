@@ -8,13 +8,15 @@
 //!   region A and B, `sc1a`/`sc1b` the matching sky colours, and `cc1a`/`cm1a` white cloud layers.
 //! * `<track>.txt` - which of those to use: the sky level type, two weather regions, and per layer
 //!   the scale factors, how fast it scrolls, and the wind speed and direction.
-//! * `<track>.bin` - verified atlas layout followed by records containing packed colours.
-//!   The relationship between those records and retail per-segment colours is unconfirmed.
-//!   The existing direction-based tint remains a visual approximation.
+//! * `<track>.bin` - verified atlas layout, then the weather tables (region blend, fog/rain/snow
+//!   keyframes per road slice, flags), read by `nfspu_formats::weather`. The "colour records"
+//!   below are those keyframes read the old way; they are fog colours, not horizon colours.
 
 use nfspu_formats::shpi;
 
-/// Unconfirmed visual approximation using camera bearing in turns.
+/// Superseded: the records are weather keyframes keyed by road slice (see
+/// `nfspu_formats::weather`), not directions, and their colours are fog colours stored as
+/// 0xAARRGGBB. Kept only for the old tests; the viewer no longer uses it.
 /// Record positions have NOT been verified as directions. This blends nearby records and
 /// falls back to their average; neither this mapping nor the blend radius is retail-verified.
 /// Atlas geometry and UV validation do not establish the sky-colour interpretation.
@@ -61,8 +63,10 @@ pub fn horizon_tint(horizon: &[HorizonColour], angle: f32) -> [f32; 3] {
 pub struct Region {
     /// Picture name of the sky map (`st1a`), empty when the region has none.
     pub sky_map: String,
-    /// Picture name of the sky colour (`sc1a`), empty when the region has none.
+    /// Picture name of the second layer's colour (`sc1a`), empty when the region has none.
     pub sky_colour: String,
+    /// Picture name of the third layer's colour (`sc2a`), empty or `none` when there is none.
+    pub third: String,
     /// Picture names of the cloud layers, in draw order; `flat` and `none` mean no picture.
     pub clouds: Vec<String>,
     /// How much the layers are repeated across the sky, per axis, in the file's order.
@@ -76,9 +80,24 @@ pub struct Region {
 }
 
 impl Region {
-    /// The average of the region's sky colour picture, as 0..1 RGB. Used to tint the sky.
+    /// One colour for the whole region: the first layer's picture (opaque, the sky itself) with
+    /// the second and third layers' colours laid over it by their average alpha, halved for the
+    /// cloud masks that leave gaps. Retail draws these as textured, scrolling layers; one colour
+    /// is our simplification.
     pub fn tint(&self, pictures: &Pictures) -> [f32; 3] {
-        pictures.average(&self.sky_colour).unwrap_or([0.55, 0.62, 0.72])
+        let mut c = pictures
+            .average(&self.sky_map)
+            .or_else(|| pictures.average(&self.sky_colour))
+            .unwrap_or([0.55, 0.62, 0.72]);
+        for name in [&self.sky_colour, &self.third] {
+            if let Some((rgb, a)) = pictures.average_with_alpha(name) {
+                let k = (a * 0.5).clamp(0.0, 1.0);
+                for i in 0..3 {
+                    c[i] += (rgb[i] - c[i]) * k;
+                }
+            }
+        }
+        c
     }
 }
 
@@ -129,6 +148,14 @@ impl Pictures {
             n += 1.0;
         }
         (n > 0.0).then(|| [sum[0] / n, sum[1] / n, sum[2] / n])
+    }
+
+    /// The average colour of the visible pixels and the average alpha of all pixels.
+    pub fn average_with_alpha(&self, name: &str) -> Option<([f32; 3], f32)> {
+        let rgb = self.average(name)?;
+        let (px, w, h) = self.find(name)?;
+        let a = (0..w * h).map(|i| px[i * 4 + 3] as f32 / 255.0).sum::<f32>() / (w * h) as f32;
+        Some((rgb, a))
     }
 
     /// How many pictures there are, for the log line.
@@ -186,7 +213,8 @@ impl Pictures {
     }
 }
 
-/// One record from the colour table in `<track>.bin`: where it applies and what colour it is.
+/// One weather keyframe from `<track>.bin`, read by the old pattern scan (superseded by
+/// `nfspu_formats::weather::SkyWeather`).
 #[derive(Debug, Clone, Copy)]
 pub struct HorizonColour {
     /// Unconfirmed position field, currently guessed to be a direction in turns.
@@ -599,6 +627,7 @@ fn apply(
         Some("sky") => regions.push(Region {
             sky_map: values[0].clone(),
             sky_colour: values.get(1).cloned().unwrap_or_default(),
+            third: values.get(2).cloned().unwrap_or_default(),
             ..Default::default()
         }),
         // The cloud textures are listed once for the whole block, not per region.

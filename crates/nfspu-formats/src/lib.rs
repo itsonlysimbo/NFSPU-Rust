@@ -19,3 +19,4 @@ pub mod scn;
 pub mod shpi;
 pub mod sim;
 pub mod viv;
+pub mod weather;

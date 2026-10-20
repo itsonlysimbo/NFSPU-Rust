@@ -43,6 +43,7 @@ Alps coordinate range over all vertices: x -1268..437, y -36..414, z -5748..495 
 
 ## CRP triangle parts (`pr`), now decoded
 Layout matches the community notes' "TriangleData", with one difference for this PC version: **index tables use 1 byte per index**, not 2.
+- Per-corner colours (`fd` parts) are stored B, G, R, A (Direct3D colours); see weather.md.
 - Offset 0x04: material index (u16). 0x28: number of info rows (NIF). 0x2C: number of index rows (NID). Then NIF x 16-byte info rows, then NID x 8-byte index rows, then the tables.
 - Index row: u16 id, 2-char tag (`vI` = vertex indices, `uI` = UV indices), u32 offset of its table (from the end of the header). Each table holds `count` bytes. Standard parts: NIF = 3, NID = 2, header = 112 bytes.
 - `count` is the number of triangle corners (3 per triangle). Colours in `fd` (4 bytes, RGBA-looking) are one per corner, numbered consecutively over an article's `pr` parts in part-index order. Sum of `pr` counts equals the `fd` count in all 1,752 alps articles.
