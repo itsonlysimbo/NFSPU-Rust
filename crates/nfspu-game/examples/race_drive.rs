@@ -79,6 +79,8 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let mut route_target = p.slices[route].pos;
     let debug = std::env::var("RACE_DRIVE_DEBUG").is_ok();
     let mut moved_before_go = 0.0f32;
+    // spin-outs: the slip angle (velocity against heading) passing 35 degrees above 10 m/s
+    let (mut spins, mut spinning) = (0u32, false);
     let (mut wrong_ticks, mut stuck, mut backing, mut best_progress, mut last_gain) = (0u32, false, 0.0f32, 0.0f32, 0u32);
     while !r.all_finished() {
         let before = car.pos;
@@ -109,6 +111,22 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         };
         car.sim.held = r.held(); // on the grid the brake is held on until GO (retail)
         car.step(input, dt, &ground, &walls);
+        {
+            let (v_f, v_r) = (car.sim.forward_speed(car.yaw), car.sim.lateral_speed(car.yaw));
+            let slip = v_r.abs().atan2(v_f.abs()).to_degrees();
+            let now = car.sim.speed() > 10.0 && (slip > 35.0 || v_f < -2.0);
+            if now && !spinning {
+                spins += 1;
+                if spins <= 5 {
+                    let _ = writeln!(out, "   tick {:>5}: SPIN at ({:.0},{:.0},{:.0}) v_f {v_f:.1} v_r {v_r:.1} yaw rate {:.2} wall {} ground {} pitch {:.2} roll {:.2} steer {:.2} thr {} brk {}",
+                        r.tick, car.pos.x, car.pos.y, car.pos.z, car.sim.yaw_rate, car.hit_wall as u8, car.on_ground as u8, car.pitch, car.roll, input.steer, input.throttle as u8, input.brake as u8);
+                }
+            }
+            if car.sim.speed() < 3.0 || slip < 15.0 {
+                spinning = false;
+            }
+            spinning |= now;
+        }
         let player_progress = r.cars[0].progress;
         let rate = ai::player_rate(player_progress - fractions[0], r.race_ticks());
         let others: Vec<Other> = std::iter::once(Other { pos: car.pos, speed: car.speed }).chain(racers.iter().map(|x| Other { pos: x.0.pos, speed: x.0.speed })).collect();
@@ -192,7 +210,7 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     if opponents > 0 {
         let _ = writeln!(out, "   car-to-car hits of impact 20+: {hits}");
     }
-    let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; final progress {:.3}; {}",
+    let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });
     !stuck && moved_before_go < 0.5 && r.all_finished()
 }
