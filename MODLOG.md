@@ -526,3 +526,15 @@ Merged from parallel sessions (`claude/physics-*`, `car-fixes-*`, `focused-eucli
 - Checks: all workspace tests pass (69 formats, 200 game, 6 binary). A live monaco5 race with 7 opponents finished with real positions.
 - **Not tested**: the results screen against opponents, a whole flow from the menu with opponents, the in-car camera against retail, and garage cars other than the 356.
 - Disk: merged sessions' build folders deleted (213 GB freed); rule in AGENTS.md.
+
+## 2026-10-20 - Milestone: one program, playtest fixes, weather and sky
+- **One program** (`flow.rs`): the menu, loading screen and race are states of one Bevy app in one window. The process supervisor is gone. Menu state and music survive a race. `NFSPU_FLOW_TEST=<races>,<secs>` scripts the loop. In a 3-race scripted run, the menu was back to the same 522 entities and 2 cameras each time.
+- **Playtest fixes (2026-10-19):**
+  - The picked car is the car driven, in the garage's body style and paint.
+  - Spins cut from 112 to 42 in the test drives (a flipped yaw sign).
+  - Black HUD boxes, a minimap and the other racers' positions.
+- **Weather and lighting** (`weather*.rs`, `sky_fx.rs`): retail `.bin` weather keyframes, night tracks with headlights, fog, rain and snow, lightning, wet roads. Retail sky layers, sun and lens flare, track glows, rear-window drops. Track vertex colours are B,G,R,A (warm and cold were swapped).
+- **The user's other agent's edits** (found uncommitted on master): mirrored tracks, sky `.bin` readers, paint sections; merged and combined.
+- Merge fix: the sky effects are cleared when leaving a race (`sky_fx::clear`).
+- All tests pass (75 formats, 225 game, 6 binary).
+- **Not tested** by hand: handling feel, weather looks against retail, closing the results with Enter in the one-window flow.

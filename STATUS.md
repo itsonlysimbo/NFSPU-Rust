@@ -1,3 +1,12 @@
+# Latest (2026-10-20): one program, playtest fixes, weather and sky merged
+
+- One window: menu -> loading -> race -> menu with no restarts. A scripted 3-race loop came back to the same state each time.
+- The 2026-10-19 playtest items are done (car pick, handling, HUD) except the one still to judge by hand: handling feel.
+- New: weather and night lighting, retail sky layers and flare, mirrored tracks.
+- **Not tested**: a full hand-played loop in the one window; weather and handling compared with retail.
+- Next: the user playtests with one recording (game sound on).
+
+---
 # Latest (2026-10-18): opponents, retail physics, car models and garage merged
 
 - Master now has:

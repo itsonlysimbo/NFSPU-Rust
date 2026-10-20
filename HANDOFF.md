@@ -1,6 +1,6 @@
 # Hand-off for the next agent
 
-Last updated 2026-10-19 by the Claude coordinating session. Read `AGENTS.md` first: its hard rules
+Last updated 2026-10-20 by the Claude coordinating session. Read `AGENTS.md` first: its hard rules
 (no game data in the repo, whitelist `.gitignore`, read-only installs and decomp, own code only) are
 not optional. This file says where things stand and how to carry on.
 
@@ -27,6 +27,8 @@ Quick race works from menu to finish. The user completed full races on 2026-10-1
 | Cars | Textures, cabin, in-car camera, chase camera, shadows | `car_model.rs`, `chase_cam.rs`; `car.md` |
 | Weather | Night tracks, fog, rain/snow, lightning, wet road, headlights | `weather*.rs`, `sky.rs`; `weather.md` |
 | Mirrored tracks | The world flips on mirrored races | `set_world_mirrored` |
+| One program | Menu, loading and race are states of one app | `flow.rs`; `NFSPU_FLOW_TEST` |
+| Sky | Retail sky layers, sun, lens flare, glows, window drops | `sky_fx.rs` |
 
 **Known gaps:**
 - traffic;
@@ -39,15 +41,11 @@ Quick race works from menu to finish. The user completed full races on 2026-10-1
 - in-race sound.
 
 ## Work in progress when Claude stopped
-- **One program** (branch `claude/one-program-9fe952`, worktree
-  `.claude/worktrees/admiring-grothendieck-2ee1b3`): puts menus and racing in one Bevy app with
-  states (Menu → Loading → Race → Results), replacing the process supervisor `run_flow` in `main.rs`.
-  It was asked to merge master first, because master gained the weather and mirroring work after it
-  started. If it is unfinished, read its branch before continuing; don't start over.
-- **Retail sky layers / clouds**: a follow-up session the weather session started. Look for a recent
-  `claude/*` branch with sky or cloud work.
+Nothing unmerged as of 2026-10-20: one program (`flow.rs`) and the sky layers (`sky_fx.rs`) are merged
+into master. The app is now one Bevy app with states Menu -> Loading -> Race; `NFSPU_FLOW_TEST=3,15`
+scripts three menu-race-menu loops (see `logs/m0.log`).
 
-Check what is unmerged with:
+Check for new unmerged work with:
 ```bash
 git for-each-ref --format='%(refname:short)' refs/heads | while read b; do n=$(git rev-list --count master..$b); [ "$n" -gt 0 ] && echo "$b: $n commit(s)"; done
 ```
@@ -116,6 +114,6 @@ DLL (not for the `.bat` launchers). Run long builds in the background; a killed 
 
 ## What the user asked for next (2026-10-19)
 1. Done: the picked car is driven, weather/day-night/lighting, tighter control, a black HUD with minimap and positions.
-2. In progress: menus and racing in one program.
+2. Done: menus and racing in one program (2026-10-20).
 3. After that, the user will playtest with one recording (game sound on). Fix what they report, then
    pick from the known gaps above, starting with the retail results screen, traffic, damage and in-race sound.
