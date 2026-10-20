@@ -132,7 +132,7 @@ Every article has a `Name` part (tag `emaN`, a zero-terminated string). In alps 
 In `CabrioUp` (and the other `Cabrio*` articles) two identical 19-triangle shells use the roof tile (`top2`, black) and a third 8-triangle batch (material 41 on the 993) is the **rear window**: its UVs span most of the 0..1 range, so no tile on the body page contains it. Its texture is the single 32 x 32 tile `sgla` in the shared `CarModel/Cabrio.fsh` (tpage 8 in the `.tpg`, file 7). The loader treats any batch of a `Cabrio*` article whose UV box is wider and taller than 0.5 as the window. A heuristic, tested only on the 993.
 
 ## Handedness: the files are left-handed, the world is mirrored on import
-- The 993's steering wheel (centre x +0.39) and driver (x +0.41) sit on the +X side in the car file, but the car's `.tpg` puts the driver camera at `drivercampos x = -0.38`. The game's coordinates are left-handed (Direct3D), Bevy's are right-handed, so loading the numbers as they are mirrors the world left to right: the steering wheel would be on the right and text and signs would read backwards. The loaders now multiply x by `MIRROR_X = -1` (`crates/nfspu-game/src/lib.rs`): the visual track mesh, the ground triangles and the start position, the car (positions, normals, wheel offsets). After the change the steering wheel is at x -0.39. Normal vectors are mirrored too. The up-facing and outward-normal tests still use the file's clockwise winding and run before the mirror. Autopilot laps are unchanged (distances preserved). Revert by setting the constant to 1.0.
+- The 993's steering wheel (centre x +0.39) and driver (x +0.41) sit on the +X side in the car file, but the car's `.tpg` puts the driver camera at `drivercampos x = -0.38`. The game's coordinates are left-handed (Direct3D), Bevy's are right-handed, so loading the numbers as they are mirrors the world left to right: the steering wheel would be on the right and text and signs would read backwards. The loaders multiply x by `MIRROR_X = -1` (`crates/nfspu-game/src/lib.rs`): the car (positions, normals, wheel offsets) and the garage rooms always use that constant. Track and race geometry use `world_mirror_x()`, which is `MIRROR_X` normally and its opposite (`+1`) for a mirrored race, so the track, ground, start grid and AI lines flip together (see `race.md`). After the change the steering wheel is at x -0.39. Normal vectors are mirrored too. The up-facing and outward-normal tests still use the file's clockwise winding and run before the mirror. Autopilot laps are unchanged (distances preserved). Revert by setting the constant to 1.0.
 - The in-game driver is picked by its own type (not the body style): `LODDriver{T}` (piece 9, type T), with tiles chosen by the `.tpg` rules: type 1 = `suit` + `helm` (racing suit and helmet), 2-5 and 7-10 = `cas1..8` + `fac1..8`. Suit and head come from the shared `Suit.fsh` / `Head.fsh` (128 x 128, 8-bit paletted, palette entries stored B, G, R, A). The head is the driver batch that sits higher up.
 
 ## Alpha on the body page is a paint mask
@@ -194,7 +194,55 @@ The engine's strings (`%sSky\%s.txt`, `%sSky\%s.bin`, `%sSky\%s.fsh`, `CSkyCnfig
 - `0xCBCBCBCB` runs in the file are uninitialised memory (0xCDCD), i.e. arrays this track's configuration never filled.
 - The 7-record files (default, Monaco) have no colour table at all - their sky is a flat colour.
 
-`WEATHER` is a race setting in the engine's settings table, not per-track data, so the weather is not chosen from a file.
+`WEATHER` is a race setting in the engine's settings table. The **track's own** weather is the
+per-slice table below; whether the setting scales it is not traced.
+
+### The `.bin` tables, decoded from the loader (2026-10-19)
+
+The sky manager (`FUN_0045d800`, `decomp/src/porsche_00450000.c`) reads the whole `.bin` as one
+`SkyCnfig` blob and builds three samplers over 400-record tables. The record layouts and consumer
+functions below are from the decomp, and the offsets and ranges were checked on every shipped file
+(`examples/sky_bin.rs`, read-only):
+
+| Offset | Contents |
+|---|---|
+| 0x00 | the header our `HorizonLayout` reads: count, start angle (float), colour start, atlas columns/rows, bottom/height (floats), 16 × (cell, flip) |
+| 0x3c | region A's dome parameters (4 floats: angle, scale, squash, height) |
+| 0xb3c | the same for region B |
+| 0xddc | **blend table**: up to 400 × `i32 slice, f32 value` |
+| 0x1a5c | **weather table**: up to 400 × 0x30-byte records |
+| 0x655c | a second 8-byte table; all `0xCB` (uninitialised) in every shipped file, unused |
+
+- Every table ends at the first record whose slice is negative (`0xFFFFFFFF`).
+- **Sampling position is the track slice, wrapping at the slice count.** The samplers
+  (`FUN_0045a350`, `FUN_0045a560`) interpolate between neighbouring keys modulo
+  `*DAT_00628bc0`, the level object's first dword; the sky's per-frame update (`FUN_0045d030`)
+  passes the result to the sky levels.
+- **Blend table**: a 0..1 value. The sky layers interpolate two states by it
+  (`Scroller_BasicSky::vfn00`'s `param_2`); on the shipped tracks it runs 0 at the start to 1
+  mid-lap and back, e.g. alps 0 at slices 0-537, 0.518 at 563, 1.0 at 604, then 0.50.
+- **Weather table** record: `+0x00 i32 slice`, `+0x04 f32 rain`, `+0x08 f32 snow`,
+  `+0x0c unused`, `+0x10 u32 rain colour`, `+0x14 u32 snow colour`, `+0x18`, `+0x1c`, `+0x20`
+  three floats, the rest unused. The engine cubes the rain/snow amount for the particle intensity
+  (`FUN_0045a6a0`/`a6e0`) and channel-blends the colours while the next record's amount is above a
+  threshold (`FUN_0045a720`/`a800`). What the three floats drive is not traced.
+- Colours are packed `0xAABBGGRR` (the same order as `hzcl`), e.g. alps at the start
+  `0xFF8B6757` = (87,103,139).
+- The alps weather table runs cold blue (87,103,139) at the start, to orange (121,71,46) around
+  slice 700, back through warm grey, to blue (74,127,206) near the end of the lap. Autobahn has
+  144 records (all warm), Castle 2 (cold), Industrial 59 (dark blue), Monaco 0 (flat colour).
+- Audit of all 19 sky sets: **15 carry tables** (one per track); every key is sorted, starts at 0
+  and stays below the track's slice count (`logs/sky_weather_audit.txt`). `Monaco.bin` and
+  `default.bin` are the short 3,544-byte flat-colour files with no tables.
+  `autobahn_lightning.bin` and `industrial_lightning.bin` are another format and are rejected (a
+  table must start at slice 0).
+
+**Ours**: the dome mixes the region A/B sky colour pictures by the blend value, then mixes that
+with the weather colour; the camera's `DistanceFog` takes the weather colour and an amount from
+rain + snow. Those mixes and the fog scale are ours (**guess**); only the sampling and the record
+fields are verified. `NFSPU_WEATHER=0` turns the weather colour and fog off for an A/B look.
+Not drawn yet: rain/snow particles, sun glare sprites (`.env`), stars (`night.psh`), cloud layers,
+and lit track materials (the world is still unlit).
 
 ### Reading the historical sky notes
 The sections below retain investigation history. Later corrections supersede earlier claims:

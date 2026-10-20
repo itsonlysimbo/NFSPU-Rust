@@ -26,6 +26,36 @@ Goal: a standalone Rust/Bevy/wgpu program that loads one real Porsche Unleashed 
 | M5 | Cars, sound, menus, AI, then online | Later |
 
 ## Open questions
+### Paint hand-off (2026-10-19)
+The `.clr` section number is kept with each menu swatch, so garage preview, race setup and
+opponents hand the renderer the number, not the list position (verified: `356_1.clr` lists
+section 5 before 4). The player's choice reaches the race child as its fifth argument.
+The owned car's paint now comes from the save as well (`PlayerInfo` record + 0x3e6; Greg's 356 =
+section 19, orange, matching retail). `logs/menu_quickrace.png` shows the orange car and
+`logs/race_setup.txt` reads `paint = 19`. Still open: whether the saved value is a section number
+or a 1-based list position (they agree on Greg's car), the colour table beside it, and the
+factory-car `GenericCar.Colour` value (Greg's 20).
+
+### Mirrored direction (2026-10-19)
+Direction values 2/3 now mirror the track world (geometry, ground, walls, sky, race path, start
+grid, finish and AI lines) through `set_world_mirrored`; the flag reaches the race child as
+`NFSPU_RACE=…_mirrored` and the loading screen as `,mirror`. Cars and garage rooms keep the
+constant `MIRROR_X`. Offline: every track audits clean mirrored and a 7-opponent race finishes.
+Live captures at the same countdown are left-right mirrors. Open: whether retail mirrors the 3D
+image (projection x) instead, which would also mirror the car model and sign text, and the live
+feel of a mirrored race.
+
+### Weather and day/night (2026-10-19)
+The `<track>.bin` tables are decoded from the loader: a 0..1 **blend** table at +0xddc and a
+**weather** table at +0x1a5c (slice, rain, snow, rain/snow colours, three floats), both sampled by
+track slice with wrap at the slice count. The viewer now tints the dome by the region A/B sky
+colours blended with the slice's weather colour, and puts a `DistanceFog` on the camera using that
+colour and the rain/snow amount; `RaceStatus.slice` carries the player's slice. Verified offline on
+all 15 tracks (`logs/sky_weather_audit.txt`) and live (`logs/weather_alps_on.png` vs
+`..._off.png`, `NFSPU_WEATHER=0`). The blend→region mapping and the fog scale are **guesses**;
+next: rain/snow particles, sun glare and stars, cloud layers, and lit track materials (the world is
+still unlit), plus the three unexplained float fields in the weather record.
+
 - Which file holds the drivable road surface (`.edg`? `.map`? inside `.crp`?)
 - How the `.crp` articles/parts map to meshes, and the vertex format.
 

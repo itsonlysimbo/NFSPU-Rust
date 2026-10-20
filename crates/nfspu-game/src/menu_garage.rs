@@ -274,15 +274,12 @@ fn blend(
 }
 
 /// The car on the page, from the quick-race choice: (model file, paint section, body style).
-/// The paint is the colour list's choice; an owned car's own colour (kept in the save) is not
-/// read yet.
+/// The paint is the colour list's choice, or the owned car's own section from the save.
 fn wanted_car(state: &FrontEnd) -> Option<(String, usize, usize)> {
     let (index, _owned) = state.quick.chosen_car()?;
     let car = state.quick.cars.get(index)?;
     let dir = state.game_dir.join("GameData").join("CarModel");
-    let clr = std::fs::read(dir.join(format!("{}.clr", car.model))).ok();
-    let sections = clr.map(|b| garage::clr_sections(&String::from_utf8_lossy(&b))).unwrap_or_default();
-    let paint = sections.get(state.quick.colour).copied().unwrap_or(CarOptions::default().paint);
+    let paint = usize::from(state.quick.paint_section());
     let tpg = std::fs::read(dir.join(format!("{}.tpg", car.model))).map(|b| String::from_utf8_lossy(&b).to_string()).unwrap_or_default();
     Some((car.model.clone(), paint, garage::style_for(&car.name, &tpg)))
 }

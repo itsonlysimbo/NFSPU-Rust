@@ -10,6 +10,9 @@ use nfspu_game::track;
 use std::fmt::Write as _;
 
 fn main() {
+    if std::env::var("NFSPU_MIRROR").as_deref() == Ok("1") {
+        nfspu_game::set_world_mirrored(true);
+    }
     let dir = track::track_dir().expect("set NFSPU_GAME_DIR");
     let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok())
         .filter_map(|e| { let p = e.path(); (p.extension()? == "crp").then(|| p.file_stem().unwrap().to_string_lossy().to_string()) }).collect();

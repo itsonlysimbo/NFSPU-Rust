@@ -37,7 +37,8 @@ impl Direction {
         matches!(self, Direction::ForwardMirrored | Direction::BackwardMirrored)
     }
 
-    fn word(self) -> &'static str {
+    /// The setup file / `NFSPU_RACE` word.
+    pub fn word(self) -> &'static str {
         match self {
             Direction::Forward => "forward",
             Direction::Backward => "backward",
@@ -87,7 +88,7 @@ pub struct RaceSetup {
     pub car_model: String,
     pub car_name: String,
     pub owned_car: bool,
-    /// Paint scheme: the `[sectionN]` of the model's `.clr`, counted from 0.
+    /// Paint scheme: the actual N in `[sectionN]` of the model's `.clr`, not a list index.
     pub paint: u8,
     /// `settings.lay`: transmission (false manual, true automatic), ABS, traction control, roof
     /// up, damage.
@@ -256,5 +257,7 @@ mod tests {
         assert!(Direction::BackwardMirrored.backward() && Direction::BackwardMirrored.mirrored());
         assert!(!Direction::Forward.backward());
         assert_eq!(Direction::Backward.index(), 1);
+        assert_eq!(Direction::ForwardMirrored.word(), "forward_mirrored");
+        assert_eq!(Direction::BackwardMirrored.word(), "backward_mirrored");
     }
 }

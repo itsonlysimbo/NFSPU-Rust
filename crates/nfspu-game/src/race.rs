@@ -145,6 +145,9 @@ pub struct RaceStatus {
     pub results: Vec<ResultLine>,
     /// Sim ticks (64 Hz) since the race loaded.
     pub tick: u32,
+    /// The player's current road slice (0 before the race starts). The sky and weather are sampled
+    /// by it, as retail does (`docs/provenance/formats.md`, the `.bin` tables).
+    pub slice: usize,
     /// Name of each car by race index ("You" for the player, the driver's name for opponents).
     pub names: Vec<String>,
 }

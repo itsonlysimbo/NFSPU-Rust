@@ -64,6 +64,7 @@ routine; `loadscrn.fsh` belongs to the start-up screen (it is loaded next to the
   356 background, not era 0's).
 - The meaning of mode value 9 (no track art).
 - Whether quick race can be mirrored at all; the mirror drawing is implemented from the code only.
+  Our race mirrors the world geometry (see `race.md`, "Mirrored direction"), not the projection.
 - Retail's pacing between stages (it depends on disk speed); ours depends on how long the
   track takes to read.
 
@@ -77,5 +78,6 @@ routine; `loadscrn.fsh` belongs to the start-up screen (it is loaded next to the
 - Anything that should start when the race is on screen (countdown, HUD) can read the
   `loading::LoadingFinished` message. Other loaders can drive the screen themselves:
   `loading::begin(&mut commands, game_dir, setup)`, then raise `LoadingStage` to 10.
-- `reversed` and `mirrored` only change the loading picture so far; the track itself is not yet
-  loaded reversed or mirrored.
+- `reversed` and `mirrored` describe the race: `reversed` picks the backward start/finish files, and
+  `mirrored` mirrors the track and race geometry (`set_world_mirrored`, set from the same flag
+  before the track is read). The loading picture flips its map independently, as retail does.
