@@ -26,7 +26,7 @@ a config out for another screen size. Little-endian.
 | Offset | Type | Meaning |
 |---|---|---|
 | 0x00 | char[20] | name, e.g. `Config 1` |
-| 0x14 | u32 ARGB | box fill; its alpha byte is the translucency switch (0 = no boxes, no dark dial discs) |
+| 0x14 | u32 | translucency switch: only its top byte is used (non-zero = draw boxes and dark dial discs); the low bytes (0x000080 in Config 1) are **not** a colour, see "Box fill" |
 | 0x18 | u32 ARGB | label colour (`b4b4b4`, grey) |
 | 0x1C | u32 ARGB | second text colour |
 | 0x20..0x30 | 5 x u32 ARGB | more colours (amber `fab400`, red `d70a0f`, ...), use not traced |
@@ -35,7 +35,9 @@ a config out for another screen size. Little-endian.
 | 0x44, 0x48 | f32 | unknown (12.0, 0.08) |
 | 0x4C, 0x64, 0x7C | char[24] x 3 | fonts: `UniversC12b.ffn`, `unviers9b.ffn`, `unviers9bi.ffn` |
 | 0x94..0x104 | 11 x (i32 w, i32 h) | element sizes in pixels (see slots) |
-| 0x104..0x11C | i32 x 6 | unknown (5, 4, 20, 1, 8, 8) |
+| 0x104..0x10C | i32 x 2 | unknown (5, 4) |
+| 0x10C | i32 | track-map grid spacing in pixels (20) |
+| 0x110..0x11C | i32 x 3 | unknown (1, 8, 8) |
 | 0x11C | u8 x 12 | per-element flags, not traced |
 | 0x128..0x188 | i32 x 24 | unknown small numbers |
 | 0x188..0x1E0 | 11 x (f32 x, f32 y) | element top-left as a fraction of the saved screen size |
@@ -126,10 +128,52 @@ grey "gear" label at the bottom right.
 ## Text boxes (gear, time, speed)
 
 Value over label in the element's box: value in the value colour, right-aligned on the top half,
-label grey, left-aligned on the bottom half; box filled with the fill colour if its alpha is not
+label grey, left-aligned on the bottom half; the black box (see "Box fill") behind it when the switch is not
 0. Footage: "02:44.00" over "record", "01:46.14" over "time". Font: `UniversC12b.ffn` (both lines;
 exact offsets of the label are a guess). Times are `mm:ss.cc`.
 Gear: `hud.loc` "R" for reverse, "N" for neutral, digits for forward gears.
+
+## Box fill (fixed after the first playtest: it was drawn blue)
+
+We first filled boxes with the layout word at 0x14 read as ARGB, which for Config 1 (0x80000080)
+is navy at 50%. The box code (tray draw, 0x434110) only tests that word's top byte. The fill is a
+four-corner quad whose colours come from a fixed table in the exe: colour 000000 for all corners,
+alphas 63, 63, 255, 255 (at 0x5B32E4 / 0x5B3304), scaled by a fade percentage (100 normally); a
+low-end-card flag makes all four opaque. The corner order in the vertex setup (0x434310) is
+top-left, top-right, bottom-right, bottom-left, which would put the faint edge at the top, but the
+let's play (10:46) shows the boxes darkest at the top and lighter at the bottom over an even
+background, so the 2D pass must have y pointing up. We follow the footage: black, opaque at the top,
+25% at the bottom.
+
+## Opponent list (verified against the let's play at 10:46)
+
+One box at the opponent-list slot (138 wide; each row as high as the slot, 15 px) holding one row
+per car in running order: a square in the car's body colour, the driver's name in grey (small
+font), and the gap to the player right-aligned in the value colour (small italic font). Under a
+thin grey line: "position" and "N/M" in grey, big font. Gap text by the "opponent list" option
+(`opponentlist` in `fe_out.txt`, 1 for the user): 1 = progress difference in whole metres
+("-384"; "-----" for the player and for 0); 2 = time, the metres divided by the faster car's speed
+(at least half the other's), `-mm:ss.cc`, "-----" while the player is under 13.39 m/s. Car
+colours whose channels are all below 0x14 are drawn 0x202020.
+
+## Track map (`HTrackMap`)
+
+- Box: the map slot (120x120 in Config 1), drawn into its own target. Translucency on: a dark
+  backing quad (its colours are set at run time and not traced; we use black at 50%).
+- Grid: lines every `grid` (0x10C, 20) pixels, fixed on screen, colour = the layout colour at 0x30
+  (`4cffffff`, white at 30%). Verified against footage: a fixed 6x6 grid.
+- Road: the track's slice centres (x, z), thinned by accumulated turning (a point is kept when the
+  turn since the last kept point reaches 0.5% of the track's total turning, at most 400 points),
+  joined by white lines within each road run. We thin by distance on screen instead (1 px).
+- View: centred on the player, an orthographic scale of 1 / range with range = half the box width
+  in metres: zoom step (switch record 0x44) 0/1 -> 185, 2 -> 322, 3 -> 459, 4 -> 600. Map style
+  (0x40): 1 turns with the player's heading (Config 1), 2 keeps north (+z of the game files) up,
+  3 shows the whole track. The let's play player used a north-up style.
+- Cars: `radar.fsh` (`Car`, 26x63, front at the top) on a quad 20 times two of the car's size
+  fields, tinted by its body colour, drawn from the last car to the player so the player is on top.
+  Which size fields is not traced; our 20 x (0.42 m, 1.0 m) half extents are fitted to the footage
+  (a car about 0.65 of a grid cell long).
+- "lap X/Y" is written by the map element; its exact place is not traced (we use the box's top row).
 
 ## Words (`hud.loc`)
 
@@ -160,6 +204,5 @@ any text are not traced; we show it for 5 seconds.
 
 ## Not done yet
 
-Track map drawing (only its "lap X/Y" line is drawn), opponent rows (only the "position N/M" row),
-damage display, leader picture, rear-view mirror, wrong-way text, the two text lines the tach
+Damage display, leader picture, rear-view mirror, wrong-way text, the two text lines the tach
 class creates inside the dial (content not traced), digital tach/speed exact text offsets.

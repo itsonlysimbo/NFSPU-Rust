@@ -40,6 +40,30 @@ pub struct HudInput {
     pub countdown: Option<f32>,
     /// Set once the player has crossed the finish line: finishing place and seconds since.
     pub finished: Option<(u32, f32)>,
+    /// Every car in the race by race index (empty outside a race): for the map and opponent list.
+    pub racers: Vec<HudRacer>,
+    /// Race index of the player in `racers`.
+    pub player: usize,
+    /// Race indices in running order, leader first.
+    pub order: Vec<usize>,
+    /// Road centre lines as (x, z) polylines in world metres, for the map.
+    pub road: std::sync::Arc<Vec<Vec<[f32; 2]>>>,
+    /// Length of one lap in metres (turns progress into the distance gaps of the opponent list).
+    pub lap_metres: f32,
+}
+
+/// One car as the map and the opponent list need it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HudRacer {
+    pub name: String,
+    /// Body colour.
+    pub colour: [u8; 3],
+    /// World position (x, z) in metres and yaw in radians (the car faces (-sin yaw, -cos yaw) in x, z).
+    pub place: [f32; 3],
+    /// Race progress in laps.
+    pub progress: f32,
+    /// Road speed in m/s (for time gaps).
+    pub speed: f32,
 }
 
 impl Default for HudInput {
@@ -57,8 +81,22 @@ impl Default for HudInput {
             best_lap: None,
             countdown: None,
             finished: None,
+            racers: Vec::new(),
+            player: 0,
+            order: Vec::new(),
+            road: Default::default(),
+            lap_metres: 0.0,
         }
     }
+}
+
+/// What the opponent list writes after each name (retail's "opponent list" option).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GapMode {
+    /// Metres ahead (+) or behind (-) the player, "-----" for the player (option value 1).
+    Distance,
+    /// Time ahead or behind, `-mm:ss.cc` (option value 2).
+    Time,
 }
 
 /// Which time the multi-purpose time box shows (retail's "split times" option).
@@ -95,6 +133,7 @@ pub struct HudSettings {
     /// Night versions of the dial art (`...N.fsh`).
     pub night: bool,
     pub split: SplitTime,
+    pub gaps: GapMode,
     /// HUD words by `hud.loc` id; English fallbacks are used for missing ids.
     pub words: BTreeMap<u16, String>,
     /// 1.0 = retail (pixel sizes as stored). 2.0 draws everything twice as big.
@@ -164,6 +203,24 @@ pub enum HudDraw {
     Quad { file: String, entry: String, corners: [[f32; 2]; 4], tint: [f32; 4] },
     /// `pos` is the top of the line; `align` says which end of the text sits at `pos[0]`.
     Text { font: String, text: String, pos: [f32; 2], colour: [f32; 4], align: Align, scale: f32 },
+    /// A rectangle whose colour runs from `top` to `bottom`.
+    Gradient { rect: Rect, top: [f32; 4], bottom: [f32; 4] },
+    /// An anti-aliased line `width` pixels wide.
+    Line { from: [f32; 2], to: [f32; 2], colour: [f32; 4], width: f32 },
+    /// `draws`, cut to `rect`.
+    Clip { rect: Rect, draws: Vec<HudDraw> },
+}
+
+/// Retail's box behind HUD text: black, fully opaque along the top edge fading to a quarter along
+/// the bottom. The exe's fixed corner table is colour 000000 with alphas 63, 63, 255, 255 for its
+/// corners in the order top-left, top-right, bottom-right, bottom-left, but retail footage (let's
+/// play, 10:46) shows the boxes darkest at the top, so the 2D pass evidently has y pointing up; we
+/// follow the footage. The layout's fill word only switches the box on (its alpha byte); its colour
+/// (0x000080 in Config 1, the old blue) is never used.
+fn tray(out: &mut Vec<HudDraw>, settings: &HudSettings, rect: Rect) {
+    if settings.layout.background.alpha() > 0 {
+        out.push(HudDraw::Gradient { rect, top: [0.0, 0.0, 0.0, 1.0], bottom: [0.0, 0.0, 0.0, 63.0 / 255.0] });
+    }
 }
 
 const WHITE: [f32; 4] = [1.0; 4];
@@ -312,10 +369,7 @@ fn argb(c: Argb) -> [f32; 4] {
 /// value colour, right-aligned on the top half; the label is grey, left-aligned on the bottom half.
 fn combo(out: &mut Vec<HudDraw>, settings: &HudSettings, rect: Rect, value: String, label: String) {
     let s = settings.scale;
-    let bg = settings.layout.background;
-    if bg.alpha() > 0 {
-        out.push(HudDraw::Fill { rect, colour: argb(bg) });
-    }
+    tray(out, settings, rect);
     let [pad_x, pad_y] = settings.layout.pad.map(|p| p as f32 * s);
     let font = settings.layout.fonts[0].clone();
     out.push(HudDraw::Text {
@@ -396,14 +450,13 @@ pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u
         combo(&mut out, settings, boxes.multi_time, value.map(format_time).unwrap_or_else(|| "--:--.--".into()), settings.word(label));
     }
 
-    // Position: the last row of the opponent-list box.
     if sw.opponent_list != 0 {
-        let row = boxes.slot(Slot::Position);
-        line(&mut out, settings, row, settings.word(word::POSITION), format!("{}/{}", input.position, input.car_count));
+        opponent_list(&mut out, input, settings, boxes.slot(Slot::Position));
     }
-    // Lap: retail writes it with the track map, along the map box's top.
     if sw.map != 0 {
         let map = boxes.slot(Slot::Map);
+        minimap(&mut out, input, settings, map);
+        // Lap: retail writes it with the track map, along the map box's top.
         let row = [map[0], map[1], map[2], 15.0 * s];
         line(&mut out, settings, row, settings.word(word::LAP), format!("{}/{}", input.lap.min(input.total_laps.max(1)), input.total_laps));
     }
@@ -417,14 +470,206 @@ pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u
 /// A one-line label + value row (position, lap), in the small font.
 fn line(out: &mut Vec<HudDraw>, settings: &HudSettings, rect: Rect, label: String, value: String) {
     let s = settings.scale;
-    let bg = settings.layout.background;
-    if bg.alpha() > 0 {
-        out.push(HudDraw::Fill { rect, colour: argb(bg) });
-    }
+    tray(out, settings, rect);
     let font = if settings.layout.fonts[1].is_empty() { settings.layout.fonts[0].clone() } else { settings.layout.fonts[1].clone() };
     let pad = settings.layout.pad[0] as f32 * s;
     out.push(HudDraw::Text { font: font.clone(), text: label, pos: [rect[0] + pad, rect[1] + s], colour: argb(settings.layout.label), align: Align::Left, scale: s });
     out.push(HudDraw::Text { font, text: value, pos: [rect[0] + rect[2] - pad, rect[1] + s], colour: argb(settings.switches.value_colour()), align: Align::Right, scale: s });
+}
+
+/// A car colour as the map and list draw it: very dark paints become dark grey (retail lifts any
+/// colour whose channels are all below 0x14 to 0x202020 so black cars stay visible).
+fn car_colour(c: [u8; 3]) -> [f32; 4] {
+    let c = if c.iter().all(|&v| v < 0x14) { [0x20; 3] } else { c };
+    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
+}
+
+/// Gap text for a car against the player, as retail's opponent list writes it.
+pub fn gap_text(mode: GapMode, car: &HudRacer, player: &HudRacer, is_player: bool, lap_metres: f32) -> String {
+    let metres = (car.progress - player.progress) * lap_metres;
+    if is_player {
+        return "-----".into();
+    }
+    match mode {
+        GapMode::Distance => {
+            let m = metres as i32;
+            if m == 0 {
+                "-----".into()
+            } else {
+                m.to_string()
+            }
+        }
+        GapMode::Time => {
+            // Retail divides by the faster of the two speeds (or half the other one) and shows
+            // nothing while the player is slower than 13.39 m/s.
+            let (p, o) = (player.speed.abs(), car.speed.abs());
+            if p <= 13.39 || metres == 0.0 {
+                return "-----".into();
+            }
+            let v = if metres < 0.0 { o.max(p * 0.5) } else { p.max(o * 0.5) };
+            let secs = metres / v.max(0.1);
+            let t = format_time(secs.abs());
+            if secs < 0.0 {
+                format!("-{t}")
+            } else {
+                t
+            }
+        }
+    }
+}
+
+/// Retail's opponent list (checked against the let's play at 10:46): one black box holding a row
+/// per car in running order (the row height is the layout box's height), each with a square in
+/// the car's colour, the driver's name in grey and the gap to the player in the value colour and
+/// the italic font; under a thin grey line, "position N/M" in grey. Without race data only the
+/// position row is drawn.
+fn opponent_list(out: &mut Vec<HudDraw>, input: &HudInput, settings: &HudSettings, slot: Rect) {
+    let s = settings.scale;
+    let row_h = slot[3];
+    let rows = if input.racers.get(input.player).is_some() { input.order.len() } else { 0 };
+    tray(out, settings, [slot[0], slot[1], slot[2], row_h * (rows as f32 + 1.0) + 2.0 * s]);
+    let small = if settings.layout.fonts[1].is_empty() { settings.layout.fonts[0].clone() } else { settings.layout.fonts[1].clone() };
+    let italic = if settings.layout.fonts[2].is_empty() { small.clone() } else { settings.layout.fonts[2].clone() };
+    let pad = settings.layout.pad[0] as f32 * s;
+    let grey = argb(settings.layout.label);
+    if let Some(p) = input.racers.get(input.player) {
+        for (row, &car) in input.order.iter().enumerate() {
+            let Some(r) = input.racers.get(car) else { continue };
+            let y = slot[1] + row_h * row as f32;
+            let sq = (7.0 * s).round();
+            out.push(HudDraw::Fill { rect: [slot[0] + pad, y + ((row_h - sq) / 2.0).floor(), sq, sq], colour: car_colour(r.colour) });
+            out.push(HudDraw::Text { font: small.clone(), text: r.name.clone(), pos: [slot[0] + pad + sq + 4.0 * s, y + s], colour: grey, align: Align::Left, scale: s });
+            let gap = gap_text(settings.gaps, r, p, car == input.player, input.lap_metres);
+            out.push(HudDraw::Text { font: italic.clone(), text: gap, pos: [slot[0] + slot[2] - pad, y + s], colour: argb(settings.switches.value_colour()), align: Align::Right, scale: s });
+        }
+    }
+    let y = slot[1] + row_h * rows as f32 + s;
+    if rows > 0 {
+        out.push(HudDraw::Line { from: [slot[0] + pad, y], to: [slot[0] + slot[2] - pad, y], colour: [grey[0], grey[1], grey[2], 0.6], width: s });
+    }
+    let font = settings.layout.fonts[0].clone();
+    out.push(HudDraw::Text { font: font.clone(), text: settings.word(word::POSITION), pos: [slot[0] + pad, y + s], colour: grey, align: Align::Left, scale: s });
+    out.push(HudDraw::Text { font, text: format!("{}/{}", input.position, input.car_count), pos: [slot[0] + slot[2] - pad, y + s], colour: grey, align: Align::Right, scale: s });
+}
+
+/// Half the map's width in metres for a zoom step (retail: steps 0 and 1 = 185 m, 2 = 322 m,
+/// 3 = 459 m, 4 = 600 m).
+pub fn map_range(zoom: i32) -> f32 {
+    let z = match zoom {
+        2 => 33.0,
+        3 => 66.0,
+        4 => 100.0,
+        _ => 0.0,
+    };
+    z * 4.15 + 185.0
+}
+
+/// World (x, z) to map pixels: the `centre` world point lands on `screen_centre`, the world
+/// direction `up` points up the screen, `px_per_m` is the scale.
+#[derive(Debug, Clone, Copy)]
+pub struct MapView {
+    pub centre: [f32; 2],
+    pub up: [f32; 2],
+    pub px_per_m: f32,
+    pub screen_centre: [f32; 2],
+}
+
+impl MapView {
+    pub fn project(&self, p: [f32; 2]) -> [f32; 2] {
+        let d = [p[0] - self.centre[0], p[1] - self.centre[1]];
+        // Seen from above in our right-handed world (y up), right of `up` is `up` turned a
+        // quarter clockwise: facing -z, right is +x.
+        let right = [-self.up[1], self.up[0]];
+        let x = d[0] * right[0] + d[1] * right[1];
+        let y = d[0] * self.up[0] + d[1] * self.up[1];
+        [self.screen_centre[0] + x * self.px_per_m, self.screen_centre[1] - y * self.px_per_m]
+    }
+}
+
+/// The view retail uses for map style `mode` (1 turns with the player's car, 2 keeps north up,
+/// 3 shows the whole track) and zoom step `zoom`.
+pub fn map_view(input: &HudInput, mode: i32, zoom: i32, rect: Rect) -> Option<MapView> {
+    let p = input.racers.get(input.player)?;
+    let screen_centre = [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0];
+    // North in the game files is +z; our world mirrors x only, so +z is still north.
+    let north = [0.0, 1.0];
+    if mode == 3 {
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for q in input.road.iter().flatten() {
+            lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+            hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+        }
+        if lo[0] > hi[0] {
+            return None;
+        }
+        let half = ((hi[0] - lo[0]).max(hi[1] - lo[1]) * 0.5 + 20.0).max(1.0);
+        return Some(MapView { centre: [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0], up: north, px_per_m: rect[2] / 2.0 / half, screen_centre });
+    }
+    let up = if mode == 1 { [-p.place[2].sin(), -p.place[2].cos()] } else { north };
+    Some(MapView { centre: [p.place[0], p.place[1]], up, px_per_m: rect[2] / 2.0 / map_range(zoom), screen_centre })
+}
+
+/// Retail's track map: a dark square with a fixed grid, the road as a white line, and every car as
+/// the `radar.fsh` car tinted in its colour, the player's drawn last. Everything is cut to the box.
+fn minimap(out: &mut Vec<HudDraw>, input: &HudInput, settings: &HudSettings, rect: Rect) {
+    let s = settings.scale;
+    let mut d = Vec::new();
+    if settings.layout.background.alpha() > 0 {
+        // Colour and alpha not traced (the backing quad's corner colours are set at run time).
+        d.push(HudDraw::Fill { rect, colour: [0.0, 0.0, 0.0, 0.5] });
+    }
+    // The grid stays put while the map moves: a line every `grid` pixels.
+    let step = settings.layout.grid.max(4) as f32 * s;
+    let grid = argb(settings.layout.extra_colours[4]);
+    let mut k = step;
+    while k < rect[2] - 0.5 {
+        d.push(HudDraw::Line { from: [rect[0] + k, rect[1]], to: [rect[0] + k, rect[1] + rect[3]], colour: grid, width: s });
+        k += step;
+    }
+    let mut k = step;
+    while k < rect[3] - 0.5 {
+        d.push(HudDraw::Line { from: [rect[0], rect[1] + k], to: [rect[0] + rect[2], rect[1] + k], colour: grid, width: s });
+        k += step;
+    }
+    if let Some(view) = map_view(input, settings.switches.map, settings.switches.map_zoom, rect) {
+        // Road: a white line, thinned to points at least a pixel apart.
+        for run in input.road.iter() {
+            let mut last: Option<[f32; 2]> = None;
+            for (i, &q) in run.iter().enumerate() {
+                let p = view.project(q);
+                match last {
+                    None => last = Some(p),
+                    Some(a) => {
+                        if (p[0] - a[0]).hypot(p[1] - a[1]) >= 1.0 || i + 1 == run.len() {
+                            d.push(HudDraw::Line { from: a, to: p, colour: [1.0; 4], width: s });
+                            last = Some(p);
+                        }
+                    }
+                }
+            }
+        }
+        // Cars: retail stretches the car picture over a quad 20 times two of the car's size fields
+        // (which fields is not traced). The size here is fitted to the let's play (a car about
+        // 0.65 of a grid cell long at the default zoom): 20 x (0.42 m, 1.0 m) half extents, the
+        // picture's own 26:63 shape. Last car first, so the player ends on top.
+        let (half_w, half_l) = (0.42 * 20.0 * view.px_per_m, 1.0 * 20.0 * view.px_per_m);
+        let others = input.racers.iter().enumerate().rev().filter(|(i, _)| *i != input.player);
+        for (_, r) in others.chain(input.racers.get(input.player).map(|r| (input.player, r))) {
+            let c = view.project([r.place[0], r.place[1]]);
+            let ahead = view.project([r.place[0] - r.place[2].sin(), r.place[1] - r.place[2].cos()]);
+            let len = (ahead[0] - c[0]).hypot(ahead[1] - c[1]).max(1e-6);
+            let f = [(ahead[0] - c[0]) / len, (ahead[1] - c[1]) / len];
+            let rt = [-f[1], f[0]];
+            let at = |a: f32, b: f32| [c[0] + f[0] * a + rt[0] * b, c[1] + f[1] * a + rt[1] * b];
+            d.push(HudDraw::Quad {
+                file: "radar.fsh".into(),
+                entry: String::new(),
+                corners: [at(half_l, -half_w), at(half_l, half_w), at(-half_l, half_w), at(-half_l, -half_w)],
+                tint: car_colour(r.colour),
+            });
+        }
+    }
+    out.push(HudDraw::Clip { rect, draws: d });
 }
 
 fn centred(screen: [u32; 2], w: f32, h: f32) -> Rect {
@@ -500,6 +745,8 @@ mod tests {
         put(0xC4, 0x1B8, 128, 128, 0.8, 0.6395833); // tach (512, 307)
         put(0xD4, 0x1C0, 128, 128, 0.6, 0.6645833); // speedo (384, 318)
         put(0xFC, 0x1D8, 240, 84, 0.2890625, 0.0); // rear-view mirror (185, 0)
+        put(0xB4, 0x1A8, 138, 15, 0.784375, 0.0020833); // opponent list rows (502, 1)
+        put(0xE4, 0x1C8, 120, 120, 0.0, 0.7458333); // track map (0, 358)
         let mut sw = vec![0u8; SWITCH_RECORD];
         sw[0x28..0x2C].copy_from_slice(&640i32.to_le_bytes());
         sw[0x2C..0x30].copy_from_slice(&480i32.to_le_bytes());
@@ -513,6 +760,7 @@ mod tests {
             mph: false,
             night: false,
             split: SplitTime::BestLap,
+            gaps: GapMode::Distance,
             words: BTreeMap::new(),
             scale: 1.0,
         }
@@ -578,6 +826,77 @@ mod tests {
         assert_eq!(placeholder_engine(120.0).1, 3);
         assert_eq!(placeholder_engine(400.0).1, 6);
         assert!(placeholder_engine(49.0).0 > placeholder_engine(10.0).0);
+    }
+
+
+    #[test]
+    fn boxes_are_black_not_the_layout_colour() {
+        // Config 1 stores 0x80000080 (would read as navy); retail draws black, faint at the bottom.
+        let s = settings();
+        let b = layout(&s, [640, 480], [640, 480]);
+        let d = draws(&HudInput::default(), &s, &b, [640, 480]);
+        let grads: Vec<_> = d.iter().filter_map(|x| if let HudDraw::Gradient { top, bottom, .. } = x { Some((*top, *bottom)) } else { None }).collect();
+        assert!(!grads.is_empty());
+        for (top, bottom) in grads {
+            assert_eq!(top, [0.0, 0.0, 0.0, 1.0]);
+            assert_eq!(&bottom[..3], &[0.0, 0.0, 0.0]);
+            assert!((bottom[3] - 63.0 / 255.0).abs() < 1e-6);
+        }
+        assert!(!d.iter().any(|x| matches!(x, HudDraw::Fill { colour, .. } if colour[2] > 0.4 && colour[0] < 0.1)), "no blue fills");
+    }
+
+    fn racer(name: &str, progress: f32, x: f32, z: f32, yaw: f32) -> HudRacer {
+        HudRacer { name: name.into(), colour: [200, 0, 0], place: [x, z, yaw], progress, speed: 30.0 }
+    }
+
+    #[test]
+    fn gaps_read_like_retail() {
+        let me = racer("You", 1.0, 0.0, 0.0, 0.0);
+        let behind = racer("Leadfoot", 0.9, 0.0, 0.0, 0.0);
+        assert_eq!(gap_text(GapMode::Distance, &me, &me, true, 3840.0), "-----");
+        assert_eq!(gap_text(GapMode::Distance, &behind, &me, false, 3840.0), "-384");
+        // 384 m at 30 m/s = 12.8 s
+        assert_eq!(gap_text(GapMode::Time, &behind, &me, false, 3840.0), "-00:12.80");
+        let slow = HudRacer { speed: 5.0, ..me.clone() };
+        assert_eq!(gap_text(GapMode::Time, &behind, &slow, false, 3840.0), "-----");
+    }
+
+    #[test]
+    fn opponent_list_rows_follow_running_order() {
+        let mut s = settings();
+        s.switches.opponent_list = 1;
+        let b = layout(&s, [640, 480], [640, 480]);
+        let input = HudInput {
+            racers: vec![racer("You", 1.0, 0.0, 0.0, 0.0), racer("Amazon", 1.2, 0.0, 0.0, 0.0), racer("Dylan", 0.5, 0.0, 0.0, 0.0)],
+            order: vec![1, 0, 2],
+            position: 2,
+            car_count: 3,
+            lap_metres: 1000.0,
+            ..Default::default()
+        };
+        let d = draws(&input, &s, &b, [640, 480]);
+        let texts: Vec<(String, f32)> = d.iter().filter_map(|x| if let HudDraw::Text { text, pos, .. } = x { Some((text.clone(), pos[1])) } else { None }).collect();
+        let y = |t: &str| texts.iter().find(|(x, _)| x == t).map(|(_, y)| *y).unwrap();
+        assert!(y("Amazon") < y("You") && y("You") < y("Dylan") && y("Dylan") < y("position"));
+        assert!(texts.iter().any(|(t, _)| t == "200") && texts.iter().any(|(t, _)| t == "-500") && texts.iter().any(|(t, _)| t == "2/3"));
+    }
+
+    #[test]
+    fn map_puts_the_player_in_the_middle_and_turns_with_it() {
+        let rect = [0.0, 358.0, 120.0, 120.0];
+        // Player at (100, 50) facing -z (yaw 0); a car 92.5 m further along -z.
+        let input = HudInput { racers: vec![racer("You", 0.0, 100.0, 50.0, 0.0), racer("B", 0.0, 100.0, 50.0 - 92.5, 0.0)], ..Default::default() };
+        let v = map_view(&input, 1, 0, rect).unwrap();
+        let close = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3;
+        assert!(close(v.project([100.0, 50.0]), [60.0, 418.0]));
+        // 92.5 m ahead at 185 m per 60 px = 30 px straight up.
+        assert!(close(v.project([100.0, -42.5]), [60.0, 388.0]));
+        // Heading-up: +x (right of a car facing -z) is to the right.
+        assert!(v.project([110.0, 50.0])[0] > 60.0);
+        // North-up (style 2): +z is up, so the car ahead (at -z) is below.
+        let n = map_view(&input, 2, 0, rect).unwrap();
+        assert!(n.project([100.0, -42.5])[1] > 418.0);
+        assert!((map_range(4) - 600.0).abs() < 1e-3);
     }
 
     #[test]

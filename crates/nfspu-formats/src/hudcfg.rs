@@ -117,6 +117,8 @@ pub struct HudLayout {
     pub extra_colours: [Argb; 5],
     /// Padding inside text boxes: x at 0x34, y at 0x38.
     pub pad: [i32; 2],
+    /// Track-map grid spacing in pixels (0x10C, 20 in the stock layouts).
+    pub grid: i32,
     /// Big font, small font, small italic font (`.ffn` file names).
     pub fonts: [String; 3],
     boxes: [HudBox; 11],
@@ -203,6 +205,7 @@ pub fn parse_layouts(data: &[u8]) -> Vec<HudLayout> {
                 text: colour(0x1C),
                 extra_colours: [colour(0x20), colour(0x24), colour(0x28), colour(0x2C), colour(0x30)],
                 pad: [i32le(r, 0x34), i32le(r, 0x38)],
+                grid: i32le(r, 0x10C),
                 fonts: [cstr(&r[0x4C..0x64]), cstr(&r[0x64..0x7C]), cstr(&r[0x7C..0x94])],
                 boxes,
             }

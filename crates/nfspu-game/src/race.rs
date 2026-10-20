@@ -147,6 +147,18 @@ pub struct RaceStatus {
     pub tick: u32,
     /// Name of each car by race index ("You" for the player, the driver's name for opponents).
     pub names: Vec<String>,
+    /// Car indices in running order, leader first (for the HUD's opponent list).
+    pub order: Vec<usize>,
+    /// Each car's race progress in laps (0..laps), by race index.
+    pub car_progress: Vec<f32>,
+    /// Each car's ground position (x, z), yaw and speed (m/s) by race index, for the HUD (set by the race runner).
+    pub car_places: Vec<[f32; 4]>,
+    /// Each car's body colour by race index (set by the race runner).
+    pub car_colours: Vec<[u8; 3]>,
+    /// The road's centre lines as (x, z) polylines, one per road run (set once per race).
+    pub road: std::sync::Arc<Vec<Vec<[f32; 2]>>>,
+    /// Length of one lap in metres.
+    pub lap_metres: f32,
 }
 
 /// One line of the results table.
@@ -277,6 +289,8 @@ impl Race {
         st.finished = c.state == CarState::Finished;
         st.progress = (c.progress / self.setup.laps as f32).clamp(0.0, 1.0);
         st.tick = self.tick;
+        st.order = self.order();
+        st.car_progress = self.cars.iter().map(|c| c.progress).collect();
         st.results = if st.finished {
             self.results()
                 .into_iter()
