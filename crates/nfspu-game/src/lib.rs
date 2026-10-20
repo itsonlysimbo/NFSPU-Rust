@@ -26,6 +26,8 @@ pub mod race_setup;
 pub mod refbuild;
 pub mod sky;
 pub mod track;
+pub mod weather;
+pub mod weather_fx;
 
 /// The game files use a left-handed world (Direct3D style) and Bevy is right-handed, so loading the
 /// numbers as they are would mirror everything left to right: the steering wheel would end up on

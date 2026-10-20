@@ -146,6 +146,9 @@ fn main() {
         .add_plugins(race_load::RaceLoad(loading))
         // In-race HUD, only with NFSPU_HUD=1 for now (see hud_plugin.rs).
         .add_plugins(nfspu_game::hud_plugin::HudPlugin)
+        // Fog, rain, snow, lightning and night headlights (weather_fx.rs).
+        .add_plugins(nfspu_game::weather_fx::WeatherFxPlugin)
+        .add_systems(Update, feed_weather.after(drive_car))
         .add_systems(Update, feed_hud.after(drive_car))
         .add_systems(Last, visual_probe::update)
         .add_systems(Last, car_probe::update)
@@ -464,11 +467,14 @@ fn append_track_batch(
         };
         g.positions.push([p[0] * MIRROR_X, p[1], p[2]]); // mirrored, see MIRROR_X
         g.uvs.push(m.uvs[b.uv_idx[k] as usize]);
+        // Vertex colours are stored as Direct3D colours: bytes blue, green, red, alpha. Verified
+        // against retail frames: alps' snow section, autobahn and Normandie only match with
+        // blue and red this way round (docs/provenance/weather.md).
         let c = b.colors[k];
         g.colors.push([
-            (c[0] as f32 / 255.0).powf(2.2),
-            (c[1] as f32 / 255.0).powf(2.2),
             (c[2] as f32 / 255.0).powf(2.2),
+            (c[1] as f32 / 255.0).powf(2.2),
+            (c[0] as f32 / 255.0).powf(2.2),
             1.0,
         ]);
     }
@@ -628,70 +634,35 @@ fn sky_dome(
     }
 }
 
-/// The sky of the loaded track, kept so `sky_tint` can recolour it as the camera turns.
+/// The sky of the loaded track, kept so `sky_tint` can blend it between its two weather regions.
 #[derive(Resource, Default)]
 struct SkyState {
-    /// The horizon's zero point, as a fraction of a turn, from the `.bin`.
-    start_angle: f32,
-    /// The colour table from `<track>.bin`, which is what makes the sky warm and cold.
-    colours: Vec<sky::HorizonColour>,
-    /// The dome's material, coloured with a mix of the sky colour and the horizon colour.
+    /// The dome's material.
     dome: Option<Handle<StandardMaterial>>,
-    /// The horizon band's material, coloured with the horizon colour.
-    band: Option<Handle<StandardMaterial>>,
-    /// The sky colour from the weather region's picture, before the horizon colour is mixed in.
-    base: [f32; 3],
-    /// The colour the materials were last set to, so we only touch them when it changes.
+    /// Sky colour of weather region A and B (the average of each region's sky-colour picture).
+    regions: [[f32; 3]; 2],
+    /// The colour the dome was last set to, so it is only touched when it changes.
     last: [f32; 3],
-    /// When to write the next line to the log, in seconds since startup.
-    next_log: f32,
 }
 
-/// Existing guessed direction-based tint. The record-to-segment colour mapping remains
-/// unconfirmed; the verified atlas layout does not establish that mapping.
+/// Blends the dome between weather region A and B by the sky `.bin`'s region table at the
+/// camera's road slice (retail passes that blend to every sky layer). The region colours
+/// themselves are averages of the region pictures, which is our simplification of retail's
+/// textured sky layers.
 fn sky_tint(
-    time: Res<Time>,
-    camera: Query<&Transform, With<FlyCamera>>,
     state: Option<ResMut<SkyState>>,
+    weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let (Some(mut state), Ok(cam)) = (state, camera.single()) else { return };
-    if state.colours.is_empty() {
-        return;
-    }
-    // The camera's bearing, as a fraction of a full turn, measured the way the file measures it:
-    // from the track's start line, so the sky lines up with where the lap begins.
-    let (_, yaw, _) = cam.rotation.to_euler(EulerRot::YXZ);
-    let want = sky::horizon_tint(&state.colours, yaw / std::f32::consts::TAU - state.start_angle);
-    // Only touch the materials once the colour has actually moved; it barely changes between frames.
+    let Some(mut state) = state else { return };
+    let t = weather.map_or(0.0, |w| w.region_blend.clamp(0.0, 1.0));
+    let [a, b] = state.regions;
+    let want = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     if (0..3).all(|i| (want[i] - state.last[i]).abs() < 0.004) {
         return;
     }
     state.last = want;
-    // Log it a few times a second, so a run's log shows whether the sky is being recoloured at all.
-    if state.next_log <= time.elapsed_secs() {
-        state.next_log = time.elapsed_secs() + 0.5;
-        log_line(&format!(
-            "sky tint at heading {:>4.0} deg: rgb {:.0},{:.0},{:.0}",
-            yaw.to_degrees().rem_euclid(360.0),
-            want[0] * 255.0,
-            want[1] * 255.0,
-            want[2] * 255.0
-        ));
-    }
-    // The dome keeps some of its own sky colour so it does not go flat; the band takes the horizon
-    // colour outright, because that is the colour of the sky right above the mountains.
-    let dome = [
-        (state.base[0] + want[0]) * 0.5,
-        (state.base[1] + want[1]) * 0.5,
-        (state.base[2] + want[2]) * 0.5,
-    ];
     if let Some(h) = state.dome.clone() {
-        if let Some(mut m) = materials.get_mut(&h) {
-            m.base_color = Color::srgb(dome[0], dome[1], dome[2]);
-        }
-    }
-    if let Some(h) = state.band.clone() {
         if let Some(mut m) = materials.get_mut(&h) {
             m.base_color = Color::srgb(want[0], want[1], want[2]);
         }
@@ -723,18 +694,14 @@ fn spawn_sky(
         return spawned;
     }
 
-    // The weather region gives the base sky colour. Region A is the first one in the file; where a
-    // track has two with different colours (alps does) the colour table decides the rest.
+    // Each weather region has its own sky colour picture; the dome blends between them (sky_tint).
     let base = data.regions.first().map(|r| r.tint(&data.pictures)).unwrap_or([0.55, 0.62, 0.72]);
-    let horizon_now = sky::horizon_tint(&data.horizon, 0.0);
+    let region_b = data.regions.get(1).map(|r| r.tint(&data.pictures)).unwrap_or(base);
+    let horizon_now = base;
 
     // --- the dome: sky colour, brightest at the horizon and darker overhead and below ---
     let dome_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(
-            (base[0] + horizon_now[0]) * 0.5,
-            (base[1] + horizon_now[1]) * 0.5,
-            (base[2] + horizon_now[2]) * 0.5,
-        ),
+        base_color: Color::srgb(base[0], base[1], base[2]),
         base_color_texture: Some(images.add(sky_gradient())),
         unlit: true,
         cull_mode: None,
@@ -742,7 +709,7 @@ fn spawn_sky(
     });
     spawned.push(
         commands
-            .spawn((Mesh3d(meshes.add(sky_dome_mesh())), MeshMaterial3d(dome_mat.clone()), Transform::default(), SkyFollows))
+            .spawn((Mesh3d(meshes.add(sky_dome_mesh())), MeshMaterial3d(dome_mat.clone()), Transform::default(), SkyFollows, nfspu_game::weather_fx::SkyPart))
             .id(),
     );
 
@@ -784,7 +751,7 @@ fn spawn_sky(
         });
         spawned.push(
             commands
-                .spawn((Mesh3d(meshes.add(band_mesh)), MeshMaterial3d(mat.clone()), Transform::default(), SkyFollows))
+                .spawn((Mesh3d(meshes.add(band_mesh)), MeshMaterial3d(mat.clone()), Transform::default(), SkyFollows, nfspu_game::weather_fx::SkyPart))
                 .id(),
         );
         log_line(&format!("sky '{track}': atlas 16 segments, {}x{}, cells {:?}, flips {:?}, zero {:.7}, colour-start {} (colour mapping unconfirmed), reference y {:.5}..{:.5}, radius 400",
@@ -796,15 +763,8 @@ fn spawn_sky(
         band_handle = if verified_palette { None } else { Some(mat) };
     }
 
-    commands.insert_resource(SkyState {
-        start_angle: data.start_angle,
-        colours: data.horizon.clone(),
-        dome: Some(dome_mat),
-        band: band_handle,
-        base,
-        last: horizon_now,
-        next_log: 0.0,
-    });
+    let _ = band_handle;
+    commands.insert_resource(SkyState { dome: Some(dome_mat), regions: [base, region_b], last: base });
     log_line(&format!(
         "sky '{track}': {} level, {} pictures, {} weather regions, {} horizon colours ({})",
         if data.level.is_empty() { "unknown".to_string() } else { data.level.clone() },
@@ -930,7 +890,7 @@ fn setup(
         Err(e) => {
             error!("could not load track '{}': {e}", track.0);
             log_line(&format!("LOAD FAILED: {e}"));
-            commands.spawn((Camera3d::default(), FlyCamera { yaw: 0.0, pitch: 0.0 }));
+            commands.spawn((Camera3d::default(), FlyCamera { yaw: 0.0, pitch: 0.0 }, nfspu_game::weather_fx::WorldCamera));
             return;
         }
     };
@@ -949,6 +909,7 @@ fn setup(
         Projection::Perspective(PerspectiveProjection { far: SKY_FAR, ..default() }),
         scene.camera,
         FlyCamera { yaw: scene.yaw, pitch: scene.pitch },
+        nfspu_game::weather_fx::WorldCamera,
     ));
     let root = commands.spawn((Transform::from_translation(g.start_pos), Visibility::default(), CarBody)).id();
     let options = CarOptions { style: car_style.0, driver: car_driver.0, paint: car_paint.0, ..Default::default() };
@@ -1042,6 +1003,10 @@ fn spawn_track(
 
     let ground = track::load_ground(name)?;
     entities.extend(spawn_sky(commands, meshes, materials, images, name));
+    let weather_started = Instant::now();
+    let weather = nfspu_game::weather_fx::WeatherState::load(name, SKY_RADIUS);
+    log_line(&format!("{} (loaded in {:.2}s)", weather.track.describe(), weather_started.elapsed().as_secs_f32()));
+    commands.insert_resource(weather);
     // Start above the middle of the track, looking along the longest horizontal direction.
     let start = Vec3::new(centre.x, hi.y + 150.0, centre.z);
     let look_at = Vec3::new(centre.x, centre.y, centre.z - 300.0);
@@ -1553,6 +1518,42 @@ fn opponent_cars(setup: &nfspu_game::race_setup::RaceSetup) -> Vec<u16> {
     let player = cars.iter().find(|c| c.id == setup.car_id).cloned().unwrap_or_else(|| catalog::Car { id: setup.car_id, model: setup.car_model.clone(), ..Default::default() });
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
     nfspu_game::ai::pick_cars(&setup.opponent_cars, &player, &list, setup.opponents.min(7) as usize, &mut nfspu_game::ai::Rng::new(seed))
+}
+
+/// Hands the car to the weather effects: where it is, whether its headlights are on, and the
+/// ground under the headlight pool. On a night track the headlights start switched on.
+fn feed_weather(
+    car: Option<Res<CarRes>>,
+    ground: Option<Res<GroundRes>>,
+    weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
+    mut lights: ResMut<LightsOn>,
+    mut input: ResMut<nfspu_game::weather_fx::WeatherInput>,
+    bounds: Query<&CarBounds>,
+    holder: Option<Res<CarModelEntity>>,
+) {
+    let Some(car) = car else {
+        input.car = None;
+        return;
+    };
+    if weather.as_ref().is_some_and(|w| w.is_added() && w.night()) && !lights.0 {
+        lights.0 = true;
+        log_line("night track: headlights on");
+    }
+    let (pos, yaw) = (car.car.pos, car.car.yaw);
+    input.car = Some((pos, yaw, car.car.speed));
+    input.headlights = lights.0;
+    input.braking = car.braking;
+    input.ground_y = pos.y - RIDE_HEIGHT;
+    input.half_length = holder.and_then(|h| bounds.get(h.model).ok()).map_or(2.2, |b| b.half_length);
+    input.pool_heights.clear();
+    if lights.0 && weather.as_ref().is_some_and(|w| w.night()) {
+        if let Some(ground) = ground {
+            let ground_y = pos.y - RIDE_HEIGHT;
+            for (x, z) in nfspu_game::weather_fx::pool_points(pos, yaw) {
+                input.pool_heights.push(ground.0.height_at(x, z, ground_y, 3.0));
+            }
+        }
+    }
 }
 
 fn feed_hud(

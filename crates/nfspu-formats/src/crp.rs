@@ -90,6 +90,7 @@ pub struct Batch {
     pub material: u16,
     pub vertex_idx: Vec<u16>,
     pub uv_idx: Vec<u16>,
+    /// Raw colour bytes as stored: blue, green, red, alpha (a Direct3D colour).
     pub colors: Vec<[u8; 4]>,
 }
 
