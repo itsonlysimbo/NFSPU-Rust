@@ -501,6 +501,153 @@ pub struct TrackSky {
     pub start_angle: f32,
     /// Which capability block the file's first `BEGIN` block was (HIGH or MEDIUM).
     pub capability: String,
+    /// The sky level read the way retail reads it (`parse_level`): the layers to draw.
+    pub sky_level: Option<SkyLevel>,
+    /// The dome shape and sun position from the `.bin` header (`SkyDome::parse`).
+    pub dome: Option<SkyDome>,
+}
+
+/// One weather region of a sky level, in the order retail reads it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LevelRegion {
+    /// Per layer, the 16x16 picture that gives the layer's vertex colours (`st1a`, `sc1a`), or
+    /// `none`. One pixel is one vertex of the 16x16 sky grid.
+    pub maps: [String; 3],
+    /// Per layer, how many grid cells one repeat of the layer's texture spans, across and down.
+    pub scale_x: [f32; 3],
+    pub scale_y: [f32; 3],
+    /// How strongly the layers slide as the camera moves: 0 not at all, else the camera
+    /// distance (in world units) per texture repeat at scale 1. The file says 50 fast, 400 slow.
+    pub move_ratio: f32,
+    /// Per layer, wind: speed 0..10 and direction in degrees (0 north, 90 east).
+    pub wind_speed: [f32; 3],
+    pub wind_dir: [f32; 3],
+    /// Texture warping; zero on every shipped track.
+    pub warp_speed: f32,
+    pub warp_amount: f32,
+}
+
+/// A track's sky level (`MULTINORMAL` on every shipped track), the way retail's sky loader reads
+/// `<track>.txt`: the whole file lowercased, `#` lines skipped, then one value per line.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SkyLevel {
+    /// The capability block used (`high` when the file has one).
+    pub capability: String,
+    pub level: String,
+    /// `yes`: the level is drawn after the sun, so its layers hide it.
+    pub blocks_sun: bool,
+    pub regions: [LevelRegion; 2],
+    /// Per layer, the tiling texture (`flat` for plain white, `cc1a`, `cm1a`) or `none`. The
+    /// number of textures that are not `none` is the number of layers.
+    pub textures: [String; 3],
+}
+
+impl SkyLevel {
+    /// How many layers the level draws.
+    pub fn layer_count(&self) -> usize {
+        self.textures.iter().filter(|t| t.as_str() != "none").count()
+    }
+}
+
+/// Reads the sky level from `<track>.txt`. Retail picks the block for the graphics detail
+/// ("high" on any modern card); we take the `high` block, else the first.
+pub fn parse_level(text: &str) -> Option<SkyLevel> {
+    let lower = text.to_ascii_lowercase();
+    let mut blocks = Vec::new();
+    let mut rest = lower.as_str();
+    while let Some((_, after)) = rest.split_once("begin") {
+        let (body, next) = after.split_once("end").unwrap_or((after, ""));
+        blocks.push(body);
+        rest = next;
+    }
+    let tokens = |body: &str| -> Vec<String> {
+        body.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string).collect()
+    };
+    let chosen = blocks.iter().map(|b| tokens(b)).find(|t| t.first().map(String::as_str) == Some("high")).or_else(|| blocks.first().map(|b| tokens(b)))?;
+    let mut it = chosen.into_iter();
+    let mut next = || it.next().unwrap_or_default();
+    let num = |s: String| s.parse::<f32>().unwrap_or(0.0);
+    let capability = next();
+    let level = next();
+    let blocks_sun = next() != "no";
+    let mut regions: [LevelRegion; 2] = Default::default();
+    for r in &mut regions {
+        r.maps = [next(), next(), next()];
+        r.scale_x = [num(next()), num(next()), num(next())];
+        r.scale_y = [num(next()), num(next()), num(next())];
+        r.move_ratio = num(next());
+        r.wind_speed = [num(next()), num(next()), num(next())];
+        r.wind_dir = [num(next()), num(next()), num(next())];
+        r.warp_speed = num(next());
+        r.warp_amount = num(next());
+    }
+    let textures = [next(), next(), next()];
+    if textures.iter().all(String::is_empty) {
+        return None;
+    }
+    Some(SkyLevel { capability, level, blocks_sun, regions, textures })
+}
+
+/// The sky dome from the `.bin` header: a 16x16 grid of points over a square `size` across,
+/// turned by `angle` (turns), each lifted to `(height - r^2 x curve)` and the whole scaled by
+/// `scale`, centred on the camera (exe 0x460F40). The sun sits on the same surface at grid point
+/// (`sun_x`, `sun_z`) (0x461090); (0, 0) means the track has no sun.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkyDome {
+    pub angle: f32,
+    pub size: f32,
+    pub curve: f32,
+    pub height: f32,
+    pub scale: f32,
+    pub sun_x: f32,
+    pub sun_z: f32,
+    /// 0xDD8: non-zero lets the sun throw a lens flare.
+    pub flare: bool,
+}
+
+/// Cells across the sky grid (16 points a side).
+pub const SKY_GRID: usize = 15;
+
+impl SkyDome {
+    pub fn parse(bin: &[u8]) -> Option<Self> {
+        let f = |o: usize| bin.get(o..o + 4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        Some(Self {
+            angle: f(0x3C)?,
+            size: f(0x40)?,
+            curve: f(0x44)?,
+            height: f(0x48)?,
+            scale: f(0xCE4)?,
+            sun_x: f(0xCDC)?,
+            sun_z: f(0xCE0)?,
+            flare: bin.get(0xDD8..0xDDC).is_some_and(|b| b != [0, 0, 0, 0]),
+        })
+    }
+
+    /// A point of the dome surface at plane position (`b`, `a`), in retail's axes (not mirrored).
+    pub fn point(&self, b: f32, a: f32) -> [f32; 3] {
+        let (s, c) = (self.angle * std::f32::consts::TAU).sin_cos();
+        [(s * a + c * b) * self.scale, (self.height - (a * a + b * b) * self.curve) * self.scale, (c * a - s * b) * self.scale]
+    }
+
+    /// The 16x16 grid points, row by row (row r, column c is index r * 16 + c).
+    pub fn grid(&self) -> Vec<[f32; 3]> {
+        let n = SKY_GRID as f32;
+        let step = self.size / n;
+        let half = self.size * 0.5;
+        let mut out = Vec::with_capacity((SKY_GRID + 1) * (SKY_GRID + 1));
+        for r in 0..=SKY_GRID {
+            let a = -half + r as f32 * step;
+            for c in 0..=SKY_GRID {
+                out.push(self.point(half - c as f32 * step, a));
+            }
+        }
+        out
+    }
+
+    /// Where the sun is, or None when the track has none (both grid coordinates within 0.02).
+    pub fn sun(&self) -> Option<[f32; 3]> {
+        (self.sun_x.abs() >= 0.02 || self.sun_z.abs() >= 0.02).then(|| self.point(self.sun_x, self.sun_z))
+    }
 }
 
 /// Reads `<track>.txt`, `.fsh` and `.bin` for one track. `game_dir` is the install folder, the one
@@ -526,7 +673,9 @@ pub fn load(game_dir: &std::path::Path, track: &str) -> Option<TrackSky> {
         Some(t) => parse_txt(t),
         None => (String::new(), String::new(), Vec::new()),
     };
-    Some(TrackSky { pictures, layout, level, regions, horizon, blend, weather, start_angle, capability })
+    let sky_level = txt.as_deref().and_then(parse_level);
+    let dome = bin.as_deref().and_then(SkyDome::parse);
+    Some(TrackSky { pictures, layout, level, regions, horizon, blend, weather, start_angle, capability, sky_level, dome })
 }
 
 /// The horizon's zero point: the second dword of `<track>.bin` as a float. The engine subtracts this
@@ -687,6 +836,77 @@ pub fn parse_horizon(bin: &[u8]) -> Vec<HorizonColour> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn level_reads_in_retail_order() {
+        let mut t = String::from("BEGIN
+#Computer capability
+	HIGH
+#sky level type
+	MULTINORMAL
+#Does this layer block the sun
+NO
+");
+        for _ in 0..2 {
+            t += "#maps
+	st1a
+	sc1a
+	none
+#X
+	1
+	2
+	0
+#Y
+	1
+	2
+	0
+#move
+	400
+#wind speed
+	0
+	2
+	0
+#dir
+	90
+	40
+	0
+#warp
+	0
+#warp amount
+	0
+";
+        }
+        t += "# CLOUD TEXTURES
+	flat
+	cc1a
+	none
+END
+BEGIN
+	MEDIUM
+END
+";
+        let l = parse_level(&t).expect("level");
+        assert_eq!(l.capability, "high");
+        assert!(!l.blocks_sun);
+        assert_eq!(l.regions[1].maps, ["st1a".to_string(), "sc1a".to_string(), "none".to_string()]);
+        assert_eq!(l.regions[0].scale_x, [1.0, 2.0, 0.0]);
+        assert_eq!(l.regions[0].move_ratio, 400.0);
+        assert_eq!(l.regions[0].wind_dir, [90.0, 40.0, 0.0]);
+        assert_eq!(l.textures, ["flat".to_string(), "cc1a".to_string(), "none".to_string()]);
+        assert_eq!(l.layer_count(), 2);
+    }
+
+    #[test]
+    fn dome_grid_matches_retail_formula() {
+        let d = SkyDome { angle: 0.0, size: 1500.0, curve: 0.0002, height: 76.7241, scale: 0.57586, sun_x: 0.0, sun_z: 0.0, flare: true };
+        let g = d.grid();
+        assert_eq!(g.len(), 256);
+        // Row 0, column 0: plane point (b = +750, a = -750), lowest corner.
+        assert!((g[0][0] - 750.0 * 0.57586).abs() < 0.01);
+        assert!((g[0][2] + 750.0 * 0.57586).abs() < 0.01);
+        assert!((g[0][1] - (76.7241 - 2.0 * 750.0f32.powi(2) * 0.0002) * 0.57586).abs() < 0.01);
+        assert!(d.sun().is_none());
+    }
 
     /// A `.bin`-shaped blob with a header, then three colour records, then filler.
     fn fake_bin() -> Vec<u8> {

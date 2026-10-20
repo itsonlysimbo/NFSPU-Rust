@@ -3,7 +3,8 @@
 //!   the camera's road slice. The sky is drawn by its own camera first (render layer 1) so it can
 //!   have its own fog, as retail switches fog between the sky pass and the world pass;
 //! * rain and snow streaks around the camera, as many as the keyframe asks for (up to 300);
-//! * lightning flashes when the keyframes say the weather is stormy;
+//! * the lightning clock: when the keyframes say the weather is stormy, bolts start at retail's
+//!   rate; `sky_fx` draws each bolt in the sky;
 //! * at night, the headlight pool on the road ahead, shaped by `Render/night.psh`.
 //!
 //! `main.rs` marks the world camera (`WorldCamera`) and the sky meshes (`SkyPart`), loads
@@ -68,6 +69,11 @@ pub struct WeatherState {
     pub region_blend: f32,
     /// How far away main.rs draws the sky, for the sky fog scale.
     pub sky_distance: f32,
+    /// Lightning: a serial that goes up when a bolt starts, whether one is lit now, and its
+    /// strength (0..2, from the keyframe's lightning amount). `sky_fx` draws it.
+    pub bolt: u32,
+    pub bolt_active: bool,
+    pub bolt_strength: usize,
     flash: f32,
     flash_ticks: f32,
     tick_debt: f32,
@@ -88,6 +94,9 @@ impl WeatherState {
             now: Conditions::default(),
             region_blend: 0.0,
             sky_distance,
+            bolt: 0,
+            bolt_active: false,
+            bolt_strength: 0,
             flash: 0.0,
             flash_ticks: 0.0,
             tick_debt: 0.0,
@@ -164,17 +173,24 @@ fn put_sky_on_its_layer(mut commands: Commands, parts: Query<Entity, Added<SkyPa
     }
 }
 
-/// The sky camera looks exactly where the world camera looks.
+/// How far the sky camera sees: the retail sky dome's corners reach about 4.4 km at our scale.
+pub const SKY_CAMERA_FAR: f32 = 20_000.0;
+
+/// The sky camera looks exactly where the world camera looks (but further).
 fn follow_world_camera(world: Query<(&Transform, &Projection), (With<WorldCamera>, Without<SkyCamera>)>, mut sky: Query<(&mut Transform, &mut Projection), With<SkyCamera>>) {
     let Ok((wt, wp)) = world.single() else { return };
     for (mut t, mut p) in &mut sky {
         *t = *wt;
         if let (Projection::Perspective(a), Projection::Perspective(b)) = (&*p, wp) {
-            if a.fov == b.fov && a.aspect_ratio == b.aspect_ratio && a.far == b.far {
+            if a.fov == b.fov && a.aspect_ratio == b.aspect_ratio && a.far == SKY_CAMERA_FAR.max(b.far) {
                 continue;
             }
         }
-        *p = wp.clone();
+        let mut wanted = wp.clone();
+        if let Projection::Perspective(q) = &mut wanted {
+            q.far = SKY_CAMERA_FAR.max(q.far);
+        }
+        *p = wanted;
     }
 }
 
@@ -212,21 +228,21 @@ fn update_conditions(
             let chance = weather::lightning_chance_per_tick(c.lightning);
             if chance > 0.0 && state.random() < chance {
                 state.flash_ticks = (state.random() + 1.0) * 60.0;
+                state.bolt = state.bolt.wrapping_add(1);
+                state.bolt_strength = weather::lightning_strength(c.lightning).unwrap_or(0);
             }
         }
     }
-    // The flash itself is our own: a quick bright flicker that fades over the flash's ticks.
-    let target = if state.flash_ticks > 0.0 { (state.flash_ticks / 120.0).min(1.0) * if (state.flash_ticks as i32 / 4) % 3 == 0 { 0.4 } else { 1.0 } } else { 0.0 };
-    state.flash = target;
+    // Retail lights the sky where the bolt strikes (sky_fx); the fog is not brightened.
+    state.bolt_active = state.flash_ticks > 0.0;
+    state.flash = if state.bolt_active { 1.0 } else { 0.0 };
 
-    let flash = state.flash * 0.6;
-    let lit = |rgb: [f32; 3]| Color::srgb(rgb[0] + (0.85 - rgb[0]) * flash, rgb[1] + (0.87 - rgb[1]) * flash, rgb[2] + (0.95 - rgb[2]) * flash);
-    world_fog.color = if c.world_fog_density > nfspu_formats::weather::FOG_EPSILON { lit(c.world_fog_colour) } else { Color::NONE };
+    world_fog.color = if c.world_fog_density > nfspu_formats::weather::FOG_EPSILON { Color::srgb(c.world_fog_colour[0], c.world_fog_colour[1], c.world_fog_colour[2]) } else { Color::NONE };
     world_fog.falloff = FogFalloff::Exponential { density: c.world_fog_density };
     let sky_scale = RETAIL_SKY_DISTANCE / state.sky_distance.max(1.0);
     for mut f in &mut sky {
-        f.color = if c.sky_fog_density > nfspu_formats::weather::FOG_EPSILON || flash > 0.0 { lit(c.sky_fog_colour) } else { Color::NONE };
-        f.falloff = FogFalloff::Exponential { density: (c.sky_fog_density * sky_scale).max(if flash > 0.0 { 0.002 } else { 0.0 }) };
+        f.color = if c.sky_fog_density > nfspu_formats::weather::FOG_EPSILON { Color::srgb(c.sky_fog_colour[0], c.sky_fog_colour[1], c.sky_fog_colour[2]) } else { Color::NONE };
+        f.falloff = FogFalloff::Exponential { density: c.sky_fog_density * sky_scale };
     }
 
     if state.next_log <= time.elapsed_secs() {
@@ -550,7 +566,9 @@ fn capture(
         let ahead = (i + 12) % n;
         let s = &path.slices[i];
         let eye = s.pos - s.forward * 7.0 + s.up * 2.6;
-        let look = path.slices[ahead].pos + s.up * 1.0;
+        // `NFSPU_WEATHER_CAPTURE_UP=<m>` raises the point looked at, to frame the sky.
+        let lift = std::env::var("NFSPU_WEATHER_CAPTURE_UP").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+        let look = path.slices[ahead].pos + s.up * (1.0 + lift);
         for mut t in &mut cams {
             *t = Transform::from_translation(eye).looking_at(look, Vec3::Y);
         }
