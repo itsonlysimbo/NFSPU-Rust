@@ -135,10 +135,10 @@ two-car compare screens (not done).
 - Body style: we pick the `.tpg` style whose name appears in the catalogue name (`'50 356 1100
   Cabriolet` → `[style2] name=Cabrio`), **guess** at retail's rule; matches the recording (the
   cabriolet with its top up).
-- Paint: the quick-race colour list's choice (list position → `.clr` section in file order; the
-  356's file lists section 5 before 4). An owned car's own colour is kept in the save and is not
-  read yet: the user's owned 356 is orange in retail (section 19 is the closest orange); our
-  captures pick it with `NFSPU_MENU_PICK=GenericCar.Colour=18`.
+- Paint: the quick-race colour list's choice, kept as the `[sectionN]` number the renderer takes
+  (the swatch's list position is not the section: the 356's file lists section 5 before 4). An
+  owned car shows the paint kept in its save (section 19 = orange for the user's 356, read at
+  `PlayerInfo` + 0x3e6; `fe.md`), so the garage now needs no `NFSPU_MENU_PICK`.
 - Retail draws the license plate with the player's name ("Greg" in the recording): not done.
 - The car is built with the race viewer's pages and looks (`car_model::load_car` + the race
   viewer's `CarLooks`, `by_page`, `piece_mesh`), at level of detail 1, without a driver; doors are split off by slot.

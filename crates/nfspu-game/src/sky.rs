@@ -195,6 +195,173 @@ pub struct HorizonColour {
     pub colour: u32,
 }
 
+/// One keyframe of the `.bin` blend table (at +0xddc): a track slice and a 0..1 value. The engine
+/// samples it with slice positions that wrap around the lap and passes the value to the sky
+/// layers (`Scroller_BasicSky::vfn00`, `param_2`), which interpolate between two states.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlendKey {
+    pub slice: i32,
+    pub value: f32,
+}
+
+/// One keyframe of the `.bin` weather table (at +0x1a5c, records of 0x30 bytes). The engine
+/// samples it by track slice; the first two floats are cubed for the precipitation intensity and
+/// the two packed colours are blended while the next record's precipitation is above a threshold.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherKey {
+    pub slice: i32,
+    /// Precipitation amounts, 0..1 (the engine cubes them; `rain` uses colour 1, `snow` colour 2).
+    pub rain: f32,
+    pub snow: f32,
+    pub rain_colour: u32,
+    pub snow_colour: u32,
+    /// Three more scalars whose use is not traced (read by 0x45a8e0, 0x45a910, 0x45a940).
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+}
+
+/// A sampled weather state for one track position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherSample {
+    pub rain: f32,
+    pub snow: f32,
+    pub rain_colour: [f32; 3],
+    pub snow_colour: [f32; 3],
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+}
+
+impl WeatherSample {
+    /// The stronger of the two precipitation colours (rain wins a tie).
+    pub fn colour(&self) -> [f32; 3] {
+        if self.rain >= self.snow {
+            self.rain_colour
+        } else {
+            self.snow_colour
+        }
+    }
+}
+
+/// The `.bin` table offsets, from the decompiled loader (`SkyHorizon` and the sky manager): the
+/// blend table at +0xddc and the weather table at +0x1a5c, 400 records each.
+pub const BLEND_TABLE_OFFSET: usize = 0xddc;
+pub const WEATHER_TABLE_OFFSET: usize = 0x1a5c;
+pub const TABLE_RECORDS: usize = 400;
+const WEATHER_RECORD: usize = 0x30;
+
+/// Unpacks a colour stored as `0xAABBGGRR` (the format the `.bin` uses).
+pub fn unpack_colour(colour: u32) -> [f32; 3] {
+    [
+        (colour & 0xFF) as f32 / 255.0,
+        ((colour >> 8) & 0xFF) as f32 / 255.0,
+        ((colour >> 16) & 0xFF) as f32 / 255.0,
+    ]
+}
+
+/// Reads the blend table at [`BLEND_TABLE_OFFSET`]. Records are `i32 slice, f32 value`; a negative
+/// slice ends the table.
+pub fn parse_blend(bin: &[u8]) -> Vec<BlendKey> {
+    let mut out = Vec::new();
+    for i in 0..TABLE_RECORDS {
+        let at = BLEND_TABLE_OFFSET + i * 8;
+        let Some(bytes) = bin.get(at..at + 8) else { break };
+        let slice = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let value = f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        if slice < 0 {
+            break;
+        }
+        if value.is_finite() {
+            out.push(BlendKey { slice, value });
+        }
+    }
+    // A real table starts at slice 0; the lightning `.bin` files use another format and would
+    // otherwise read as one garbage key.
+    if out.first().is_none_or(|k| k.slice != 0) {
+        out.clear();
+    }
+    out
+}
+
+/// Reads the weather table at [`WEATHER_TABLE_OFFSET`]. A record's first dword is its slice (a
+/// negative one ends the table); the fields used here are listed on [`WeatherKey`].
+pub fn parse_weather(bin: &[u8]) -> Vec<WeatherKey> {
+    let mut out = Vec::new();
+    for i in 0..TABLE_RECORDS {
+        let at = WEATHER_TABLE_OFFSET + i * WEATHER_RECORD;
+        let Some(bytes) = bin.get(at..at + WEATHER_RECORD) else { break };
+        let word = |n: usize| u32::from_le_bytes([bytes[n * 4], bytes[n * 4 + 1], bytes[n * 4 + 2], bytes[n * 4 + 3]]);
+        let float = |n: usize| f32::from_bits(word(n));
+        let slice = word(0) as i32;
+        if slice < 0 {
+            break;
+        }
+        let (rain, snow) = (float(1), float(2));
+        if !rain.is_finite() || !snow.is_finite() {
+            break;
+        }
+        out.push(WeatherKey { slice, rain, snow, rain_colour: word(4), snow_colour: word(5), a: float(6), b: float(7), c: float(8) });
+    }
+    if out.first().is_none_or(|k| k.slice != 0) {
+        out.clear();
+    }
+    out
+}
+
+/// The 0..1 position of `slice` between two keys, wrapping around a lap of `slices` slices.
+fn wrap_segment(key0: i32, key1: i32, slice: i32, slices: usize) -> Option<f32> {
+    let len = i32::try_from(slices).ok().filter(|l| *l > 0)?;
+    let span = (key1 - key0).rem_euclid(len);
+    if span == 0 {
+        return None;
+    }
+    let d = (slice - key0).rem_euclid(len);
+    (d <= span).then_some(d as f32 / span as f32)
+}
+
+/// The two neighbouring keys of a wrapped slice and the weight towards the second one.
+fn neighbours<T>(keys: &[T], slice_of: impl Fn(&T) -> i32, slice: i32, slices: usize) -> Option<(usize, usize, f32)> {
+    if keys.is_empty() {
+        return None;
+    }
+    if keys.len() == 1 {
+        return Some((0, 0, 0.0));
+    }
+    for i in 0..keys.len() {
+        let j = (i + 1) % keys.len();
+        if let Some(t) = wrap_segment(slice_of(&keys[i]), slice_of(&keys[j]), slice, slices) {
+            return Some((i, j, t));
+        }
+    }
+    None
+}
+
+/// Samples the blend table at a track slice (wrapping at `slices`, the track's slice count).
+pub fn sample_blend(keys: &[BlendKey], slice: usize, slices: usize) -> Option<f32> {
+    let (i, j, t) = neighbours(keys, |k| k.slice, slice as i32, slices)?;
+    let a = keys[i].value;
+    let b = keys[j].value;
+    Some(a + (b - a) * t)
+}
+
+/// Samples the weather table at a track slice (wrapping at `slices`, the track's slice count).
+pub fn sample_weather(keys: &[WeatherKey], slice: usize, slices: usize) -> Option<WeatherSample> {
+    let (i, j, t) = neighbours(keys, |k| k.slice, slice as i32, slices)?;
+    let (a, b) = (keys[i], keys[j]);
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    let mix = |x: [f32; 3], y: [f32; 3]| [x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t, x[2] + (y[2] - x[2]) * t];
+    Some(WeatherSample {
+        rain: lerp(a.rain, b.rain),
+        snow: lerp(a.snow, b.snow),
+        rain_colour: mix(unpack_colour(a.rain_colour), unpack_colour(b.rain_colour)),
+        snow_colour: mix(unpack_colour(a.snow_colour), unpack_colour(b.snow_colour)),
+        a: lerp(a.a, b.a),
+        b: lerp(a.b, b.b),
+        c: lerp(a.c, b.c),
+    })
+}
+
 impl HorizonColour {
     /// The colour as 0..1 RGB.
     pub fn rgb(&self) -> [f32; 3] {
@@ -298,6 +465,10 @@ pub struct TrackSky {
     pub regions: Vec<Region>,
     /// The colour table, in file order.
     pub horizon: Vec<HorizonColour>,
+    /// The `.bin` blend table (0..1 by slice), used by the sky layers.
+    pub blend: Vec<BlendKey>,
+    /// The `.bin` weather table (rain/snow and colours by slice).
+    pub weather: Vec<WeatherKey>,
     /// The horizon's zero point, as a fraction of a turn; see `parse_start_angle`.
     pub start_angle: f32,
     /// Which capability block the file's first `BEGIN` block was (HIGH or MEDIUM).
@@ -319,13 +490,15 @@ pub fn load(game_dir: &std::path::Path, track: &str) -> Option<TrackSky> {
     let bin = std::fs::read(dir.join(format!("{track}.bin"))).ok();
     let layout = bin.as_deref().and_then(HorizonLayout::parse);
     let horizon = bin.as_deref().map(parse_horizon).unwrap_or_default();
+    let blend = bin.as_deref().map(parse_blend).unwrap_or_default();
+    let weather = bin.as_deref().map(parse_weather).unwrap_or_default();
     let start_angle = bin.as_deref().map(parse_start_angle).unwrap_or(0.0);
 
     let (capability, level, regions) = match &txt {
         Some(t) => parse_txt(t),
         None => (String::new(), String::new(), Vec::new()),
     };
-    Some(TrackSky { pictures, layout, level, regions, horizon, start_angle, capability })
+    Some(TrackSky { pictures, layout, level, regions, horizon, blend, weather, start_angle, capability })
 }
 
 /// The horizon's zero point: the second dword of `<track>.bin` as a float. The engine subtracts this
@@ -741,6 +914,77 @@ mod tests {
     #[test]
     fn a_missing_picture_has_no_runs() {
         assert!(Pictures::default().content_runs("nope").is_none());
+    }
+
+    /// A `.bin` with the two decoded tables. Records are `(slice, value)` for the blend table and
+    /// `(slice, rain, snow, rain colour, snow colour, a, b, c)` for the weather table.
+    fn table_bin(blend: &[(i32, f32)], weather: &[(i32, f32, f32, u32, u32, f32, f32, f32)]) -> Vec<u8> {
+        let mut b = vec![0u8; WEATHER_TABLE_OFFSET + (weather.len() + 1) * WEATHER_RECORD];
+        for (i, (slice, value)) in blend.iter().enumerate() {
+            let at = BLEND_TABLE_OFFSET + i * 8;
+            b[at..at + 4].copy_from_slice(&slice.to_le_bytes());
+            b[at + 4..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        let term = BLEND_TABLE_OFFSET + blend.len() * 8;
+        b[term..term + 4].copy_from_slice(&(-1i32).to_le_bytes());
+        for (i, (slice, rain, snow, rc, sc, a, bb, c)) in weather.iter().enumerate() {
+            let at = WEATHER_TABLE_OFFSET + i * WEATHER_RECORD;
+            for (n, word) in [*slice as u32, rain.to_bits(), snow.to_bits(), 0, *rc, *sc, a.to_bits(), bb.to_bits(), c.to_bits()].into_iter().enumerate() {
+                b[at + n * 4..at + n * 4 + 4].copy_from_slice(&word.to_le_bytes());
+            }
+        }
+        let term = WEATHER_TABLE_OFFSET + weather.len() * WEATHER_RECORD;
+        b[term..term + 4].copy_from_slice(&(-1i32).to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn the_blend_and_weather_tables_are_read_at_their_offsets() {
+        let bin = table_bin(
+            &[(0, 0.0), (100, 1.0)],
+            &[(0, 0.0, 0.0, 0xff000000, 0xff000000, 0.0, 0.0, 0.0), (436, 0.25, 0.5, 0xff8b6757, 0xff010203, 0.1, 0.2, 0.3)],
+        );
+        let blend = parse_blend(&bin);
+        assert_eq!(blend, vec![BlendKey { slice: 0, value: 0.0 }, BlendKey { slice: 100, value: 1.0 }]);
+        let weather = parse_weather(&bin);
+        assert_eq!(weather.len(), 2, "ends at the first negative slice");
+        assert_eq!(weather[1].slice, 436);
+        assert!((weather[1].snow - 0.5).abs() < 1e-6);
+        assert_eq!(unpack_colour(weather[1].rain_colour), [87.0 / 255.0, 103.0 / 255.0, 139.0 / 255.0]);
+        assert!((weather[1].b - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_table_that_does_not_start_at_slice_zero_is_not_a_weather_table() {
+        // The lightning `.bin` files use another format; their bytes at these offsets are not keys.
+        let bin = table_bin(&[(5, 0.5)], &[(7, 0.1, 0.1, 0xff000000, 0xff000000, 0.0, 0.0, 0.0)]);
+        assert!(parse_blend(&bin).is_empty());
+        assert!(parse_weather(&bin).is_empty());
+    }
+
+    #[test]
+    fn tables_sample_by_slice_and_wrap_around_the_lap() {
+        let blend = vec![BlendKey { slice: 0, value: 0.0 }, BlendKey { slice: 100, value: 1.0 }];
+        assert_eq!(sample_blend(&blend, 50, 1000), Some(0.5));
+        assert_eq!(sample_blend(&blend, 100, 1000), Some(1.0));
+        // 950 is 850/900 of the way from slice 100, through the lap end, back to slice 0 (value 0).
+        assert!((sample_blend(&blend, 950, 1000).unwrap() - 0.055_556).abs() < 1e-4);
+        assert_eq!(sample_blend(&[BlendKey { slice: 7, value: 0.3 }], 500, 1000), Some(0.3), "a single key is constant");
+        assert_eq!(sample_blend(&[], 0, 1000), None);
+
+        let weather = vec![
+            WeatherKey { slice: 0, rain: 0.0, snow: 0.0, rain_colour: 0xff0000ff, snow_colour: 0xff00ff00, a: 0.0, b: 0.0, c: 0.0 },
+            WeatherKey { slice: 200, rain: 1.0, snow: 0.6, rain_colour: 0xffff0000, snow_colour: 0xff0000ff, a: 1.0, b: 2.0, c: 3.0 },
+        ];
+        let at = sample_weather(&weather, 100, 1000).unwrap();
+        assert!((at.rain - 0.5).abs() < 1e-6 && (at.snow - 0.3).abs() < 1e-6);
+        let after = sample_weather(&weather, 600, 1000).unwrap();
+        assert!((after.rain - 0.5).abs() < 1e-6, "wrapped back towards the first record");
+        let c = at.colour();
+        assert!(c[0] > 0.49 && c[2] > 0.49, "the two rain colours are mixed at the midpoint: {c:?}");
+        let early = sample_weather(&weather, 50, 1000).unwrap();
+        assert!(early.colour()[0] > early.colour()[2], "near the first record the red rain colour dominates");
+        assert!((at.a - 0.5).abs() < 1e-6 && (at.c - 1.5).abs() < 1e-6);
     }
 }
 #[cfg(test)]

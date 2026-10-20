@@ -160,7 +160,7 @@ pub fn player_rate(progress_gained: f32, race_ticks: u32) -> f32 {
 /// (x, z) per slice; without a matching file the slice centres are used.
 pub fn racing_line(path: &RoadPath, lsp: Option<&[[f32; 2]]>) -> Vec<Vec3> {
     match lsp {
-        Some(p) if p.len() == path.slices.len() => path.slices.iter().zip(p).map(|(s, q)| Vec3::new(q[0] * crate::MIRROR_X, s.pos.y, q[1])).collect(),
+        Some(p) if p.len() == path.slices.len() => path.slices.iter().zip(p).map(|(s, q)| Vec3::new(q[0] * crate::world_mirror_x(), s.pos.y, q[1])).collect(),
         _ => path.slices.iter().map(|s| s.pos).collect(),
     }
 }
@@ -546,7 +546,7 @@ mod tests {
     fn driving_line_stays_on_the_road() {
         let p = track();
         // file space: slice 5 is at x 0, z 30 heading +z; its right in Bevy space is -x
-        let mut lsp: Vec<[f32; 2]> = p.slices.iter().map(|s| [s.pos.x * crate::MIRROR_X, s.pos.z]).collect();
+        let mut lsp: Vec<[f32; 2]> = p.slices.iter().map(|s| [s.pos.x * crate::world_mirror_x(), s.pos.z]).collect();
         lsp[5][0] += 3.0;
         lsp[6][0] += 30.0;
         let raw = racing_line(&p, Some(&lsp));

@@ -223,6 +223,9 @@ fn log_file() -> std::path::PathBuf {
 
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
+    if std::env::var("NFSPU_MIRROR").as_deref() == Ok("1") {
+        nfspu_game::set_world_mirrored(true);
+    }
     let mut out = String::new();
     let mut ok = true;
     if let Some(name) = a.first() {

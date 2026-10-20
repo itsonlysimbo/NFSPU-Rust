@@ -8,7 +8,6 @@
 //! fraction is interpolated by slice count. The code here is our own implementation of that idea.
 //! Positions are in Bevy space (x mirrored on load).
 
-use crate::MIRROR_X;
 use bevy::math::Vec3;
 use nfspu_formats::scn::{trigger_kind, Trigger};
 use nfspu_formats::sim::SimData;
@@ -76,7 +75,7 @@ pub struct RoadPath {
 }
 
 fn v(a: [f32; 3]) -> Vec3 {
-    Vec3::new(a[0] * MIRROR_X, a[1], a[2])
+    Vec3::new(a[0] * crate::world_mirror_x(), a[1], a[2])
 }
 
 fn flat_d2(a: Vec3, b: Vec3) -> f32 {
@@ -86,6 +85,13 @@ fn flat_d2(a: Vec3, b: Vec3) -> f32 {
 
 impl RoadPath {
     pub fn new(sim: &SimData) -> Self {
+        Self::with_mirror(sim, crate::world_mirror_x())
+    }
+
+    /// Builds the path with an explicit x mirror (the tests use this instead of the process-wide
+    /// [`crate::set_world_mirrored`]).
+    pub fn with_mirror(sim: &SimData, mirror: f32) -> Self {
+        let v = |a: [f32; 3]| Vec3::new(a[0] * mirror, a[1], a[2]);
         let slices: Vec<PathSlice> = sim
             .slices
             .iter()
@@ -532,6 +538,29 @@ mod tests {
         assert!(((b.pos - p.slices[7].pos).dot(right) + 2.0).abs() < 1e-4);
         // heading along the slice: on the first side of the square that is -Z, yaw 0
         assert!(a.yaw.abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_mirrored_path_is_the_x_mirror_of_the_usual_one() {
+        let sim = square();
+        let normal = RoadPath::with_mirror(&sim, -1.0);
+        let mirrored = RoadPath::with_mirror(&sim, 1.0);
+        for (a, b) in normal.slices.iter().zip(&mirrored.slices) {
+            assert!((a.pos.x + b.pos.x).abs() < 1e-5);
+            assert_eq!((a.pos.y, a.pos.z), (b.pos.y, b.pos.z));
+            assert!((a.forward.x + b.forward.x).abs() < 1e-5);
+            assert!((a.right.x + b.right.x).abs() < 1e-5);
+        }
+        assert_eq!(normal.lap_slices, mirrored.lap_slices);
+        assert_eq!(normal.looped, mirrored.looped);
+        // The start grid mirrors too: same slice, x mirrored, heading yaw negated (slice 25 heads
+        // along x, so its yaw is not zero).
+        let a = grid_spot(&normal, 0, 0, 8, Direction::Forward);
+        let b = grid_spot(&mirrored, 0, 0, 8, Direction::Forward);
+        assert_eq!(a.slice, b.slice);
+        assert!((a.pos.x + b.pos.x).abs() < 1e-4);
+        assert!((a.pos.z - b.pos.z).abs() < 1e-4);
+        assert!((a.yaw + b.yaw).abs() < 1e-4, "yaw {} vs {}", a.yaw, b.yaw);
     }
 
     #[test]

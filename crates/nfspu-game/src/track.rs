@@ -7,7 +7,6 @@
 //! are found from the road slices (`SimD`) that lie on them and are loaded like road pieces.
 
 use crate::ground::Tri;
-use crate::MIRROR_X;
 use bevy::math::Vec3;
 use nfspu_formats::{crp, refpack, sim};
 use std::collections::HashMap;
@@ -179,7 +178,7 @@ pub fn load_ground(track: &str) -> Result<GroundData, String> {
                 let tri: Tri = [0, 1, 2].map(|q| mesh.positions[b.vertex_idx[3 * t + q] as usize]);
                 // the slope test uses the file's winding, so it comes before the mirror
                 let face = classify(&tri);
-                let tri: Tri = tri.map(|v| [v[0] * MIRROR_X, v[1], v[2]]);
+                let tri: Tri = tri.map(|v| [v[0] * crate::world_mirror_x(), v[1], v[2]]);
                 if number.is_some() {
                     for v in &tri {
                         for k in 0..3 {

@@ -262,8 +262,35 @@ Opponents drive the same retail car physics as the player (`car_sim.rs`): the ca
 retail car-to-car impulse against each other and the player (`car::collide_cars`, every tick).
 
 Not done: traffic, retail's proportional throttle and its AI-side physics parameters
-(`TRAFCFG.DES` lists "in control" / "out of control" AI physics), damage, mirrored tracks,
-junction route choice, personalities and reaction scripts.
+(`TRAFCFG.DES` lists "in control" / "out of control" AI physics), damage, junction route choice,
+personalities and reaction scripts.
+
+## Mirrored direction (2026-10-19)
+
+`Track1.Direction` values 2 and 3 are "forward/mirrored" and "backward/mirrored". The loading
+screen has always mirrored its map for them; the race itself did not mirror the track until now.
+What retail does with the flag is only partly known: the loading notes say it is "the mirror flag
+that also flips the 3D projection's x", read from disassembly, but flipping only the projection
+would also mirror the car model and sign text on screen, and it would invert the steering feel.
+
+Our implementation mirrors the **world geometry**, not the projection: the file-to-world x factor
+for track, ground, walls, sky, road slices, start grid, finish line and AI racing lines is `+1`
+for a mirrored race instead of `-1` (`nfspu_game::set_world_mirrored` / `world_mirror_x`). Car
+models and garage rooms keep the constant `MIRROR_X`. Culling follows the factor's sign, so the
+one-sided track faces stay correct. The choice reaches the race child in both `NFSPU_LOADING`
+(`…,mirror`) and `NFSPU_RACE` (`forward_mirrored` / `backward_mirrored`).
+
+Verified offline (`NFSPU_MIRROR=1` on the examples):
+- `race_audit`: all 15 tracks, both directions, 0 problems and 0 road slices without ground
+  (`logs/race_audit_mirror.txt`).
+- `race_drive coastal forward 2 7 1`: seven opponents and the player finish, ALL OK.
+- Live: the race log shows `mirrored: true` and the grid is the exact x/yaw negation of the
+  unmirrored run. Captures at the same countdown (`logs/hud_capture_unmirrored.png` and
+  `logs/hud_capture_mirrored.png`) are left-right mirrors of each other: the cliff with the
+  balcony house and the guardrail swap sides, and the car itself stays unmirrored.
+
+**Not tested**: whether retail's image is mirrored by the projection instead (the difference is
+only the car model and sign lettering, plus steering feel); the live feel of a mirrored race.
 
 ## Results screen
 

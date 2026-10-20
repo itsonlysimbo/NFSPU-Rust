@@ -142,10 +142,23 @@ pub fn opponent_cars(cars: &[Car], has_model: impl Fn(&str) -> bool) -> Vec<usiz
     list
 }
 
+/// One owned car: its catalogue index and the paint section kept with it (0 when unread).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OwnedCar {
+    pub index: usize,
+    /// The `[sectionN]` number of the model's `.clr` (see [`OWNED_PAINT_OFFSET`]).
+    pub paint: u16,
+}
+
+/// Field in an owned car's saved catalogue copy that holds its paint: the value
+/// `OwnedCar.ExtColour` reads (a `short` in the engine's car object). Greg's owned 356 stores 19,
+/// which is the orange section 19 retail shows; the surrounding colour table is still unresolved.
+pub const OWNED_PAINT_OFFSET: usize = 0x3e6;
+
 /// The cars a player owns, found in their save. The `PlayerInfo` section holds a copy of each
 /// owned car's catalogue record; each copy starts with the car's id followed by its full name.
 /// Finding them by that pattern is a **guess** at the section's layout (it finds Greg's one car).
-pub fn owned_cars(save: &[u8], cars: &[Car]) -> Vec<usize> {
+pub fn owned_cars(save: &[u8], cars: &[Car]) -> Vec<OwnedCar> {
     let find = |name: &[u8], from: usize| save.get(from..).and_then(|s| s.windows(name.len()).position(|w| w == name)).map(|p| p + from);
     let Some(start) = find(b"PlayerInfo\0", 0) else { return Vec::new() };
     let end = find(b"TrackRecords\0", start).unwrap_or(save.len());
@@ -162,7 +175,10 @@ pub fn owned_cars(save: &[u8], cars: &[Car]) -> Vec<usize> {
         }
     }
     found.sort();
-    found.into_iter().map(|(_, i)| i).collect()
+    found
+        .into_iter()
+        .map(|(at, index)| OwnedCar { index, paint: u16_at(section, at + OWNED_PAINT_OFFSET) })
+        .collect()
 }
 
 /// A track from `nfs5.trk`.
@@ -261,13 +277,18 @@ pub struct Paint {
 /// Reads a `.clr` (plain `key=value` text, one `[sectionN]` per paint).
 pub fn parse_paints(text: &str) -> Vec<Paint> {
     let mut out: Vec<Paint> = Vec::new();
+    let mut active = false;
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
-            let section = line.trim_matches(['[', ']']).to_ascii_lowercase().strip_prefix("section").and_then(|n| n.parse().ok()).unwrap_or(out.len() + 1);
+            active = false;
+            let section = line.trim_matches(['[', ']']).to_ascii_lowercase();
+            let Some(section) = section.strip_prefix("section").and_then(|n| n.parse().ok()) else { continue };
             out.push(Paint { section, body: [0; 3] });
+            active = true;
             continue;
         }
+        if !active { continue; }
         let Some((k, v)) = line.split_once('=') else { continue };
         let Some(paint) = out.last_mut() else { continue };
         let Ok(v) = v.trim().parse::<u32>() else { continue };
@@ -360,8 +381,19 @@ mod tests {
         save.extend(b"TrackRecords\0");
         save.extend(77u16.to_le_bytes());
         save.extend(b"'50 356 1100 Coup\0");
-        assert_eq!(owned_cars(&save, &cars), vec![0], "only inside PlayerInfo");
+        assert_eq!(owned_cars(&save, &cars), vec![OwnedCar { index: 0, paint: 0 }], "only inside PlayerInfo");
         assert!(owned_cars(b"nothing", &cars).is_empty());
+    }
+
+    #[test]
+    fn an_owned_car_keeps_its_paint_section() {
+        let mut record = car_record(76, "'50 356 1100 Cabriolet", "356_1", 521, 501, 1950, 0, 0);
+        record[OWNED_PAINT_OFFSET..OWNED_PAINT_OFFSET + 2].copy_from_slice(&19u16.to_le_bytes());
+        let cars = parse_cars(&record);
+        let mut save = b"PlayerInfo\0\x01\0\0\0\0\0\0\0".to_vec();
+        save.extend(&record);
+        save.extend(b"TrackRecords\0");
+        assert_eq!(owned_cars(&save, &cars), vec![OwnedCar { index: 0, paint: 19 }]);
     }
 
     fn track_record(id: i16, file: &str, locked: i16) -> Vec<u8> {

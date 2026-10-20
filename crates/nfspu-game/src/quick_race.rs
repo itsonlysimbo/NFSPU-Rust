@@ -61,6 +61,10 @@ pub struct QuickRace {
     /// Indices into `cars`: the player's own cars, then factory stock (the car dropdown lists
     /// both, in that order), and the cars opponents can be given.
     pub owned: Vec<usize>,
+    /// Each owned car's paint section from the save, parallel to `owned` (0 when unread).
+    pub owned_paint: Vec<u16>,
+    /// Each owned car's body colour for the list swatch, parallel to `owned`.
+    pub owned_swatch: Vec<Option<[u8; 3]>>,
     pub factory: Vec<usize>,
     pub opponent_list: Vec<usize>,
     /// Indices into `tracks` that the location dropdown offers.
@@ -93,6 +97,17 @@ fn saved(save: Option<&[u8]>, name: &str, len: usize, default: usize) -> usize {
     save.and_then(|s| crate::menu::save_value(s, name)).map(|v| v as usize).unwrap_or(default).min(len.saturating_sub(1))
 }
 
+/// The swatch index for a paint value kept in a save: its `[sectionN]` number when the model has
+/// that section, else the value read as a 1-based list position. Both readings agree on Greg's
+/// owned 356 (19 = orange section 19); which one retail means is not settled (`fe.md`).
+fn paint_index(paints: &[Paint], value: u16) -> Option<usize> {
+    if let Some(i) = paints.iter().position(|p| p.section == usize::from(value)) {
+        return Some(i);
+    }
+    let pos = usize::from(value).checked_sub(1)?;
+    paints.get(pos).map(|_| pos)
+}
+
 impl QuickRace {
     /// Reads the catalogue from the game folder and the player's last choices from their save
     /// (read-only). `career_year` opens tournament tracks (1950 for a new player).
@@ -104,9 +119,21 @@ impl QuickRace {
         let models = catalog::file_names(&game_dir.join("GameData").join("CarModel"));
         let track_files = catalog::file_names(&game_dir.join("GameData").join("Track"));
         let records = std::fs::read(game_dir.join("SaveData").join("nfs5.trk")).unwrap_or_default();
+        let owned_cars = save.map(|s| catalog::owned_cars(s, &cars)).unwrap_or_default();
+        let owned: Vec<usize> = owned_cars.iter().map(|o| o.index).collect();
+        let owned_paint: Vec<u16> = owned_cars.iter().map(|o| o.paint).collect();
+        let owned_swatch: Vec<Option<[u8; 3]>> = owned_cars
+            .iter()
+            .map(|o| {
+                let paints = catalog::load_paints(game_dir, &cars[o.index].model);
+                paint_index(&paints, o.paint).map(|i| paints[i].body)
+            })
+            .collect();
         let mut q = QuickRace {
             game_dir: game_dir.to_path_buf(),
-            owned: save.map(|s| catalog::owned_cars(s, &cars)).unwrap_or_default(),
+            owned,
+            owned_paint,
+            owned_swatch,
             factory: catalog::quick_race_cars(&cars),
             opponent_list: catalog::opponent_cars(&cars, |m| models.contains(&format!("{m}.crp").to_ascii_lowercase())),
             track_list: catalog::quick_race_tracks(&tracks, &tournaments, career_year, |f| track_files.contains(&format!("{f}.crp").to_ascii_lowercase())),
@@ -147,10 +174,18 @@ impl QuickRace {
     }
 
     fn refresh_paints(&mut self) {
-        let model = self.chosen_car().map(|(i, _)| self.cars[i].model.clone()).unwrap_or_default();
+        let chosen = self.chosen_car();
+        let model = chosen.map(|(i, _)| self.cars[i].model.clone()).unwrap_or_default();
         if model != self.paints_for {
             self.paints = catalog::load_paints(&self.game_dir, &model);
             self.paints_for = model;
+        }
+        // An owned car shows the paint kept in the save. Its colour box is replaced by the garage
+        // button, so this choice is not the player's dropdown pick.
+        if let Some((_, true)) = chosen {
+            if let Some(pos) = self.owned_paint.get(self.car).copied().and_then(|value| paint_index(&self.paints, value)) {
+                self.colour = pos;
+            }
         }
         self.colour = self.colour.min(self.paints.len().saturating_sub(1));
     }
@@ -213,14 +248,16 @@ impl QuickRace {
 
         // Car: "OWNED" and "FACTORY STOCK" sections, each grouped by era and class headers.
         let mut rows = Vec::new();
-        for (title, list, divider) in [(OWNED, &self.owned, true), (FACTORY_STOCK, &self.factory, false)] {
+        let owned_items: Vec<(usize, Option<[u8; 3]>)> = self.owned.iter().enumerate().map(|(n, i)| (*i, self.owned_swatch.get(n).copied().flatten())).collect();
+        let factory_items: Vec<(usize, Option<[u8; 3]>)> = self.factory.iter().map(|i| (*i, None)).collect();
+        for (title, list, divider) in [(OWNED, &owned_items, true), (FACTORY_STOCK, &factory_items, false)] {
             if list.is_empty() {
                 continue;
             }
             rows.push(Row::Header(s(title)));
             let mut last: Option<(u32, u32)> = None;
-            for &i in list.iter() {
-                let car = &self.cars[i];
+            for (i, swatch) in list.iter() {
+                let car = &self.cars[*i];
                 if last.map(|l| l.0) != Some(car.era) {
                     rows.push(Row::Header(s(car.era)));
                 }
@@ -229,10 +266,8 @@ impl QuickRace {
                 }
                 last = Some((car.era, car.class));
                 let (year, model) = car.year_and_model();
-                // The owned row's swatch is the car's own paint; not read from the save yet, so
-                // its first paint stands in (**gap**).
-                let swatch = divider.then(|| catalog::load_paints(&self.game_dir, &car.model).first().map(|p| p.body)).flatten();
-                rows.push(Row::Item { lead: Some(year), text: model, swatch, divider });
+                // An owned row's swatch is that car's own paint, read from the save at load.
+                rows.push(Row::Item { lead: Some(year), text: model, swatch: *swatch, divider });
             }
         }
         let closed = self.chosen_car().map(|(i, _)| self.cars[i].short.clone()).unwrap_or_default();
@@ -310,6 +345,11 @@ impl QuickRace {
     /// The location screen's picture of the chosen track (a stand-in for retail's 3D track room).
     pub fn track_art(&self) -> Option<String> {
         self.chosen_track().map(|t| format!("TrackArt/{}.fsh", t.art[0])).filter(|a| a != "TrackArt/.fsh")
+    }
+
+    /// Renderer paint identifier (`[sectionN]`), distinct from the colour dropdown's file-order index.
+    pub fn paint_section(&self) -> usize {
+        self.paints.get(self.colour).map_or(4, |p| p.section)
     }
 
     /// The race these choices make.
@@ -429,25 +469,37 @@ mod tests {
         assert!(s.automatic && s.damage && s.roof_up && !s.abs);
     }
 
-    /// The car picked is the car driven: whatever the garage shows (model, paint section, body
-    /// style) survives `race_setup.txt` and becomes the race's car options and catalogue car.
     #[test]
-    fn the_picked_car_reaches_the_race_unchanged() {
+    fn race_paint_keeps_the_selected_section_not_the_list_index() {
         let mut q = sample();
-        q.cars[1].style = 6;
-        q.cars[0].style = 2;
-        for (pick, colour, id, model, style) in [(0, 20, 76, "356_1", 2), (2, 3, 108, "356b", 6), (3, 0, 120, "901", 1)] {
-            q.pick(CAR, pick);
-            // (No game folder in tests, so the model's paints are set by hand after the pick.)
-            q.paints = (1..=22).map(|section| Paint { section, body: [section as u8, 0, 0] }).collect();
-            q.colour = colour;
-            let shown = q.car_look().expect("a car is chosen");
-            let text = q.setup(&locale(), 0).to_text();
-            let raced = RaceSetup::parse(&text).expect("the hand-off file reads back");
-            let options = raced.car_options();
-            assert_eq!((raced.car_id, raced.car_model.as_str()), (id, model), "catalogue car for the .sim");
-            assert_eq!((raced.car_model.clone(), options.paint, options.style), shown, "the race spawns what the garage shows");
-            assert_eq!((options.paint, options.style), (colour + 1, style));
+        q.paints = catalog::parse_paints("[section1]\ncolor1.r=252\n[section5]\ncolor1.r=100\n[section4]\ncolor1.r=255\n");
+        for (index, section) in [1, 5, 4].into_iter().enumerate() {
+            q.colour = index;
+            let setup = q.setup(&locale(), 0);
+            assert_eq!(setup.paint_section, section);
+            assert_eq!(RaceSetup::parse(&setup.to_text()).unwrap().paint_section, section);
         }
+    }
+
+    #[test]
+    fn a_saved_paint_selects_the_section_not_the_list_position() {
+        let paints = catalog::parse_paints("[section1]\ncolor1.r=10\n[section5]\ncolor1.r=50\n[section4]\ncolor1.r=40\n");
+        assert_eq!(paint_index(&paints, 4), Some(2), "section 4 is third in file order");
+        assert_eq!(paint_index(&paints, 5), Some(1));
+        assert_eq!(paint_index(&paints, 3), Some(2), "a missing section falls back to a 1-based list position");
+        assert_eq!(paint_index(&paints, 0), None);
+        assert_eq!(paint_index(&paints, 9), None);
+    }
+
+    #[test]
+    fn an_owned_car_uses_its_saved_paint_swatch() {
+        let mut q = sample();
+        q.paints = catalog::parse_paints("[section1]\ncolor1.r=10\n[section5]\ncolor1.r=50\n[section4]\ncolor1.r=40\n");
+        q.paints_for = "356_1".into();
+        q.owned_paint = vec![4];
+        q.colour = 0;
+        q.pick(CAR, 0);
+        assert_eq!(q.colour, 2, "the save's section 4 is the third swatch");
+        assert_eq!(q.paint_section(), 4);
     }
 }

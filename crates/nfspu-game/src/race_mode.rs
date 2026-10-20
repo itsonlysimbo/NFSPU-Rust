@@ -29,6 +29,8 @@ use std::path::PathBuf;
 pub struct RaceRequest {
     pub track: String,
     pub direction: Direction,
+    /// Mirrored track layout (`Track1.Direction` "…/mirrored"): the world's x factor flips.
+    pub mirrored: bool,
     /// Laps for circuits (point-to-point roads always run once).
     pub laps: u32,
     /// Cars on the grid, the player included (1 + opponents, at most 8).
@@ -41,18 +43,19 @@ pub struct RaceRequest {
 }
 
 impl RaceRequest {
-    /// Parses `<track>[,<forward|backward>[,<laps>[,<opponents>[,<difficulty>]]]]`.
+    /// Parses `<track>[,<forward|backward>[_mirrored][,<laps>[,<opponents>[,<difficulty>]]]]`.
+    /// `mirror` anywhere in the direction token (`forward_mirrored`, `bkw/mir`) mirrors the track.
     pub fn parse(s: &str) -> Option<Self> {
         let mut parts = s.split(',').map(str::trim);
         let track = parts.next().filter(|t| !t.is_empty())?.to_ascii_lowercase();
-        let direction = match parts.next().map(|d| d.to_ascii_lowercase()) {
-            Some(d) if d.starts_with('b') || d == "reverse" => Direction::Backward,
-            _ => Direction::Forward,
-        };
+        let dir = parts.next().map(str::to_ascii_lowercase).unwrap_or_default();
+        let backward = dir.starts_with('b') || dir == "reverse";
+        let mirrored = dir.contains("mirror") || dir.ends_with("mir");
+        let direction = if backward { Direction::Backward } else { Direction::Forward };
         let laps = parts.next().and_then(|l| l.parse().ok()).filter(|&l| l > 0).unwrap_or(2);
         let opponents: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0).min(7);
         let difficulty = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
-        Some(RaceRequest { track, direction, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new() })
+        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new() })
     }
 
     pub fn from_env() -> Option<Self> {
@@ -436,6 +439,7 @@ fn race_tick(
     hold.0 = run.race.held();
     run.race.fill_status(run.player, &mut status);
     status.wrong_way = run.wrong_way;
+    status.slice = run.slice;
     status.speed_kmh = car.car.speed.abs() * 3.6;
     status.rpm = Some(car.car.rpm());
     status.car_places = std::iter::once(&car.car).chain(run.racers.iter().map(|r| &r.car)).map(|c| [c.pos.x, c.pos.z, c.yaw, c.speed]).collect();
@@ -529,6 +533,7 @@ mod tests {
     fn parses_race_requests() {
         let r = RaceRequest::parse("Monaco1,backward,3").unwrap();
         assert_eq!((r.track.as_str(), r.direction, r.laps), ("monaco1", Direction::Backward, 3));
+        assert!(!r.mirrored);
         let r = RaceRequest::parse("alps").unwrap();
         assert_eq!((r.direction, r.laps, r.cars, r.difficulty), (Direction::Forward, 2, 1, 0));
         let r = RaceRequest::parse("coastal,forward,1,7,2").unwrap();
@@ -536,5 +541,9 @@ mod tests {
         assert_eq!(RaceRequest::parse("coastal,forward,1,12,9").unwrap().cars, 8, "at most 7 opponents");
         assert_eq!(RaceRequest::parse("skidpad, f, 0").unwrap().laps, 2);
         assert!(RaceRequest::parse("").is_none());
+        let r = RaceRequest::parse("coastal,forward_mirrored,2").unwrap();
+        assert_eq!((r.direction, r.mirrored, r.laps), (Direction::Forward, true, 2));
+        let r = RaceRequest::parse("coastal,bkw/mir,2").unwrap();
+        assert_eq!((r.direction, r.mirrored, r.laps), (Direction::Backward, true, 2));
     }
 }

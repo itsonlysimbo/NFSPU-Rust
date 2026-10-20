@@ -37,7 +37,8 @@ impl Direction {
         matches!(self, Direction::ForwardMirrored | Direction::BackwardMirrored)
     }
 
-    fn word(self) -> &'static str {
+    /// The setup file / `NFSPU_RACE` word.
+    pub fn word(self) -> &'static str {
         match self {
             Direction::Forward => "forward",
             Direction::Backward => "backward",
@@ -274,5 +275,7 @@ mod tests {
         assert!(Direction::BackwardMirrored.backward() && Direction::BackwardMirrored.mirrored());
         assert!(!Direction::Forward.backward());
         assert_eq!(Direction::Backward.index(), 1);
+        assert_eq!(Direction::ForwardMirrored.word(), "forward_mirrored");
+        assert_eq!(Direction::BackwardMirrored.word(), "backward_mirrored");
     }
 }
