@@ -23,7 +23,7 @@ use bevy::camera::ScalingMode;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
+use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastBackfaces, RayCastVisibility};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::path::PathBuf;
@@ -208,6 +208,7 @@ pub struct SkyFx {
     flare_pos: Vec<f32>,
     /// How much of the sun is unhidden (0..1), from the last 200 ms test.
     sun_visible: f32,
+    logged_visible: f32,
     next_sun_test: f32,
     drops: Vec<WindowDrop>,
     drop_mesh: Option<Handle<Mesh>>,
@@ -231,7 +232,7 @@ pub struct SkyFxPlugin;
 impl Plugin for SkyFxPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, (add_flare_camera, tick_sky, update_drops, update_glows).chain())
-            .add_systems(PostUpdate, (follow_camera, update_sky_meshes, place_sun_and_flare).chain().before(bevy::transform::TransformSystems::Propagate));
+            .add_systems(PostUpdate, (follow_camera, update_sky_meshes, sun_blockers, place_sun_and_flare).chain().before(bevy::transform::TransformSystems::Propagate));
     }
 }
 
@@ -441,6 +442,7 @@ pub fn spawn(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
         flares,
         flare_pos,
         sun_visible: 0.0,
+        logged_visible: -1.0,
         next_sun_test: 0.0,
         drops: Vec::new(),
         drop_mesh: None,
@@ -644,6 +646,16 @@ fn update_sky_meshes(fx: Option<Res<SkyFx>>, weather: Option<Res<WeatherState>>,
     }
 }
 
+/// Retail tests the sun against the depth buffer, which sees every surface whichever way it faces.
+/// Bevy's ray cast skips back faces unless told otherwise, and the X mirror of the track import
+/// turns every track triangle round, so without this the sun test saw straight through rocks,
+/// tunnels and buildings. Every world mesh counts both faces.
+fn sun_blockers(mut commands: Commands, new: Query<Entity, (Added<Mesh3d>, Without<SkyPart>, Without<RenderLayers>, Without<RayCastBackfaces>)>) {
+    for e in &new {
+        commands.entity(e).try_insert(RayCastBackfaces);
+    }
+}
+
 /// Where a world point lands on a 640x480 screen for this camera, if in front.
 fn screen_point(cam: &Transform, proj: &Projection, p: Vec3) -> Option<Vec2> {
     let clip = proj.get_clip_from_view() * cam.to_matrix().inverse() * p.extend(1.0);
@@ -708,6 +720,10 @@ fn place_sun_and_flare(
                 }
             }
             fx.sun_visible = clear as f32 * 0.0625;
+        }
+        if fx.sun_visible != fx.logged_visible {
+            fx.logged_visible = fx.sun_visible;
+            log(&format!("sun unhidden {:.2} (screen {:?})", fx.sun_visible, on_screen.map(|s| [s.x.round(), s.y.round()])));
         }
     }
     // The ghosts on the overlay: centre + (sun - centre) x the record's flare-line position.
