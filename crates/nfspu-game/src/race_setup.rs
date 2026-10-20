@@ -93,6 +93,9 @@ pub struct RaceSetup {
     /// ... and the `.clr` section it names (`[sectionN]`), which is what the car model takes
     /// (`car_model::CarOptions::paint`). Both are written so the race needs no catalogue lookup.
     pub paint_section: usize,
+    /// A custom body colour picked in the colour list's palette (replaces the section's `color1`),
+    /// or `None` for the section's own colours. Written as `custom_colour = r,g,b` or `none`.
+    pub custom_colour: Option<[u8; 3]>,
     /// Body style in the model's `.tpg` (`[styleN]`, 1-based; `car_model::CarOptions::style`),
     /// from the catalogue record: the 356 1100 Cabriolet is 2 ("Cabrio").
     pub car_style: usize,
@@ -113,7 +116,7 @@ impl RaceSetup {
     /// The player's car model options in the race: the setup's body style and paint section (the
     /// ones the garage showed), exterior detail, a driver in the seat.
     pub fn car_options(&self) -> crate::car_model::CarOptions {
-        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, ..Default::default() }
+        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, body: self.custom_colour, ..Default::default() }
     }
 
     /// `key = value` lines, one per field, in a fixed order.
@@ -146,6 +149,7 @@ impl RaceSetup {
         line("owned_car", self.owned_car.to_string());
         line("paint", self.paint.to_string());
         line("paint_section", self.paint_section.to_string());
+        line("custom_colour", self.custom_colour.map_or("none".to_string(), |[r, g, b]| format!("{r},{g},{b}")));
         line("car_style", self.car_style.to_string());
         line("automatic", self.automatic.to_string());
         line("abs", self.abs.to_string());
@@ -207,6 +211,11 @@ impl RaceSetup {
             owned_car: flag("owned_car")?,
             paint: num("paint", get("paint")?)?,
             paint_section: num("paint_section", get("paint_section")?)?,
+            // older setups have no custom colour line
+            custom_colour: get("custom_colour").ok().and_then(|v| {
+                let c: Vec<u8> = v.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+                (c.len() == 3).then(|| [c[0], c[1], c[2]])
+            }),
             car_style: num("car_style", get("car_style")?)?,
             automatic: flag("automatic")?,
             abs: flag("abs")?,
@@ -239,6 +248,7 @@ mod tests {
             owned_car: true,
             paint: 20,
             paint_section: 21,
+            custom_colour: Some([12, 200, 99]),
             car_style: 2,
             automatic: true,
             abs: true,
@@ -248,6 +258,18 @@ mod tests {
             difficulty: 1,
             player: "3Greg".into(),
         }
+    }
+
+    #[test]
+    fn custom_colour_round_trips_and_may_be_absent() {
+        let s = sample();
+        assert_eq!(RaceSetup::parse(&s.to_text()).unwrap().custom_colour, Some([12, 200, 99]));
+        let none = RaceSetup { custom_colour: None, ..sample() };
+        assert_eq!(RaceSetup::parse(&none.to_text()).unwrap().custom_colour, None);
+        let old: String = s.to_text().lines().filter(|l| !l.starts_with("custom_colour")).map(|l| format!("{l}
+")).collect();
+        assert_eq!(RaceSetup::parse(&old).unwrap().custom_colour, None, "setups written before the field still load");
+        assert_eq!(s.car_options().body, Some([12, 200, 99]));
     }
 
     #[test]

@@ -401,3 +401,70 @@ has swung in). Side by side with the recording: `logs/compare_993_vs_356_chase.p
   against the game.
 - Field of view: the engine's 75 degrees across at 4:3 kept vertical on wider screens is an
   assumption for widescreen; the recording (16:9) fits it.
+
+## Smooth shading: the files carry per-vertex normals (2026-10-20)
+
+Playtest note: "the 356 and other car models are very polygonal". We shaded every triangle with
+its flat face normal. The car files have more:
+
+| Part tag | Size | Holds |
+|---|---|---|
+| `[lod, 0, 't', 'v']` | 16 bytes per entry | vertex positions |
+| `[lod, 0, 'm', 'n']` | 16 bytes per entry, same count as the vertices | **one unit normal per vertex** (x, y, z, unused) |
+| `[lod, 0, 'n', '$']` | 16 bytes per triangle | a plane per triangle (normal and distance) |
+
+In every triangle part checked (all parts of the 928, 993, 356 A, 914 and eas1), the info row
+of kind 1 (normals) starts at the same offset as the row of kind 0 (vertices). So a corner's
+normal is the normal with the same index as its vertex. The modellers' shared vertices therefore
+give smooth shading, and hard edges are where vertices are split (two vertices, same place,
+different normals). Nothing is computed with a crease angle.
+
+The loader now gives every corner the file's vertex normal. It is turned by the part's matrix
+and mirrored in x like the positions, and the viewer's baked lighting uses it. The flat face
+normal is kept as a fallback where a part has no normals, or where a vertex normal points away
+from its triangle; the audit prints how many corners used each.
+
+### The body's reflection (found, not drawn yet)
+
+Body paint uses material kind `CarExtEnv`, and the engine has a sky-map texture layer for it. In
+the decompile, the layer gives every vertex a second texture coordinate: it takes the vertex
+position plus the vertex normal times a strength, turns that into the camera's frame, and keeps
+x and y, scaled and offset by 0.5. That is a reflection map that slides over the body as the
+camera moves. The strength comes from a table picked by a detail setting (0 turns the layer
+off). Which picture it samples (most likely the track sky's small sky maps `st1a` / `st1b`) and
+how it is blended were not traced. Not implemented.
+
+## Paint colours are stored as H/S/V (2026-10-20)
+
+Playtest note: the 914 offered "only white and black". The 914's `.clr` has 20 sections, and all
+20 were listed, but only `[section1]` has real `colorK.r/.g/.b` numbers. Sections 2-20 write 0
+there and keep their colours only as `colorK.h/.s/.v`. Each of those is 0-255, with hue 255 a full
+turn. Section 1 shows the two forms agree: h 51, s 13, v 255 is RGB (252, 255, 242), and on the
+993 h 141, s 255, v 106 is (0, 72, 106). We read only RGB, so 19 of the 914's paints came out
+black: the swatches and the cars both. Both readers (`car_model::parse_clr` and
+`catalog::parse_paints`) now use H/S/V when a colour has all three values and RGB otherwise.
+
+### Custom colour (ours, not retail)
+
+After the model's own paints, the colour list has a `CUSTOM` title and 42 more swatches (12 hues
+at three strengths, six greys). Picking one keeps the model's first paint scheme for stripes and
+cabin and replaces only the body colour. It travels in the race setup as `custom_colour = r,g,b`
+(`none` otherwise; older setups without the line still load) and reaches the garage car and the
+player's race car through `CarOptions::body`. Opponents keep their own retail paints.
+
+### Checks (2026-10-20)
+
+- Audit (`logs/car_audit_after.txt`): 97-98% of corners now use the file's vertex normals (993
+  6,164 smooth / 163 flat; 356 A, 901, 914, 959 and Boxster similar).
+- `logs/compare_356a_smoothing.png`: the 356 A front before and after (before was also the old
+  black paint). The bonnet and wing curves are now shaded smoothly.
+- `logs/compare_914_paints.png`: the 914 in section 1 (white, red stripes), section 7 (yellow,
+  red and green stripes, red cabin; black before the H/S/V fix) and a custom blue.
+- `logs/menu_colour_list.png`: the quick-race colour list for the 356 1100 shows its 21 real
+  colours (it showed black bars). `logs/menu_custom_colour.png`: a custom blue picked from the
+  palette, on the garage car and in the closed colour box.
+- Race: pressing RACE from that setup writes `custom_colour = 0,0,255` and the race logs
+  `race car '356_1': paint section 1, custom body colour Some([0, 0, 255])`. The race car was
+  checked by log only (not tested by eye).
+- Not tested: the palette rows' look in the open list below the retail paints; retail frames to
+  compare the smooth shading with (the let's play is at too low a resolution to judge it).

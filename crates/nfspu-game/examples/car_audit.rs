@@ -160,11 +160,13 @@ fn main() {
             issues.push(format!("odd size {w:.2} x {h:.2} x {l:.2}"));
         }
         println!(
-            "== {name:<14} style '{}', {} tris ({} cabin), {} pages, {:.2} x {:.2} x {:.2} m: {}",
+            "== {name:<14} style '{}', {} tris ({} cabin), {} pages, smooth corners {} / flat {}, {:.2} x {:.2} x {:.2} m: {}",
             m.style_name,
             m.triangles(),
             m.interior.positions.len() / 3,
             m.pages.iter().flatten().count(),
+            m.smoothing[0],
+            m.smoothing[1],
             w,
             h,
             l,
