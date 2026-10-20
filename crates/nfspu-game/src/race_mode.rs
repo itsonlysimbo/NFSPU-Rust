@@ -241,18 +241,21 @@ fn start_race(
         };
         let spot = spots[1 + racers.len()];
         let start = spot.pos + Vec3::Y * 1.5;
-        let paints = nfspu_game::catalog::load_paints(&game, &model).len();
-        let options = CarOptions { paint: if paints > 0 { rng.below(paints) } else { CarOptions::default().paint }, ..Default::default() };
+        // Each opponent in its catalogue body style and a random paint (`.clr` section number).
+        let paints = nfspu_game::catalog::load_paints(&game, &model);
+        let paint = if paints.is_empty() { CarOptions::default().paint } else { paints[rng.below(paints.len())].section };
+        let options = CarOptions { paint, style: record.style, ..Default::default() };
         let body = commands.spawn((Transform::from_translation(start).with_rotation(Quat::from_rotation_y(spot.yaw)), Visibility::default(), AiBody::default())).id();
         crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, body, &model, &options);
         let name = names.get(&(driver.name_id as u16)).cloned().unwrap_or_else(|| format!("Driver {}", driver.id));
         race_log(&format!(
-            "car {}: {name} (driver {}, difficulty {}, skills {:?}) in {} '{model}' paint {}, {ais}.ais (top table speed {:.1} m/s); {}",
+            "car {}: {name} (driver {}, difficulty {}, skills {:?}) in {} '{model}' style {} paint {}, {ais}.ais (top table speed {:.1} m/s); {}",
             racers.len() + 1,
             driver.id,
             driver.difficulty,
             driver.skills,
             record.name,
+            options.style,
             options.paint,
             spec.speeds[0],
             loaded.note

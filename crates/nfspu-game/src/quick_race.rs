@@ -289,6 +289,17 @@ impl QuickRace {
         out
     }
 
+    /// How the chosen car looks: (model file, `.clr` paint section, `.tpg` body style). The garage
+    /// shows exactly this and the race spawns exactly this (through `RaceSetup`), so the two can
+    /// not differ. The paint is the colour list's choice; an owned car's own colour (kept in the
+    /// save) is not read yet. A model without a `.clr` keeps the car model's default paint.
+    pub fn car_look(&self) -> Option<(String, usize, usize)> {
+        let (i, _) = self.chosen_car()?;
+        let car = &self.cars[i];
+        let paint = self.paints.get(self.colour).map(|p| p.section).unwrap_or(crate::car_model::CarOptions::default().paint);
+        Some((car.model.clone(), paint, car.style.max(1)))
+    }
+
     /// The chosen car's logo (`NFS5.CarLogo`): archive file and logo number (two entries each).
     pub fn car_logo(&self) -> Option<(String, usize)> {
         let (i, _) = self.chosen_car()?;
@@ -305,6 +316,7 @@ impl QuickRace {
     pub fn setup(&self, locale: &Locale, language: u8) -> RaceSetup {
         let s = |id: u32| locale.text(id, language).map(|t| t.trim().to_string()).unwrap_or_default();
         let (car, owned) = self.chosen_car().map(|(i, o)| (self.cars[i].clone(), o)).unwrap_or_default();
+        let (_, paint_section, car_style) = self.car_look().unwrap_or((String::new(), crate::car_model::CarOptions::default().paint, 1));
         let track = self.chosen_track().cloned().unwrap_or_default();
         let opponent_cars = match self.opponent_car {
             0 => OpponentCars::SameCar,
@@ -328,6 +340,8 @@ impl QuickRace {
             car_name: car.name.clone(),
             owned_car: owned,
             paint: self.colour.min(255) as u8,
+            paint_section,
+            car_style,
             automatic: self.transmission == 1,
             abs: self.abs == 1,
             traction_control: self.traction == 1,
@@ -413,5 +427,27 @@ mod tests {
         assert_eq!(s.opponents, 7);
         assert_eq!(s.opponent_cars, OpponentCars::Car { id: 108, model: "356b".into() });
         assert!(s.automatic && s.damage && s.roof_up && !s.abs);
+    }
+
+    /// The car picked is the car driven: whatever the garage shows (model, paint section, body
+    /// style) survives `race_setup.txt` and becomes the race's car options and catalogue car.
+    #[test]
+    fn the_picked_car_reaches_the_race_unchanged() {
+        let mut q = sample();
+        q.cars[1].style = 6;
+        q.cars[0].style = 2;
+        for (pick, colour, id, model, style) in [(0, 20, 76, "356_1", 2), (2, 3, 108, "356b", 6), (3, 0, 120, "901", 1)] {
+            q.pick(CAR, pick);
+            // (No game folder in tests, so the model's paints are set by hand after the pick.)
+            q.paints = (1..=22).map(|section| Paint { section, body: [section as u8, 0, 0] }).collect();
+            q.colour = colour;
+            let shown = q.car_look().expect("a car is chosen");
+            let text = q.setup(&locale(), 0).to_text();
+            let raced = RaceSetup::parse(&text).expect("the hand-off file reads back");
+            let options = raced.car_options();
+            assert_eq!((raced.car_id, raced.car_model.as_str()), (id, model), "catalogue car for the .sim");
+            assert_eq!((raced.car_model.clone(), options.paint, options.style), shown, "the race spawns what the garage shows");
+            assert_eq!((options.paint, options.style), (colour + 1, style));
+        }
     }
 }

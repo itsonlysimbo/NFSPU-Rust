@@ -386,6 +386,8 @@ recording of 2026-10-16 22:40 (quick race with Greg, read as still frames; nothi
 | 0x179 | engine sound bank |
 | 0x1ac | `u32` class string (501 CLASS 3, 502 CLASS 2, 503 CLASS 1) |
 | 0x1b0 | `u32` era string (521 CLASSIC ERA, 522 GOLDEN ERA, 523 MODERN ERA) |
+| 0x1bf | `u8` 1 = open car (cabriolet, roadster, speedster, convertible): the roof setting applies |
+| 0x1c0 | `u8` body style, 0-based: style `n + 1` of the model's `.tpg` (`[styleN] name=`). Matches the style name for all 84 quick-race cars (356 Cabriolet 1 = "Cabrio", 901 RS 6 = "carrera 2.7", 993 Cabriolet 5 = "Carreracabrio") |
 | 0x1f4 | `u16` kind: 0 road car, 1 traffic, 2 police |
 | 0x1f6 | `u16` logo number n: archive entries 2n and 2n+1 are its left and right halves ("PORS" + "CHE" for 4; the recording shows "1600 SUPER" for 19) |
 | 0x1f8, 0x202 | `u16` first and last model year |
@@ -454,6 +456,20 @@ Plain text, one `[sectionN]` per paint scheme, with `color1..4` as both HSV (`.h
 - **Gaps**: the 3D garage car (`NFS5.3DCAR`) and the track room (`ID_TRACK`) are not drawn. As a
   stand-in the location screen shows the chosen track's `TrackArt` picture. The garage, car
   compare and track records screens open, but their special controls are not drawn.
+
+### The picked car in the race (2026-10-19)
+- Playtest of 2026-10-19: RACE wrote `car_model = 356_1, paint = 20`, but the race showed the
+  356 as a coupé in the default paint. The race read neither style nor paint from the setup.
+- Now one value, `QuickRace::car_look()` (model, `.clr` section, `.tpg` style), feeds both the
+  garage car and `RaceSetup` (`paint_section`, `car_style`). The race builds the player car from
+  `RaceSetup::car_options()` and the physics from `car_id` (its `.sim`).
+- Body style comes from the record (byte 0x1c0), replacing the earlier name matching. The
+  retail car builder takes a 0-based style number and opens `[style<n+1>]` of the `.tpg`
+  (Ghidra); that the number is this byte is shown by the data (all 84 cars match by name).
+- Opponents now also use their record's style, and a random paint by `.clr` section number (the
+  list index used before was off by one, and 0 means unpainted).
+- **Not done**: roof up/down is passed (`roof_up`) and logged, but the car model draws each style
+  one way only; the roof pieces' types are not mapped to up and down yet.
 
 ### RACE hand-off
 Pressing RACE builds a `RaceSetup` (`crates/nfspu-game/src/race_setup.rs`), logs it to

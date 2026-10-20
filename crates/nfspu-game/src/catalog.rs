@@ -47,6 +47,13 @@ pub struct Car {
     /// 0 or 2 available, 1 hidden, 3 never in the lists (`u16` at 0x204; the three factory-driver
     /// prize cars use 3).
     pub availability: u16,
+    /// Body style in the model's `.tpg`, 1-based (`[styleN]`): byte 0x1c0 plus one. Checked on all
+    /// 84 quick-race cars: `'50 356 1100 Cabriolet` 2 = "Cabrio", `'73 911 Carrera RS 2.7` 7 =
+    /// "carrera 2.7", `'94 911 Carrera Cabriolet (993)` 6 = "Carreracabrio".
+    pub style: usize,
+    /// An open car (cabriolet, roadster, speedster, convertible): byte 0x1bf is 1. The roof
+    /// setting applies to these.
+    pub open_top: bool,
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -83,6 +90,8 @@ impl Car {
             year_from: i16_at(r, 0x1f8),
             year_to: i16_at(r, 0x202),
             availability: u16_at(r, 0x204),
+            style: r[0x1c0] as usize + 1,
+            open_top: r[0x1bf] == 1,
         }
     }
 
@@ -244,6 +253,8 @@ pub fn format_ticks(ticks: u32) -> String {
 /// One paint scheme of a car model: `[sectionN]` of its `.clr`, `color1` being the body colour.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Paint {
+    /// The `N` of `[sectionN]`: what `car_model::CarOptions::paint` takes.
+    pub section: usize,
     pub body: [u8; 3],
 }
 
@@ -253,7 +264,8 @@ pub fn parse_paints(text: &str) -> Vec<Paint> {
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
-            out.push(Paint { body: [0; 3] });
+            let section = line.trim_matches(['[', ']']).to_ascii_lowercase().strip_prefix("section").and_then(|n| n.parse().ok()).unwrap_or(out.len() + 1);
+            out.push(Paint { section, body: [0; 3] });
             continue;
         }
         let Some((k, v)) = line.split_once('=') else { continue };
@@ -305,6 +317,18 @@ mod tests {
         r[0x1f8..0x1fa].copy_from_slice(&year.to_le_bytes());
         r[0x204..0x206].copy_from_slice(&avail.to_le_bytes());
         r
+    }
+
+    /// The `'50 356 1100 Cabriolet` record: style byte 1 (the `.tpg`'s `[style2] Cabrio`), open top.
+    #[test]
+    fn body_style_and_open_top_come_from_the_record() {
+        let mut r = car_record(76, "'50 356 1100 Cabriolet", "356_1", 521, 501, 1950, 0, 0);
+        r[0x1bf] = 1;
+        r[0x1c0] = 1;
+        let car = &parse_cars(&r)[0];
+        assert_eq!((car.style, car.open_top), (2, true));
+        let coupe = &parse_cars(&car_record(77, "'50 356 1100 Coup", "356_1", 521, 501, 1950, 0, 0))[0];
+        assert_eq!((coupe.style, coupe.open_top), (1, false));
     }
 
     #[test]
@@ -379,6 +403,6 @@ mod tests {
     #[test]
     fn paints_read_the_body_colour_of_each_section() {
         let paints = parse_paints("[section1]\r\ncolor1.r=252\r\ncolor1.g=255\r\ncolor1.b=242\r\ncolor2.r=1\r\n\r\n[section2]\r\ncolor1.r=255\r\n");
-        assert_eq!(paints, vec![Paint { body: [252, 255, 242] }, Paint { body: [255, 0, 0] }]);
+        assert_eq!(paints, vec![Paint { section: 1, body: [252, 255, 242] }, Paint { section: 2, body: [255, 0, 0] }]);
     }
 }

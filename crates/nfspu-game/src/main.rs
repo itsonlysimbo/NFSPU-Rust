@@ -114,6 +114,13 @@ fn main() {
     let loading = race_load::from_env();
     let track = loading.as_ref().map_or(track, |s| s.track.clone());
     let car_name = loading.as_ref().map_or(car_name, |s| s.car.clone());
+    // A quick race drives the menu's car as the garage showed it: body style and paint from
+    // `logs/race_setup.txt` (only when it names the car being loaded).
+    let quick = quick_race_setup().filter(|s| s.car_model.eq_ignore_ascii_case(&car_name));
+    let (car_style, car_paint) = quick.as_ref().map_or((car_style, car_paint), |s| (s.car_options().style, s.car_options().paint));
+    if let Some(s) = &quick {
+        log_line(&format!("player car from the menu: '{}' (id {}) model '{}' style {} paint section {} roof {}", s.car_name, s.car_id, s.car_model, car_style, car_paint, if s.roof_up { "up" } else { "down" }));
+    }
 
     let result = App::new()
         .add_plugins(DefaultPlugins.build().disable::<bevy::app::TerminalCtrlCHandlerPlugin>().set(WindowPlugin {
@@ -1429,10 +1436,7 @@ fn player_car(pos: Vec3, yaw: f32, model: &str) -> Car {
     use nfspu_game::car_load::{self, Pick};
     use nfspu_game::car_sim::Aids;
     let dir = PathBuf::from(env::var("NFSPU_GAME_DIR").unwrap_or_default());
-    let setup = env::var_os("NFSPU_LOADING")
-        .and_then(|_| fs::read_to_string(log_path().parent()?.join("race_setup.txt")).ok())
-        .and_then(|t| nfspu_game::race_setup::RaceSetup::parse(&t).ok())
-        .filter(|s| s.car_model.eq_ignore_ascii_case(model));
+    let setup = quick_race_setup().filter(|s| s.car_model.eq_ignore_ascii_case(model));
     let aids = match &setup {
         Some(s) => Aids { automatic: s.automatic, abs: s.abs, traction_control: s.traction_control, keyboard_steering: true },
         None => Aids { automatic: env::var("NFSPU_MANUAL").is_err(), ..Aids::default() },
@@ -1453,6 +1457,13 @@ fn player_car(pos: Vec3, yaw: f32, model: &str) -> Car {
             Car::with_spec(pos, yaw, nfspu_game::car_sim::Spec::generic(), aids)
         }
     }
+}
+
+/// The menu's quick-race setup (`logs/race_setup.txt`) while a race loads (`NFSPU_LOADING`).
+fn quick_race_setup() -> Option<nfspu_game::race_setup::RaceSetup> {
+    env::var_os("NFSPU_LOADING")?;
+    let text = fs::read_to_string(log_path().parent()?.join("race_setup.txt")).ok()?;
+    nfspu_game::race_setup::RaceSetup::parse(&text).map_err(|e| log_line(&format!("race setup not used: {e}"))).ok()
 }
 
 #[derive(Resource)]
