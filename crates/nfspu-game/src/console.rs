@@ -77,7 +77,7 @@ fn fs_names(dir: &PathBuf, suffix: &str) -> Vec<String> {
         .collect()
 }
 
-/// Spawns the console's UI node once, at startup.
+/// Spawns the console's UI node when a race scene is built (removed with it).
 pub fn spawn(commands: &mut Commands) {
     commands.spawn((
         Node {
@@ -92,6 +92,7 @@ pub fn spawn(commands: &mut Commands) {
         ZIndex(100),
         ConsoleRoot,
         ConsoleText,
+        DespawnOnExit(crate::flow::AppState::Race),
         Text::new(""),
         TextFont { font_size: FontSize::Px(15.0), ..default() },
         TextColor(Color::srgb(0.92, 0.95, 1.0)),

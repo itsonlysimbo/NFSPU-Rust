@@ -509,9 +509,10 @@ Plain text, one `[sectionN]` per paint scheme, with `color1..4` as both HSV (`.h
 
 ### RACE hand-off
 Pressing RACE builds a `RaceSetup` (`crates/nfspu-game/src/race_setup.rs`), logs it to
-`logs/m0.log`, writes it to `logs/race_setup.txt` as `key = value` lines, and leaves the menu.
-`NFSPU_MENU_PLAY=1` with `NFSPU_MENU_CAPTURE=1` presses RACE after the capture, for checks without
-a window. `NFSPU_MENU_PICK=zMergedList.Car=5;Track1.Track=2` makes choices before the first frame.
+`logs/m0.log`, writes it to `logs/race_setup.txt` as `key = value` lines (a log), and hands it to
+the race in memory: the same program moves on to the loading screen (`docs/DESIGN.md`, "One
+program for menu and race"). `NFSPU_MENU_PLAY=1` with `NFSPU_MENU_CAPTURE=1` presses RACE after
+the capture, for checks without a human at the window. `NFSPU_MENU_PICK=zMergedList.Car=5;Track1.Track=2` makes choices before the first frame.
 
 ## What is still open
 

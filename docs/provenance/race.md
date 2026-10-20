@@ -319,8 +319,8 @@ panel 2 s after the finish (the delay is a guess).
   the road; the same race again: Boomer put back after 10 s and 1:55.96, the others within 0.4 s
   of before. The running order and the player's position (8 of 8) updated every tick.
   **Not tested**: a race where the player finishes against opponents (the results panel with
-  driver names), and quick race started from the menu with opponents (`run_flow` passes
-  `NFSPU_RACE=...,<opponents>,<difficulty>` and `NFSPU_OPPONENTS=<catalogue ids>`).
+  driver names), and quick race started from the menu with opponents (the menu now builds
+  the same race request in memory, `flow::RaceConfig::from_menu`, with the opponents' catalogue ids).
 
 ## Checks run (2026-10-17)
 

@@ -9,6 +9,7 @@
 //! light, which made half-transparent art over the room too light.
 
 use super::{pointer, project, FrontEnd, MenuVisual};
+use crate::flow::AppState;
 use bevy::asset::{uuid_handle, RenderAssetUsages};
 use bevy::camera::{ClearColorConfig, ImageRenderTarget, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -49,9 +50,28 @@ impl Plugin for MenuGarage {
     fn build(&self, app: &mut App) {
         app.insert_resource(Garage::from_env())
             .add_plugins(UiMaterialPlugin::<ScreenBlend>::default())
-            .add_systems(Startup, spawn_camera)
-            .add_systems(Update, (stage, inspect, animate, blend).chain());
+            .add_systems(OnEnter(AppState::Menu), spawn_camera.run_if(resource_exists::<FrontEnd>))
+            .add_systems(OnExit(AppState::Menu), leave)
+            .add_systems(Update, (stage, inspect, animate, blend).chain().run_if(in_state(AppState::Menu)).run_if(resource_exists::<FrontEnd>));
     }
+}
+
+/// The front end goes for a race: the room, its car and the camera go (`DespawnOnExit`), and the
+/// garage starts afresh when the menu comes back (the turntable keeps turning from where it was).
+fn leave(mut garage: ResMut<Garage>, mut images: ResMut<Assets<Image>>) {
+    images.remove(&garage.target);
+    garage.target = Handle::default();
+    garage.look = None;
+    garage.root = None;
+    garage.car = None;
+    garage.car_root = None;
+    garage.car_box = None;
+    garage.layout_for.clear();
+    garage.doors = Default::default();
+    garage.front_lights = Default::default();
+    garage.rear_lights = Default::default();
+    garage.cabin = Default::default();
+    garage.hovering = false;
 }
 
 #[derive(Resource)]
@@ -225,9 +245,10 @@ fn spawn_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut s
         Projection::Perspective(PerspectiveProjection { fov: garage::vertical_fov(&garage::GARAGE, 4.0 / 3.0), near: 0.05, far: 100.0, ..default() }),
         Transform::from_xyz(0.0, 0.0, 0.0).looking_to(Vec3::Z, Vec3::Y),
         GarageCamera,
+        DespawnOnExit(AppState::Menu),
     ));
     let material = blends.add(ScreenBlend { menu: Handle::default(), room: target });
-    commands.spawn((Node { position_type: PositionType::Absolute, ..default() }, MaterialNode(material), Visibility::Hidden, GarageBlend));
+    commands.spawn((Node { position_type: PositionType::Absolute, ..default() }, MaterialNode(material), Visibility::Hidden, GarageBlend, DespawnOnExit(AppState::Menu)));
 }
 
 /// Shows the menu through the blend node while a room is drawn, and the plain menu image
@@ -361,7 +382,7 @@ fn stage(
 
 fn spawn_room(look: &RoomLook, game_dir: &std::path::Path, commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) -> Entity {
     let o = look.offset;
-    let root = commands.spawn((Transform::from_xyz(o[0] * nfspu_game::MIRROR_X, o[1], o[2]), Visibility::default())).id();
+    let root = commands.spawn((Transform::from_xyz(o[0] * nfspu_game::MIRROR_X, o[1], o[2]), Visibility::default(), DespawnOnExit(AppState::Menu))).id();
     let started = std::time::Instant::now();
     let model = match garage::load_room(game_dir, look.model) {
         Ok(m) => m,

@@ -8,9 +8,10 @@
 //! retail car physics of their car's `.sim` and hit each other and the player (`collide_cars`).
 //!
 //! Hook API (for the coordinator, HUD and loading screen):
-//! - `RacePlugin(Option<RaceRequest>)`: always inserts `nfspu_game::race::RaceStatus` (default =
-//!   inactive) and `RaceHold`; with a request it also starts the race after `setup`.
-//! - `RaceRequest::from_env()` parses `NFSPU_RACE`; build one by hand to start a race from a menu.
+//! - `RacePlugin`: always inserts `nfspu_game::race::RaceStatus` (default = inactive) and
+//!   `RaceHold`; while a `RaceRequest` resource exists it starts the race once `setup` has built
+//!   the scene (`flow::RaceConfig` puts the request in place).
+//! - `RaceRequest::from_env()` parses `NFSPU_RACE`; the menu builds one from its choices.
 //! - `RaceHold(true)` while the cars must stay still; `drive_car` ignores input then.
 //! - Events go to `logs/race.log`.
 
@@ -21,6 +22,7 @@ use nfspu_game::car_load::{self, Pick};
 use nfspu_game::car_model::CarOptions;
 use nfspu_game::race::{self, CarSample, Kind, Race, RaceEvent, RaceSetup, RaceStatus};
 use nfspu_game::race_path::{self, crosses, grid_spot, Direction, TrackRace};
+use crate::flow::AppState;
 use std::io::Write as _;
 use std::path::PathBuf;
 
@@ -111,20 +113,35 @@ struct RaceRun {
     results_shown: bool,
 }
 
-pub struct RacePlugin(pub Option<RaceRequest>);
+pub struct RacePlugin;
 
 impl Plugin for RacePlugin {
     fn build(&self, app: &mut App) {
-        // With a race requested the car is held from the start (also behind the loading screen).
-        app.insert_resource(RaceStatus::default()).insert_resource(RaceHold(self.0.is_some()));
-        if let Some(req) = &self.0 {
-            // The race starts on the first frame the car exists: right after start-up, or once the
-            // loading screen has run `setup`.
-            app.insert_resource(req.clone())
-                .add_systems(Update, (start_race, race_tick, place_opponents, results_screen, leave_results).chain().after(crate::drive_car));
-        }
+        app.insert_resource(RaceStatus::default()).insert_resource(RaceHold(false));
+        // The race starts on the first frame the car exists, once the loading screen (or the
+        // direct start) has run `setup`.
+        app.add_systems(
+            Update,
+            (start_race, race_tick, place_opponents, results_screen, leave_results)
+                .chain()
+                .after(crate::drive_car)
+                .run_if(crate::flow::in_race_scene)
+                .run_if(resource_exists::<RaceRequest>),
+        )
+        .add_systems(OnExit(AppState::Race), end_race);
     }
 }
+
+/// Forgets the race that was run (its opponents' bodies and the results panel go with the race
+/// scene, `DespawnOnExit`).
+fn end_race(mut commands: Commands) {
+    commands.remove_resource::<RaceRun>();
+    commands.remove_resource::<RaceTried>();
+}
+
+/// The race was set up (or failed to) for this scene; it is not tried again every frame.
+#[derive(Resource)]
+struct RaceTried;
 
 fn race_log_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("logs").join("race.log")
@@ -144,7 +161,7 @@ fn game_dir() -> PathBuf {
 #[allow(clippy::too_many_arguments)]
 fn start_race(
     mut commands: Commands,
-    mut started: Local<bool>,
+    tried: Option<Res<RaceTried>>,
     req: Res<RaceRequest>,
     car: Option<ResMut<crate::CarRes>>,
     car_name: Res<crate::CarName>,
@@ -155,10 +172,10 @@ fn start_race(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if *started || car.is_none() {
+    if tried.is_some() || car.is_none() {
         return;
     }
-    *started = true;
+    commands.insert_resource(RaceTried);
     let _ = std::fs::create_dir_all(race_log_path().parent().unwrap());
     let _ = std::fs::remove_file(race_log_path());
     race_log(&format!("request: {:?}", *req));
@@ -251,7 +268,7 @@ fn start_race(
         let paints = nfspu_game::catalog::load_paints(&game, &model);
         let paint = if paints.is_empty() { CarOptions::default().paint } else { paints[rng.below(paints.len())].section };
         let options = CarOptions { paint, style: record.style, ..Default::default() };
-        let body = commands.spawn((Transform::from_translation(start).with_rotation(Quat::from_rotation_y(spot.yaw)), Visibility::default(), AiBody::default())).id();
+        let body = commands.spawn((Transform::from_translation(start).with_rotation(Quat::from_rotation_y(spot.yaw)), Visibility::default(), AiBody::default(), DespawnOnExit(AppState::Race))).id();
         crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, body, &model, &options);
         let name = names.get(&(driver.name_id as u16)).cloned().unwrap_or_else(|| format!("Driver {}", driver.id));
         race_log(&format!(
@@ -481,6 +498,7 @@ fn log_results(text: &str) {
 fn results_screen(mut commands: Commands, run: Option<ResMut<RaceRun>>, status: Res<RaceStatus>, mut panel: Query<&mut Text, With<ResultsPanel>>, mut logged_all: Local<bool>) {
     let Some(mut run) = run else { return };
     if !status.finished || run.finished_for < 2.0 {
+        *logged_all = false;
         return;
     }
     let text = results_text(&status);
@@ -514,14 +532,22 @@ fn results_screen(mut commands: Commands, run: Option<ResMut<RaceRun>>, status: 
         TextFont { font_size: FontSize::Px(20.0), ..default() },
         TextColor(Color::srgb(1.0, 0.95, 0.8)),
         ResultsPanel,
+        DespawnOnExit(AppState::Race),
     ));
 }
 
-/// Enter, Space or Escape on the results closes the race (the launcher then reopens the menu).
-fn leave_results(run: Option<Res<RaceRun>>, keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
+/// Enter, Space or Escape on the results closes the race: back to the menu's quick-race screen,
+/// or out of the program when the race was started without the menu.
+fn leave_results(
+    run: Option<Res<RaceRun>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    back: Res<crate::flow::ReturnToMenu>,
+    mut next: ResMut<NextState<AppState>>,
+    mut exit: MessageWriter<AppExit>,
+) {
     if run.is_some_and(|r| r.results_shown) && keys.any_just_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::Escape]) {
         race_log("results closed, leaving the race");
-        exit.write(AppExit::Success);
+        crate::flow::leave_race(&back, &mut next, &mut exit);
     }
 }
 

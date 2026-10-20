@@ -56,6 +56,50 @@ all 15 tracks (`logs/sky_weather_audit.txt`) and live (`logs/weather_alps_on.png
 next: rain/snow particles, sun glare and stars, cloud layers, and lit track materials (the world is
 still unlit), plus the three unexplained float fields in the weather record.
 
+### One program for menu and race (2026-10-19)
+The front end and the race are one Bevy app with one window (`crates/nfspu-game/src/flow.rs`);
+the old supervisor that restarted the program between menu and race is gone. States:
+
+| `AppState` | what runs | entered by |
+|---|---|---|
+| `Menu` | `menu_mode` + `menu_garage` (UI camera, menu image, garage 3D camera and room), menu music | `NFSPU_MENU=<screen>` at start-up; closing a race's results |
+| `Loading` | `race_load`: the retail loading screen; the track is read on a worker thread and `setup` builds the scene behind the screen at stage 7. Without a loading setup (free viewer, bare `NFSPU_RACE`) `setup` runs at once | RACE in the menu; `NFSPU_LOADING` / `NFSPU_RACE` / plain start-up |
+| `Race` | driving, cameras, `race_mode` (grid, countdown, AI, laps, results panel), HUD, weather | the loading screen reaching stage 10 |
+
+- **Race config.** `RaceConfig` gathers what a race needs (track, car, style, paint, mirror, the
+  loading setup, the `RaceRequest` with opponents, the menu's `RaceSetup`, HUD on/off) and puts it
+  in place as resources before `Loading`. It is built either from the menu's choices in memory
+  (`RaceConfig::from_menu`, the same rules the supervisor used) or from the environment and
+  arguments (`from_env`), so `NFSPU_RACE`, `NFSPU_LOADING`, `NFSPU_MENU` starts keep working.
+  `logs/race_setup.txt` is still written on RACE, as a log; only an `NFSPU_LOADING` test start
+  reads it back.
+- **What survives a race.** The `FrontEnd` resource (page, popup, history, quick-race choices,
+  player, art caches) and the music player stay. On the way back the menu rebuilds its screens and
+  shows the screen RACE was pressed on. Camera mode and headlight choice also stay.
+- **What a race leaves behind: nothing.** Race entities carry `DespawnOnExit(AppState::Race)`
+  (world camera, car bodies with their models, opponents, console, fps, results panel) or are
+  listed in `TrackEntities` (track meshes and sky); the HUD and the weather effects remove their
+  own (`hud_plugin` teardown, `weather_fx::clear`). Resources removed on exit: ground, walls, car,
+  car model holder, sky, weather, race run, request, loading setup, HUD state. The cursor is
+  released and the world mirror flag reset. Menu entities carry `DespawnOnExit(AppState::Menu)`.
+  `logs/m0.log` prints entity and asset counts 3 s after each return to the menu, so a leak shows.
+- **Cameras.** One primary camera per state: the menu's `Camera2d` (default UI camera) plus the
+  garage's off-screen `Camera3d` (renders into a texture); the loading screen's own top camera;
+  the race's world camera (+ the weather sky camera at order -1). None outlives its state.
+- **Input.** Escape quits only on the menu; in a race it releases the captured mouse and closes
+  the results. Key presses do not leak across a state change (Bevy clears "just pressed" each
+  frame, and the change takes effect next frame).
+- **Music.** Leaving the menu is treated like a screen with no music (`musicfile=NONE`): the song
+  fades out over 1.5 s (`menu_music`'s screen rule) while loading, and stops when the race shows.
+  Back on the menu the screen's pattern picks a new song. Retail's in-race music is not done.
+- **Tests.** `NFSPU_FLOW_TEST=<races>[,<seconds>]` with `NFSPU_MENU=quickrace`: the menu presses
+  RACE by itself (next track each time), each race is left after `<seconds>` as if the results
+  were closed, then saves `logs/flow_menu_after.png` and quits. Checked 2026-10-20: 2 races
+  (coastal, foothills) and 6 races (also farmland, monaco3) in one run; entity and asset counts on
+  the menu identical after every race; private memory on the menu 983, 1041, 1081, 1091, 1093,
+  1092 MB (levels off after the first races). `NFSPU_MENU_CAPTURE=1 NFSPU_MENU_PLAY=1` saves the menu
+  picture and then goes on to the race.
+
 - Which file holds the drivable road surface (`.edg`? `.map`? inside `.crp`?)
 - How the `.crp` articles/parts map to meshes, and the vertex format.
 
