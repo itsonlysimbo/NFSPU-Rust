@@ -25,6 +25,7 @@ pub mod race_path;
 pub mod race_setup;
 pub mod refbuild;
 pub mod sky;
+pub mod sky_fx;
 pub mod track;
 pub mod weather;
 pub mod weather_fx;

@@ -163,6 +163,7 @@ fn main() {
         .add_plugins(nfspu_game::hud_plugin::HudPlugin)
         // Fog, rain, snow, lightning and night headlights (weather_fx.rs).
         .add_plugins(nfspu_game::weather_fx::WeatherFxPlugin)
+        .add_plugins(nfspu_game::sky_fx::SkyFxPlugin)
         .add_systems(Update, feed_weather.after(drive_car))
         .add_systems(Update, feed_hud.after(drive_car))
         // after the cars' final positions for this frame are known
@@ -715,21 +716,31 @@ fn spawn_sky(
     let region_b = data.regions.get(1).map(|r| r.tint(&data.pictures)).unwrap_or(base);
     let horizon_now = base;
 
-    // --- the dome: sky colour, brightest at the horizon and darker overhead and below ---
-    let dome_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(base[0], base[1], base[2]),
-        base_color_texture: Some(images.add(sky_gradient())),
-        unlit: true,
-        cull_mode: None,
-        // The sky is not fogged: only the world is.
-        fog_enabled: false,
-        ..default()
-    });
-    spawned.push(
-        commands
-            .spawn((Mesh3d(meshes.add(sky_dome_mesh())), MeshMaterial3d(dome_mat.clone()), Transform::default(), SkyFollows, nfspu_game::weather_fx::SkyPart))
-            .id(),
-    );
+    // --- the retail sky layers (sky_fx), at the horizon band's scale: radius / retail's 400 ---
+    let sky_scale = data.layout.as_ref().map_or(SKY_RADIUS * 0.95, horizon_band_radius) / 400.0;
+    let layers = nfspu_game::sky_fx::spawn(commands, meshes, materials, images, &data, sky_scale);
+    let retail_layers = !layers.is_empty();
+    spawned.extend(layers);
+
+    // --- fallback dome when the track has no sky level: sky colour, brightest at the horizon ---
+    let mut dome_handle = None;
+    if !retail_layers {
+        let dome_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(base[0], base[1], base[2]),
+            base_color_texture: Some(images.add(sky_gradient())),
+            unlit: true,
+            cull_mode: None,
+            // The sky is not fogged: only the world is.
+            fog_enabled: false,
+            ..default()
+        });
+        spawned.push(
+            commands
+                .spawn((Mesh3d(meshes.add(sky_dome_mesh())), MeshMaterial3d(dome_mat.clone()), Transform::default(), SkyFollows, nfspu_game::weather_fx::SkyPart))
+                .id(),
+        );
+        dome_handle = Some(dome_mat);
+    }
 
     // Verified atlas and hzcl vertex assignment; overall sky interpretation is still incomplete.
     let mut band_handle = None;
@@ -765,7 +776,8 @@ fn spawn_sky(
             alpha_mode: AlphaMode::Blend,
             unlit: true,
             cull_mode: None,
-            fog_enabled: false,
+            // Retail draws the horizon last in the sky pass, under the sky fog (sky_fx ranks).
+            depth_bias: nfspu_game::sky_fx::HORIZON_DEPTH_BIAS,
             ..default()
         });
         spawned.push(
@@ -783,7 +795,7 @@ fn spawn_sky(
     }
 
     let _ = band_handle;
-    commands.insert_resource(SkyState { dome: Some(dome_mat), regions: [base, region_b], last: base });
+    commands.insert_resource(SkyState { dome: dome_handle, regions: [base, region_b], last: base });
     log_line(&format!(
         "sky '{track}': {} level, {} pictures, {} weather regions, {} horizon colours ({})",
         if data.level.is_empty() { "unknown".to_string() } else { data.level.clone() },
@@ -867,14 +879,19 @@ fn sky_dome_mesh() -> Mesh {
 }
 
 /// Independent atlas quads keep discontinuous cell/flip UVs from interpolating across seams.
+/// How far out the horizon band sits: keeps even its highest and lowest corners inside the sky.
+/// Uniform scaling preserves retail angular proportions; a cylindrical radius alone does not
+/// bound corner distance.
+fn horizon_band_radius(layout: &sky::HorizonLayout) -> f32 {
+    let vertical = layout.bottom.abs().max((layout.bottom + layout.height).abs()) / 400.0;
+    SKY_RADIUS * 0.95 / (1.0 + vertical * vertical).sqrt()
+}
+
 fn horizon_band_mesh(layout: &sky::HorizonLayout) -> Mesh {
     let mut positions = Vec::with_capacity(64);
     let mut uvs = Vec::with_capacity(64);
     let mut indices = Vec::with_capacity(96);
-    // Keep even the highest/lowest corners inside the opaque dome. Uniform scaling preserves
-    // retail angular proportions; a cylindrical radius alone does not bound corner distance.
-    let vertical = layout.bottom.abs().max((layout.bottom + layout.height).abs()) / 400.0;
-    let radius = SKY_RADIUS * 0.95 / (1.0 + vertical * vertical).sqrt();
+    let radius = horizon_band_radius(layout);
     for (quad, tex) in layout.quads(radius, nfspu_game::world_mirror_x()) {
         let first = positions.len() as u32;
         positions.extend(quad);
@@ -1030,6 +1047,7 @@ fn spawn_track(
 
     let ground = track::load_ground(name)?;
     entities.extend(spawn_sky(commands, meshes, materials, images, name));
+    entities.extend(nfspu_game::sky_fx::spawn_glows(commands, meshes, materials, images, name));
     let weather_started = Instant::now();
     let weather = nfspu_game::weather_fx::WeatherState::load(name, SKY_RADIUS);
     log_line(&format!("{} (loaded in {:.2}s)", weather.track.describe(), weather_started.elapsed().as_secs_f32()));

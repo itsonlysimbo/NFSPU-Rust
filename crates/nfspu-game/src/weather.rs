@@ -234,6 +234,20 @@ pub fn lightning_chance_per_tick(storm: f32) -> f32 {
     }
 }
 
+/// The lightning strength (0..2) for a keyframe's lightning amount, or None below the first
+/// threshold (exe 0x45CCF0).
+pub fn lightning_strength(storm: f32) -> Option<usize> {
+    if storm < 0.04 {
+        None
+    } else if storm < 0.33 {
+        Some(0)
+    } else if storm < 0.66 {
+        Some(1)
+    } else {
+        Some(2)
+    }
+}
+
 /// Retail's precipitation particle count by graphics detail (0 lowest .. 3 highest).
 pub const PRECIPITATION_PARTICLES: [u32; 4] = [60, 140, 220, 300];
 
