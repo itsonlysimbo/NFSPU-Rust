@@ -27,6 +27,7 @@ A from-scratch Rust/Bevy/wgpu rewrite of Need for Speed: Porsche Unleashed (NFS5
 ## Parallel sessions (user, 2026-10-17)
 - Big goals are split into parallel sessions, each in its own git worktree and branch. Keep to about 3-4 at once on this 16 GB machine.
 - Each session keeps to its own files, commits to its branch and never pushes. The coordinating session merges and tests each branch as soon as it lands, so later work starts from current code.
+- When Claude runs out of usage, the user's other agents (e.g. OpenCode) may keep working directly in the main checkout on `master`, without committing. Before merging, the coordinator runs `git status`. Any uncommitted work is the user's: commit it to an `other-agent/<date>` branch and merge it like a session branch. Never discard it.
 - The user playtests once per milestone, with one recording (game sound on) of everything they noticed.
 
 ## Builds
