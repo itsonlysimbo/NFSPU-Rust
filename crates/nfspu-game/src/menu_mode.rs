@@ -82,6 +82,27 @@ struct FrontEnd {
     tip: Vec<Draw>,
     /// The quick-race choices (cars, tracks, options), read from the catalogue and the save.
     quick: nfspu_game::quick_race::QuickRace,
+    /// A screen change being animated (`transon` / `transoff`).
+    transition: Option<Transition>,
+    /// The frames the animated icons showed in the last picture, and the front-end clock (ms).
+    anim_key: Vec<usize>,
+    clock_ms: f64,
+}
+
+/// How long one half of a screen change takes: retail's menus run their 0..512 transition
+/// progress over half the timer rate, 64 ticks of the 128 Hz front-end clock (0.5 s), after a
+/// 3-frame wait. The old screen goes off first, then the new one comes on.
+const TRANSITION_MS: f32 = 64.0 * 1000.0 / 128.0;
+const TRANSITION_WAIT_FRAMES: u8 = 3;
+
+/// A screen change in progress. While going off, the layers that leave are drawn from `leaving`
+/// (the picture before the change); then the layers named in `coming` come on.
+struct Transition {
+    leaving: Vec<(Screen, bool, bool)>,
+    coming: Vec<String>,
+    going_off: bool,
+    wait: u8,
+    ms: f32,
 }
 
 impl FrontEnd {
@@ -262,6 +283,72 @@ impl FrontEnd {
         }
         self.layers = layers;
         self.interactive = interactive;
+    }
+
+    /// Starts the animation from the layers shown before a change (`before`) to the current ones:
+    /// layers that are no longer there go off, new ones come on (by name; a page kept under a
+    /// new popup stays put, and so does the bottom bar). Nothing to animate: no transition.
+    /// `NFSPU_MENU_NOTRANS=1` turns transitions off.
+    fn begin_transition(&mut self, before: Vec<(Screen, bool)>) {
+        if std::env::var("NFSPU_MENU_NOTRANS").as_deref() == Ok("1") {
+            return;
+        }
+        let now: Vec<&str> = self.layers.iter().map(|l| l.name.as_str()).collect();
+        let was: Vec<String> = before.iter().map(|(l, _)| l.name.clone()).collect();
+        let leaving: Vec<(Screen, bool, bool)> = before.into_iter().map(|(l, on)| {
+            let goes = !now.iter().any(|n| n.eq_ignore_ascii_case(&l.name));
+            (l, on, goes)
+        }).collect();
+        let coming: Vec<String> = now.iter().filter(|n| !was.iter().any(|w| w.eq_ignore_ascii_case(n))).map(|n| n.to_string()).collect();
+        let any_off = leaving.iter().any(|(_, _, goes)| *goes);
+        if !any_off && coming.is_empty() {
+            return;
+        }
+        crate::log_line(&format!(
+            "menu: transition off {:?} on {:?}",
+            leaving.iter().filter(|l| l.2).map(|l| l.0.name.as_str()).collect::<Vec<_>>(),
+            coming
+        ));
+        self.transition = Some(Transition { leaving, coming, going_off: any_off, wait: TRANSITION_WAIT_FRAMES, ms: 0.0 });
+    }
+
+    /// Moves a screen change on by one frame of `ms`. True while one is running.
+    fn advance_transition(&mut self, ms: f32) -> bool {
+        let Some(t) = &mut self.transition else { return false };
+        if t.wait > 0 {
+            t.wait -= 1;
+        } else {
+            t.ms += ms;
+        }
+        if t.ms >= TRANSITION_MS {
+            if t.going_off && !t.coming.is_empty() {
+                t.going_off = false;
+                t.wait = TRANSITION_WAIT_FRAMES;
+                t.ms = 0.0;
+            } else {
+                self.transition = None;
+            }
+        }
+        self.dirty = true;
+        true
+    }
+
+    /// The layers to draw now: during a screen change, the leaving or the coming screens with
+    /// each moving layer marked (`Screen::moving`); otherwise the current ones.
+    fn shown_layers(&self) -> Vec<(Screen, bool)> {
+        let Some(t) = &self.transition else {
+            return self.layers.iter().cloned().zip(self.interactive.iter().copied()).collect();
+        };
+        let away = (t.ms / TRANSITION_MS).clamp(0.0, 1.0);
+        if t.going_off {
+            t.leaving.iter().map(|(l, on, goes)| (Screen { moving: goes.then_some((true, away)), ..l.clone() }, *on)).collect()
+        } else {
+            self.layers
+                .iter()
+                .zip(&self.interactive)
+                .map(|(l, on)| (Screen { moving: t.coming.iter().any(|c| c.eq_ignore_ascii_case(&l.name)).then_some((false, 1.0 - away)), ..l.clone() }, *on))
+                .collect()
+        }
     }
 
     /// What a click does: the topmost interactive layer with an action under the pointer.
@@ -582,6 +669,9 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
         help: Default::default(),
         tip: Vec::new(),
         quick: Default::default(),
+        transition: None,
+        anim_key: Vec::new(),
+        clock_ms: 0.0,
     };
     // Read the selected player's save first: screens built below show its settings, and the
     // start page (built before it) is rebuilt.
@@ -637,6 +727,9 @@ fn enter_menu(
     // Screens are rebuilt (the page and popup as they were) and drawn afresh.
     state.reload();
     state.stack();
+    // The screens come on as on any screen change (retail's menus start in their "coming on"
+    // state).
+    state.begin_transition(Vec::new());
     state.laid_out_for = Vec2::ZERO;
     state.hover_key = None;
     state.dirty = true;
@@ -783,10 +876,16 @@ fn present(
     mut commands: Commands,
     mut sounds: ResMut<Sounds>,
     mut audio: ResMut<Assets<AudioSource>>,
+    buttons: Res<ButtonInput<MouseButton>>,
 ) {
     let Ok(window) = windows.single() else { return };
     let Ok((mut node, mut image_node)) = shown.single_mut() else { return };
     state.advance_slide(time.delta_secs() * 1000.0);
+    let changing = state.advance_transition(time.delta_secs() * 1000.0);
+    // The front-end clock for the animated icons (128 Hz ticks) and the mouse button.
+    state.clock_ms += time.delta_secs_f64() * 1000.0;
+    state.art.ticks = (state.clock_ms * 128.0 / 1000.0) as u32;
+    state.art.pressed = buttons.pressed(MouseButton::Left);
     // Movies run on real time; a new frame means a new picture.
     if state.art.advance_movies(time.delta_secs() * 1000.0) {
         state.dirty = true;
@@ -796,24 +895,33 @@ fn present(
         state.laid_out_for = size;
         place(&mut node, window);
     }
-    let p = pointer(window);
+    // During a screen change nothing is under the pointer (input waits for it to finish).
+    let p = if changing { Vec2::new(-1000.0, -1000.0) } else { pointer(window) };
     // The hover sound plays when the pointer moves onto another control that does something.
-    let hovered = state.hit_at(p.x, p.y);
+    let hovered = state.hit_at(p.x, p.y).filter(|h| *h != Hit::Inert);
+    // Over an open list nothing under it shows a tip.
+    let over_list = matches!(state.hit_at(p.x, p.y), Some(Hit::Inert | Hit::ComboPick(..) | Hit::ComboScroll(..)));
     if hovered.is_some() && hovered != state.last_hover {
         sounds.play(SOUND_HOVER, &mut commands, &mut audio);
     }
     state.last_hover = hovered;
     let state = &mut *state;
     // Help tip for the control under the pointer on the topmost interactive layer, drawn above all.
-    let help = state.layers.iter().zip(&state.interactive).enumerate().rev().filter(|(_, (_, on))| **on).find_map(|(i, (s, _))| nfspu_game::menu_help::at(&s.help, [p.x, p.y]).map(|h| (i, h)));
+    let help = if over_list { None } else { state.layers.iter().zip(&state.interactive).enumerate().rev().filter(|(_, (_, on))| **on).find_map(|(i, (s, _))| nfspu_game::menu_help::at(&s.help, [p.x, p.y]).map(|h| (i, h))) };
     let tip = state.help.update(help, [p.x, p.y], time.delta_secs() * 1000.0, menu_canvas::Art::font(&mut state.art, nfspu_game::menu_help::FONT));
     state.dirty |= tip != state.tip;
     state.tip = tip;
     let tip_layer = Screen { draw: state.tip.clone(), ..Default::default() };
     let backdrop = state.backdrop();
-    let mut layers: Vec<(&Screen, bool)> = state.layers.iter().zip(state.interactive.iter().copied()).collect();
+    let shown = state.shown_layers();
+    let mut layers: Vec<(&Screen, bool)> = shown.iter().map(|(l, on)| (l, *on)).collect();
     layers.push((&tip_layer, false));
     let key = menu_canvas::hover_key(&layers, Some([p.x, p.y]));
+    let frames = menu_canvas::anim_frames(&layers, Some([p.x, p.y]), (state.art.ticks, state.art.pressed));
+    if frames != state.anim_key {
+        state.anim_key = frames;
+        state.dirty = true;
+    }
     if !state.dirty && state.hover_key.as_ref() == Some(&key) {
         return;
     }
@@ -857,6 +965,10 @@ fn click(
 ) {
     let Ok(window) = windows.single() else { return };
     let pointer = pointer(window);
+    // Input waits while a screen change is animating.
+    if state.transition.is_some() {
+        return;
+    }
     // The mouse wheel scrolls an open list, three rows a notch (**guess**: the retail list scrolls
     // by its arrows; wheel support is not traced).
     if wheel.delta.y != 0.0 {
@@ -873,11 +985,15 @@ fn click(
 
     let action = if back { Some(Hit::Back) } else { state.hit_at(pointer.x, pointer.y) };
     // An open dropdown closes on any click that is not on it (the click then acts as usual).
-    if state.session.open_combo.is_some() && !matches!(action, Some(Hit::ComboToggle(_)) | Some(Hit::ComboPick(..)) | Some(Hit::ComboScroll(..))) {
+    if state.session.open_combo.is_some() && !matches!(action, Some(Hit::ComboToggle(_)) | Some(Hit::ComboPick(..)) | Some(Hit::ComboScroll(..)) | Some(Hit::Inert)) {
         sounds.play(SOUND_CLOSE, &mut commands, &mut audio);
         state.slide_combo(false);
     }
     let Some(action) = action else { return };
+    if action == Hit::Inert {
+        return;
+    }
+    let before: Vec<(Screen, bool)> = state.layers.iter().cloned().zip(state.interactive.iter().copied()).collect();
     let from = state.popup.as_ref().unwrap_or(&state.page).name.clone();
     match action {
         Hit::Goto(name) => {
@@ -975,6 +1091,7 @@ fn click(
             }
             state.reload();
         }
+        Hit::Inert => return,
         Hit::Select(row) => {
             if state.profiles.selected == Some(row) {
                 return;
@@ -988,6 +1105,7 @@ fn click(
     let to = state.popup.as_ref().unwrap_or(&state.page).name.clone();
     crate::log_line(&format!("menu: {from} -> {to}"));
     state.stack();
+    state.begin_transition(before);
     state.dirty = true;
     clear.0 = state.clear_colour();
 }
@@ -1048,8 +1166,9 @@ fn capture(mut state: ResMut<Capture>, current: Res<FrontEnd>, time: Res<Time>, 
     }
     state.frames += 1;
     // Over the 3D garage the first frames are black while the 3D shaders compile: wait 3 s.
+    // A screen change still animating is waited out too.
     let after = if nfspu_game::garage::room_for(&current.page.room).is_some() { state.after.max(3.0) } else { state.after };
-    if state.frames < 60 || time.elapsed_secs() < after {
+    if state.frames < 60 || time.elapsed_secs() < after || current.transition.is_some() {
         return;
     }
     let dir = crate::log_path().parent().map(PathBuf::from).unwrap_or_default();

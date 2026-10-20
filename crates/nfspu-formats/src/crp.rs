@@ -235,6 +235,21 @@ impl<'a> Crp<'a> {
         self.articles.get(article)?.parts.iter().find(|p| p.tag == tag)
     }
 
+    /// Per-vertex normals of an article at a level of detail (part `[lod, 0, 'm', 'n']`, 16 bytes per
+    /// normal: x, y, z and an unused fourth float), one per entry of `article_mesh(..).positions`.
+    /// Triangle parts place their normal window at the same start as their vertex window, so a
+    /// corner's normal is `normals[vertex index]` (checked on every part of the 928, 993, 356 A, 914
+    /// and eas1). `None` when the part is missing or its count differs from the vertex count.
+    pub fn article_normals(&self, article: usize, lod: u8) -> Option<Vec<[f32; 3]>> {
+        let nm = self.find(article, [lod, 0, b'm', b'n'])?;
+        let vt = self.find(article, [lod, 0, b't', b'v'])?;
+        if nm.length / 16 != vt.length / 16 {
+            return None;
+        }
+        let d = self.part_data(nm);
+        Some((0..nm.length / 16).map(|k| [f32le(d, k * 16), f32le(d, k * 16 + 4), f32le(d, k * 16 + 8)]).collect())
+    }
+
     /// Reads the geometry of one article. Returns `None` if the article has no vertex data at
     /// that level of detail. Triangle parts without index tables (a different part kind) are skipped.
     pub fn article_mesh(&self, article: usize, lod: u8) -> Option<ArticleMesh> {
