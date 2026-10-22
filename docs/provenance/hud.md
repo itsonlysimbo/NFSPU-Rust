@@ -202,6 +202,33 @@ The congratulations element uses `circlefull`, `congrats1.fsh` (`cutc`, 128x128)
 `congrats4.fsh` `2.tg` / `3.tg`, `congrats2.fsh` `4OL`..`7OL`, `congrats3.fsh` `8OL`. Timing and
 any text are not traced; we show it for 5 seconds.
 
+## Race summary (results table; read from the decompile, 2026-10-22)
+
+**There is no front-end `.lay` for post-race results.** None of the 98 layouts is a results screen
+(`VictoryRoom`/`VictoryMessage`/`levelvictory` are career prize screens, `looprecords` is lap
+records). Retail shows the results inside the race, as an HUD overlay: class `HRaceSummary`, a
+`HBillBoard` panel holding an `HTable`.
+
+| Fact | Value | Status |
+|---|---|---|
+| Panel size | 500 x 325, grows vertically from 40 high (a fifth of the height per tick) | read |
+| Title | string 18130 "Race Summary" (the other modes use 18129 Single Race, 18132 Tournament Standings, 18135 Mission Summary, 18157 Race Info) | read |
+| Footer prompts | 18100 "Esc to exit", 18101 "Spacebar to proceed" | read |
+| Table | header row 20 high, then 8 body rows of 20; centred in the panel (x offset `(500 - width) / 2`, y offset `(325 - 9*20) / 2` = 72) | read |
+| Header fill | amber `FFFAB400`; body fill white `40FFFFFF`; the player's row `80FAB400` (amber, half) | read |
+| Columns, lap race | place 30, name 90, car 140, best lap 100, time 80 (440 wide); headers (blank), 18111 NAME, 18112 CAR, 18113 BEST LAP, 18114 TIME | read |
+| Other column sets | no best lap column: 30/90/140/80 (point-to-point or mode 3); tournament adds 18115 POINTS (60 wide) | read |
+| Cell: place | strings 18116-18123 "1st".."8th" | read |
+| Cell: name | driver name, at most 31 characters; car: the catalogue name, at most 15 | read |
+| Cell: best lap, time | formatted times; a car without a finish time shows `--------------` | read |
+| Rows | one per car, placed by finishing rank (`rank - 1`), refreshed every tick while the panel is up | read |
+| Panel position, colours, title position, open speed, the 2 s delay | not found | **guess** |
+
+Ours: `hud_results.rs` draws it through the normal HUD draw list; `hud::draws` adds it when
+`HudInput.summary` has rows (set by the app 2 s after the finish). Space, Enter and Esc leave to
+the menu (retail's exact button handling, and "race again", were not traced; 18108-18110
+continue / race again / quit belong to the pause menu `HPause`).
+
 ## Not done yet
 
 Damage display, leader picture, rear-view mirror, wrong-way text, the two text lines the tach

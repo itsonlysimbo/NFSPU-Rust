@@ -1624,6 +1624,23 @@ fn feed_hud(
             order: race.order.clone(),
             road: race.road.clone(),
             lap_metres: race.lap_metres,
+            summary: finished_at
+                .filter(|t| now - t >= race_mode::SUMMARY_DELAY)
+                .map(|_| {
+                    race.results
+                        .iter()
+                        .map(|r| nfspu_game::hud_results::SummaryRow {
+                            place: r.position,
+                            name: race.names.get(r.car).cloned().unwrap_or_default(),
+                            car: race.car_labels.get(r.car).cloned().unwrap_or_default(),
+                            best_lap: r.best_lap,
+                            time: r.time,
+                            is_player: r.is_player,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            summary_since: finished_at.map_or(0.0, |t| now - t - race_mode::SUMMARY_DELAY),
         };
         return;
     }

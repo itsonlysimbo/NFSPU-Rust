@@ -160,6 +160,8 @@ pub struct RaceStatus {
     pub car_rpm: Vec<f32>,
     /// Each car's simulation name (`Spec::name`) by race index (for the engine sounds).
     pub car_specs: Vec<String>,
+    /// Each car's catalogue name by race index (the results table's CAR column).
+    pub car_labels: Vec<String>,
     /// Strongest car-against-car impact the player took this frame (`collide_cars` units), 0
     /// without one.
     pub player_bump: f32,
