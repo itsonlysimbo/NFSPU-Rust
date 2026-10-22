@@ -79,6 +79,10 @@ pub struct AiBody {
     pub speed: f32,
     pub steer: f32,
     pub braking: bool,
+    /// See `Car::wheel_heights`.
+    pub wheel_y: [f32; 4],
+    /// The car's damage zones, for painting its body.
+    pub damage: [f32; nfspu_game::car_damage::ZONES],
 }
 
 /// One opponent: its car, its driver and the entity that shows it.
@@ -349,6 +353,16 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
         let slice = run.track.path.track(r.brain.slice, r.car.pos);
         r.brain.slice = slice;
         let fallen = r.car.pos.y < run.track.path.slices[slice].pos.y - 30.0;
+        if r.car.wants_recover {
+            // retail's crash timer ran out: back onto the road, damage kept
+            let (pos, yaw) = ai::reset_pose(&run.track.path, &run.line, slice, dir);
+            r.car = r.car.recover(pos, yaw);
+            r.brain.was_reset(slice);
+            race_log(&format!("tick {}: car {race_car} ({}) crashed, put back on the road at slice {slice}", run.race.tick, r.name));
+        }
+        if let Some((s, zone)) = r.car.last_hit.filter(|(s, _)| *s > car_mod::BIG_HIT_LOG) {
+            race_log(&format!("tick {}: car {race_car} ({}) hit {s:.0} in zone {zone}", run.race.tick, r.name));
+        }
         if !held && !finished && (fallen || r.brain.wants_reset()) {
             let (pos, yaw) = ai::reset_pose(&run.track.path, &run.line, slice, dir);
             r.car = r.car.reset(pos, yaw);
@@ -391,7 +405,7 @@ fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform,
     let Some(run) = run else { return };
     for r in &run.racers {
         if let Ok((mut t, mut b)) = bodies.get_mut(r.body) {
-            t.translation = r.car.pos;
+            t.translation = r.car.draw_pos();
             // the chassis (road slope + tumble) carries the wheels; the body art leans over it
             let (pitch, roll) = r.car.chassis_tilt();
             t.rotation = Quat::from_euler(EulerRot::YXZ, r.car.yaw, pitch, roll);
@@ -399,7 +413,7 @@ fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform,
                 let (lp, lr) = r.car.lean_tilt();
                 lt.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, lp, lr);
             }
-            *b = AiBody { speed: r.car.speed, steer: r.steer, braking: r.braking };
+            *b = AiBody { speed: r.car.speed, steer: r.steer, braking: r.braking, wheel_y: r.car.wheel_heights(), damage: r.car.sim.damage.zones };
         }
     }
 }
@@ -420,6 +434,12 @@ fn race_tick(
     let pos = car.car.pos;
     let dir = run.track.dir;
     run.slice = run.track.path.track(run.slice, pos);
+    if car.car.wants_recover {
+        let (p, yaw) = ai::reset_pose(&run.track.path, &run.line, run.slice, run.track.dir);
+        car.car = car.car.recover(p, yaw);
+        let d = &car.car.sim.damage.zones;
+        race_log(&format!("tick {}: player crashed, put back on the road at slice {} (damage {d:.0?})", run.race.tick, run.slice));
+    }
     let mut crossed = run.track.finish.map_or(false, |(a, b)| crosses(run.last_pos, pos, a, b));
     let velocity = if dt > 0.0 { (pos - run.last_pos) / dt } else { Vec3::ZERO };
     run.last_pos = pos;
