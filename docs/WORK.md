@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| Retail results screen | Mid | Claude (results-screen) | `claude/results-screen-a9f5cc` | In progress | Retail has no `.lay` for it: it is the in-race `HRaceSummary` table (`docs/provenance/hud.md`); drawing it in `hud.rs` | Finishing shows the retail table, Space/Esc go to the menu |
+| Retail results screen | Mid | Claude (results-screen) | `claude/results-screen-a9f5cc` | WIP, uncompiled | Code written (hud_results.rs, race_mode.rs, main.rs feed); next: `cargo build -p nfspu-game -j 2`, fix errors, `cargo test --workspace -j 2`, `race_drive`, capture logs/menu_results*.png. Retail has no `.lay` for it: it is the in-race `HRaceSummary` table (`docs/provenance/hud.md`); drawing it in `hud.rs` | Finishing shows the retail table, Space/Esc go to the menu |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.

@@ -50,6 +50,10 @@ pub struct HudInput {
     pub road: std::sync::Arc<Vec<Vec<[f32; 2]>>>,
     /// Length of one lap in metres (turns progress into the distance gaps of the opponent list).
     pub lap_metres: f32,
+    /// The race summary table (`hud_results`): empty until it should be on screen.
+    pub summary: Vec<crate::hud_results::SummaryRow>,
+    /// Seconds the summary has been up (drives its opening animation).
+    pub summary_since: f32,
 }
 
 /// One car as the map and the opponent list need it.
@@ -86,6 +90,8 @@ impl Default for HudInput {
             order: Vec::new(),
             road: Default::default(),
             lap_metres: 0.0,
+            summary: Vec::new(),
+            summary_since: 0.0,
         }
     }
 }
@@ -150,13 +156,20 @@ pub mod word {
     pub const MPH: u16 = 20; // "mph"
     pub const BEST_LAP: u16 = 23; // "best lap"
     pub const LAST_LAP: u16 = 24; // "last lap"
+    pub const NAME: u16 = 18111; // "NAME"
+    pub const CAR: u16 = 18112; // "CAR"
+    pub const BEST_LAP_CAPS: u16 = 18113; // "BEST LAP"
+    pub const TOTAL_TIME: u16 = 18114; // "TIME"
+    pub const RACE_SUMMARY: u16 = 18130; // "Race Summary"
+    pub const ESC_TO_EXIT: u16 = 18100; // "Esc to exit"
+    pub const SPACE_TO_PROCEED: u16 = 18101; // "Spacebar to proceed"
     pub const RPM: u16 = 18144; // "rpm"
     pub const REVERSE: u16 = 18145; // "R"
     pub const NEUTRAL: u16 = 18146; // "N"
 }
 
 impl HudSettings {
-    fn word(&self, id: u16) -> String {
+    pub(crate) fn word(&self, id: u16) -> String {
         if let Some(w) = self.words.get(&id) {
             return w.clone();
         }
@@ -169,6 +182,13 @@ impl HudSettings {
             word::MPH => "mph",
             word::BEST_LAP => "best lap",
             word::LAST_LAP => "last lap",
+            word::NAME => "NAME",
+            word::CAR => "CAR",
+            word::BEST_LAP_CAPS => "BEST LAP",
+            word::TOTAL_TIME => "TIME",
+            word::RACE_SUMMARY => "Race Summary",
+            word::ESC_TO_EXIT => "Esc to exit",
+            word::SPACE_TO_PROCEED => "Spacebar to proceed",
             word::RPM => "rpm",
             word::REVERSE => "R",
             word::NEUTRAL => "N",
@@ -223,7 +243,7 @@ fn tray(out: &mut Vec<HudDraw>, settings: &HudSettings, rect: Rect) {
     }
 }
 
-const WHITE: [f32; 4] = [1.0; 4];
+pub(crate) const WHITE: [f32; 4] = [1.0; 4];
 
 /// Retail's rule for moving a 640x480 box onto a bigger screen (see the module notes). Positions
 /// and sizes are whole pixels like the game's.
@@ -361,7 +381,7 @@ pub fn format_time(seconds: f32) -> String {
     format!("{:02}:{:02}.{:02}", m.min(99), s, c)
 }
 
-fn argb(c: Argb) -> [f32; 4] {
+pub(crate) fn argb(c: Argb) -> [f32; 4] {
     c.to_f32()
 }
 
@@ -400,7 +420,7 @@ fn dial(out: &mut Vec<HudDraw>, settings: &HudSettings, rect: Rect, face_file: &
 }
 
 /// Amber of the countdown and finish circles.
-const AMBER: [f32; 3] = [0xFA as f32 / 255.0, 0xB4 as f32 / 255.0, 0.0];
+pub(crate) const AMBER: [f32; 3] = [0xFA as f32 / 255.0, 0xB4 as f32 / 255.0, 0.0];
 
 /// Builds the draw list for one frame on a `screen`-sized window.
 pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u32; 2]) -> Vec<HudDraw> {
@@ -463,6 +483,9 @@ pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u
 
     if let Some((place, since)) = input.finished {
         finish(&mut out, place, since, screen, s);
+    }
+    if !input.summary.is_empty() {
+        crate::hud_results::summary(&mut out, settings, &input.summary, input.summary_since, screen);
     }
     out
 }

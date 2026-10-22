@@ -294,8 +294,9 @@ only the car model and sign lettering, plus steering feel); the live feel of a m
 
 ## Results screen
 
-Not checked: the let's play race at 10:20 goes straight back to the menus. Ours is a placeholder
-panel 2 s after the finish (the delay is a guess).
+Retail shows the results as an in-race HUD table (`HRaceSummary`), not a front-end layout: see
+`hud.md`, "Race summary". Ours draws that table 2 s after the finish (the delay is a guess); the
+opponents' rows fill in as they finish. Space/Enter/Esc go back to the menu.
 
 ## Checks run (2026-10-18, opponents)
 

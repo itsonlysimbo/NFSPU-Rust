@@ -17,3 +17,9 @@ when they can and notes results here or in a recording. Run the game with `.\run
 
 ## Results
 Add a line per playtest: date, recording path, what was wrong.
+
+## Results screen (claude/results-screen-a9f5cc)
+- Finish a quick race with opponents: about 2 s after the line a 500x325 "Race Summary" panel
+  opens with eight places, NAME / CAR / BEST LAP / TIME, your row in amber. Compare its look,
+  position and timing with retail (panel colours, position and delay are guesses).
+- Opponents still racing show dashes and fill in as they finish. Space, Enter or Esc return to the menu.

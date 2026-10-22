@@ -240,6 +240,8 @@ fn start_race(
     race_log(&format!("opponents: {}, difficulty {}, seed {seed}, {} drivers in nfs5.per", cars - 1, req.difficulty, drivers.len()));
     let mut racers = Vec::new();
     // body colours by race index, for the HUD map and opponent list; the player's from its paint
+    let catalogue_name = |model: &str| catalogue.iter().find(|c| c.kind == 0 && c.model.eq_ignore_ascii_case(model)).map(|c| c.name.clone());
+    let mut labels = vec![catalogue_name(&car_name.0).unwrap_or_else(|| car_name.0.clone())];
     let mut colours = vec![nfspu_game::catalog::load_paints(&game, &car_name.0).get(player_paint.0).map_or([128; 3], |p| p.body)];
     for (i, driver) in picked.into_iter().enumerate() {
         // the car: catalogue record (model, AI name) and its .sim physics
@@ -283,6 +285,7 @@ fn start_race(
             spec.speeds[0],
             loaded.note
         ));
+        labels.push(record.name.clone());
         colours.push(nfspu_game::catalog::load_paints(&game, &model).get(options.paint).map_or([128; 3], |p| p.body));
         racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, name, steer: 0.0, braking: false, resets: 0 });
     }
@@ -295,6 +298,7 @@ fn start_race(
     *status = RaceStatus { track: req.track.clone(), backwards: req.direction == Direction::Backward, ..Default::default() };
     status.names = std::iter::once("You".to_string()).chain(racers.iter().map(|r| r.name.clone())).collect();
     status.car_colours = colours;
+    status.car_labels = labels;
     status.lap_metres = track.lap_metres();
     status.road = std::sync::Arc::new(road_lines(&track.path));
     race.fill_status(player, &mut status);
@@ -477,23 +481,19 @@ fn race_tick(
     }
 }
 
-/// Marks the placeholder results panel.
-#[derive(Component)]
-struct ResultsPanel;
-
-/// The standings text: every car's time, DNF while it is still racing.
+/// The standings text for the log: every car's time, DNF while it is still racing.
 fn results_text(status: &RaceStatus) -> String {
-    let mut text = format!("RACE RESULTS\n{} ({})\n\n", status.track, if status.backwards { "backward" } else { "forward" });
+    let mut text = format!("RACE RESULTS
+{} ({})
+
+", status.track, if status.backwards { "backward" } else { "forward" });
     for r in &status.results {
         let who = status.names.get(r.car).cloned().unwrap_or_else(|| format!("Car {}", r.car + 1));
+        let car = status.car_labels.get(r.car).cloned().unwrap_or_default();
         let time = r.time.map_or("racing".to_string(), race::format_secs);
         let best = r.best_lap.map_or("-".to_string(), race::format_secs);
-        text += &format!("{}.  {:<10} {}   best lap {}\n", r.position, who, time, best);
-    }
-    if !status.point_to_point {
-        for (i, t) in status.lap_times.iter().enumerate() {
-            text += &format!("\n   lap {}: {}", i + 1, race::format_secs(*t));
-        }
+        text += &format!("{}.  {:<10} {:<16} {}   best lap {}
+", r.position, who, car, time, best);
     }
     text
 }
@@ -504,48 +504,28 @@ fn log_results(text: &str) {
     }
 }
 
-/// After the player finishes (and 2 s pass, a guess at retail's pause), lists the standings. The
-/// opponents keep racing behind it and their times fill in as they finish (ours; what retail
-/// shows for cars still racing was not checked). Logged once now and again when all are in.
-fn results_screen(mut commands: Commands, run: Option<ResMut<RaceRun>>, status: Res<RaceStatus>, mut panel: Query<&mut Text, With<ResultsPanel>>, mut logged_all: Local<bool>) {
+/// How long after the finish the summary table appears (a guess at retail's pause); the table
+/// itself is drawn by the HUD (`hud_results`) from the same standings.
+pub const SUMMARY_DELAY: f32 = 2.0;
+
+/// Once the summary is up, logs the standings, and again when every car is in. Space, Enter or
+/// Esc then leave (`leave_results`).
+fn results_screen(run: Option<ResMut<RaceRun>>, status: Res<RaceStatus>, mut logged_all: Local<bool>) {
     let Some(mut run) = run else { return };
-    if !status.finished || run.finished_for < 2.0 {
+    if !status.finished || run.finished_for < SUMMARY_DELAY {
         *logged_all = false;
         return;
     }
-    let text = results_text(&status);
-    let full = format!("{text}\n\nPress Enter to continue");
     if run.results_shown {
-        if let Ok(mut t) = panel.single_mut() {
-            if t.0 != full {
-                t.0 = full;
-            }
-        }
         if !*logged_all && run.race.all_finished() {
             *logged_all = true;
             race_log("all cars finished");
-            log_results(&text);
+            log_results(&results_text(&status));
         }
         return;
     }
     run.results_shown = true;
-    log_results(&text);
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Percent(20.0),
-            left: Val::Percent(30.0),
-            width: Val::Percent(40.0),
-            padding: UiRect::all(Val::Px(16.0)),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
-        Text::new(full),
-        TextFont { font_size: FontSize::Px(20.0), ..default() },
-        TextColor(Color::srgb(1.0, 0.95, 0.8)),
-        ResultsPanel,
-        DespawnOnExit(AppState::Race),
-    ));
+    log_results(&results_text(&status));
 }
 
 /// Enter, Space or Escape on the results closes the race: back to the menu's quick-race screen,
