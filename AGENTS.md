@@ -69,6 +69,20 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
 - When Claude usage runs out, every task is left as a committed WIP with a Next step on the board
   so OpenCode can continue.
 
+### Automatic handoff to OpenCode (user, 2026-10-22)
+The coordinator checks the plan usage (`get_usage`) each time a session reports. At **90%** of the
+5-hour or weekly limit:
+1. Tell every running Claude session to commit its work as `WIP:` and write its Next step in
+   `docs/WORK.md`, then stop. Do the same for the coordinator's own work.
+2. Commit the board on `master` and push.
+3. Start OpenCode in the background from the project folder (the user approved running this):
+   `C:\Users\CB\bin\opencode.cmd run --auto -m opencode-go/deepseek-v4.1-flash --title "NFSPU handoff <date>" "<prompt>"`
+   with the prompt: *Read AGENTS.md, HANDOFF.md and docs/WORK.md. Continue each Active task whose
+   last commit is WIP, one at a time, in its worktree under .claude/worktrees on its own branch.
+   Follow its Next step, build with -j 2, run the tests and race_drive (NFSPU_GAME_DIR set), commit
+   to that branch and update its row. Do not merge to master, push, or start new tasks.*
+4. When Claude usage resets, the coordinator reads what OpenCode committed, checks it, and merges.
+
 ## Builds
 - `.cargo/config.toml` links with `rust-lld` (ships with Rust; much faster than link.exe).
 - The dev profile keeps line tables only (`debug = "line-tables-only"`, none for dependencies).
