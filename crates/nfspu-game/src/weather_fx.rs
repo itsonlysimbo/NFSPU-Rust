@@ -410,6 +410,7 @@ fn update_precipitation(
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
             mesh.insert_indices(Indices::U32(indices));
+            keep_non_empty(&mut mesh);
         }
     }
 }
@@ -518,6 +519,7 @@ fn update_headlight_pool(
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
         mesh.remove_attribute(Mesh::ATTRIBUTE_UV_0);
         mesh.insert_indices(Indices::U32(indices));
+        keep_non_empty(&mut mesh);
     }
 }
 
@@ -665,7 +667,27 @@ fn update_wet_reflection(
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
         mesh.remove_attribute(Mesh::ATTRIBUTE_UV_0);
         mesh.insert_indices(Indices::U32(indices));
+        keep_non_empty(&mut mesh);
     }
+}
+
+/// Bevy's GPU mesh allocator logs "Use-after-free: attempted to copy element data for an
+/// unallocated key" when a mesh it already holds is rewritten with no vertices or no indices.
+/// Effect meshes rebuilt every frame (rain, glows, light pools) can have nothing to draw, so such
+/// a frame gets one zero-area triangle instead, which draws nothing.
+pub(crate) fn keep_non_empty(mesh: &mut Mesh) {
+    let empty = mesh.count_vertices() == 0 || mesh.indices().is_none_or(|i| i.is_empty());
+    if !empty {
+        return;
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
+    if mesh.contains_attribute(Mesh::ATTRIBUTE_UV_0) {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; 3]);
+    }
+    if mesh.contains_attribute(Mesh::ATTRIBUTE_COLOR) {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32; 4]; 3]);
+    }
+    mesh.insert_indices(Indices::U32(vec![0, 1, 2]));
 }
 
 #[cfg(test)]

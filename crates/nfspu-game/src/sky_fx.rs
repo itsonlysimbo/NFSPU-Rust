@@ -902,6 +902,7 @@ fn update_drops(
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
         mesh.insert_indices(Indices::U32(indices));
+        crate::weather_fx::keep_non_empty(&mut mesh);
     }
 }
 
@@ -1019,6 +1020,7 @@ fn update_glows(
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
             mesh.insert_indices(Indices::U32((0..n).collect()));
+            crate::weather_fx::keep_non_empty(&mut mesh);
         }
     }
     for mut v in &mut vis {
