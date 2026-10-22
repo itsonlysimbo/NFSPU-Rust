@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| (none) | | | | | | |
+| Route choice at AI junctions | Strong | Claude (ai-routes) | `claude/ai-routes-be7221` | Started 2026-10-22 | Study retail junction choice in decomp + `.jnc` data | Opponents take branches like retail (log); race_drive ALL OK; tests pass |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
@@ -25,7 +25,6 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 |---|---|---|
 | Playtest round: 2026-10-20 fixes, Options > Audio, race sound | User | Flare on Côte d'Azur, slider dragging and sound levels by ear are not tested |
 | Retail results screen | Mid | Layouts are in `FEData`; placeholder exists |
-| Route choice at AI junctions | Strong | `ai.rs`, `aidata.rs` |
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
 | Damage and roll-overs | Strong | Physics plus car model |
 | Roof up/down drawing | Mid | Choice already reaches the race |
