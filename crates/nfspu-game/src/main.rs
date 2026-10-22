@@ -1700,13 +1700,19 @@ fn feed_hud(
                             name: race.names.get(r.car).cloned().unwrap_or_default(),
                             car: race.car_labels.get(r.car).cloned().unwrap_or_default(),
                             best_lap: r.best_lap,
-                            time: r.time,
+                            // cars still racing get a time worked out from their progress so far
+                            time: r.time.or_else(|| {
+                                let p = race.car_progress.get(r.car).copied().unwrap_or(0.0);
+                                (p > 0.01).then(|| (race.race_time * race.total_laps.max(1) as f32 / p).max(race.race_time))
+                            }),
                             is_player: r.is_player,
+                            colour: race.car_colours.get(r.car).copied().unwrap_or([128; 3]),
                         })
                         .collect()
                 })
                 .unwrap_or_default(),
             summary_since: finished_at.map_or(0.0, |t| now - t - race_mode::SUMMARY_DELAY),
+            summary_laps: !race.point_to_point,
         };
         return;
     }
@@ -1726,6 +1732,18 @@ fn feed_hud(
         best_lap: None,
         countdown: (since < 3.0).then_some(3.0 - since),
         finished: None,
+        // NFSPU_HUD_SUMMARY=1 shows the race summary with made-up rows, for checking its look.
+        summary: if std::env::var_os("NFSPU_HUD_SUMMARY").is_some() {
+            let who = [("You", "'99 911 Carrera"), ("Frank", "'99 911 GT1"), ("Machine", "'96 993 Turbo"), ("Tbone", "'74 911 Carrera"), ("Rogue", "'98 Boxster")];
+            who.iter()
+                .enumerate()
+                .map(|(i, (n, c))| nfspu_game::hud_results::SummaryRow { place: i + 1, name: n.to_string(), car: c.to_string(), best_lap: Some(78.4 + i as f32), time: (i < 4).then_some(160.0 + 3.7 * i as f32), is_player: i == 0, colour: [200, 90, 20 + 40 * i as u8] })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        summary_since: 5.0,
+        summary_laps: std::env::var("NFSPU_HUD_SUMMARY").is_ok_and(|v| v != "p2p"),
         ..Default::default()
     };
 }
@@ -1739,6 +1757,7 @@ fn drive_car(
     car: Option<ResMut<CarRes>>,
     console: Res<console::Console>,
     hold: Res<race_mode::RaceHold>,
+    status: Option<Res<nfspu_game::race::RaceStatus>>,
     weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
     holder: Option<Res<CarModelEntity>>,
     mut bodies: Query<&mut Transform, (With<CarBody>, Without<BodyLean>)>,
@@ -1767,6 +1786,11 @@ fn drive_car(
         };
         // on the grid until GO: the brake is held on and the automatic waits in neutral, but the
         // engine can be revved (retail)
+        // past the finish line control is taken away: the car rolls on without input (retail
+        // footage 2026-10-22)
+        if status.is_some_and(|s| s.active && s.finished) {
+            input = CarInput::default();
+        }
         state.car.sim.held = hold.0;
         if hold.0 {
             input.steer = 0.0;

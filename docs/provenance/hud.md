@@ -224,10 +224,9 @@ records). Retail shows the results inside the race, as an HUD overlay: class `HR
 | Rows | one per car, placed by finishing rank (`rank - 1`), refreshed every tick while the panel is up | read |
 | Panel position, colours, title position, open speed, the 2 s delay | not found | **guess** |
 
-Ours: `hud_results.rs` draws it through the normal HUD draw list; `hud::draws` adds it when
-`HudInput.summary` has rows (set by the app 2 s after the finish). Space, Enter and Esc leave to
-the menu (retail's exact button handling, and "race again", were not traced; 18108-18110
-continue / race again / quit belong to the pause menu `HPause`).
+**Retail footage** (user recording `2026-10-22 13-50-02.mp4`, Côte d'Azur point-to-point, frames at about 66-80 s; nothing saved): after the line the player loses control and the car rolls on, then the summary appears over the 3D view, **replacing the rest of the HUD**. Seen: a translucent gold panel (the car shows through), black gradient bars top and bottom with the mode name "Single Race" left and "Race Summary" right, "Esc to exit" left and "Spacebar to proceed" bottom right, white condensed text. The table has a black outline and column lines, amber header and amber player row, no best lap column (point-to-point), CAR cell = a small bar in the car's paint colour plus a short model name ("356"), time as `mm:ss.hh`. **All eight cars have a time on screen at once**, including opponents who had not crossed the line (their finishing times are calculated); Space and the pointer cursor were active. The bottom replay bar is another overlay (replay controls), not drawn by us.
+
+Ours: `hud_results.rs` draws it through the normal HUD draw list; `hud::draws` returns only the summary when `HudInput.summary` has rows (set by the app 2 s after the finish; delay is a guess). Opponents still racing get an estimated time (`race_time * laps / progress`, ours; retail's calculation was not traced). Space, Enter and Esc leave to the menu. Not done: taking control from the player at the line (the car keeps driving under input), the replay bar, "race again" (18108-18110 belong to the pause menu `HPause`). Check: `logs/menu_results.png` (`NFSPU_HUD=1 NFSPU_HUD_SUMMARY=p2p NFSPU_HUD_CAPTURE=1`).
 
 ## Not done yet
 
