@@ -333,11 +333,18 @@ fn lamp_colour(front: bool, lights_on: bool, braking: bool) -> Color {
     }
 }
 
-/// The opponent a car part belongs to (part -> model -> body), None for the player's car.
+/// The opponent a car part belongs to: walk up the parents to the body entity (body parts now sit
+/// under the model's lean node, so the depth is not fixed), None for the player's car.
 fn opponent_of(part: Entity, parents: &Query<&ChildOf>, ai: &Query<&race_mode::AiBody>) -> Option<race_mode::AiBody> {
-    let model = parents.get(part).ok()?.parent();
-    let body = parents.get(model).ok()?.parent();
-    ai.get(body).ok().copied()
+    let mut cur = part;
+    for _ in 0..6 {
+        let parent = parents.get(cur).ok()?.parent();
+        if let Ok(body) = ai.get(parent) {
+            return Some(*body);
+        }
+        cur = parent;
+    }
+    None
 }
 
 #[derive(Resource)]
@@ -1184,6 +1191,35 @@ fn spawn_car_model(
             commands.entity(lean).add_child(e);
         }
     }
+    // The cockpit driver's arms: shown only in the cockpit view (the exterior driver is hidden
+    // there, and its head would sit on the camera).
+    for (page, part) in by_page(&m.driver_arms) {
+        let mat = looks.material(page, Look::Cut, materials);
+        let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), body_at(), CockpitPart)).id();
+        commands.entity(lean).add_child(e);
+    }
+    // The steering wheel: a pivot node at the wheel's centre that turns around the wheel's column,
+    // with the wheel mesh offset back so its authored (car-space) vertices are unchanged at rest.
+    let steer_pivot = (!m.steering.positions.is_empty()).then(|| {
+        let p = Vec3::from(m.steering_pivot);
+        let node = commands
+            .spawn((Transform::from_xyz(p.x, p.y - RIDE_HEIGHT, p.z), Visibility::default(), SteerWheel { axis: Vec3::from(m.steering_axis) }, CockpitPart))
+            .id();
+        commands.entity(lean).add_child(node);
+        for (page, part) in by_page(&m.steering) {
+            let mat = looks.material(page, Look::Cut, materials);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::from_translation(-p))).id();
+            commands.entity(node).add_child(e);
+        }
+        (node, p)
+    });
+    // The hands ride on the wheel so they turn with it (without a wheel they sit on the body).
+    let (hands_parent, hands_offset) = steer_pivot.map_or((lean, Vec3::new(0.0, -RIDE_HEIGHT, 0.0)), |(node, p)| (node, -p));
+    for (page, part) in by_page(&m.driver_hands) {
+        let mat = looks.material(page, Look::Cut, materials);
+        let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::from_translation(hands_offset), CockpitPart)).id();
+        commands.entity(hands_parent).add_child(e);
+    }
     // the wheel shadow quads: upright squares outside the wheels, blended from the shared 4444
     // shadow page, darken the tops of the tyres under the arches
     for (page, part) in by_page(&m.shadow) {
@@ -1512,7 +1548,7 @@ fn page_image(page: &Page) -> Image {
     image
 }
 
-fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(Entity, &mut Transform, &mut WheelComp)>, parents: Query<&ChildOf>, ai: Query<&race_mode::AiBody>) {
+fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(Entity, &mut Transform, &mut WheelComp), Without<SteerWheel>>, mut steer_wheels: Query<(Entity, &mut Transform, &SteerWheel), Without<WheelComp>>, parents: Query<&ChildOf>, ai: Query<&race_mode::AiBody>) {
     let Some(state) = car else { return };
     let dt = time.delta_secs().min(0.05);
     for (e, mut t, mut w) in &mut wheels {
@@ -1521,7 +1557,23 @@ fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(
         let steer = if w.front { steer * 0.45 } else { 0.0 };
         t.rotation = Quat::from_rotation_y(steer) * Quat::from_rotation_x(w.spin);
     }
+    // the steering wheel turns with the input (its hands are part of the cockpit driver)
+    let forced = forced_steer();
+    for (e, mut t, wheel) in &mut steer_wheels {
+        let steer = forced.unwrap_or_else(|| opponent_of(e, &parents, &ai).map_or(state.steer, |b| b.steer));
+        t.rotation = Quat::from_axis_angle(wheel.axis, steer * STEER_WHEEL_ANGLE);
+    }
 }
+
+/// `NFSPU_STEER=-1..1` forces the player's steering input for captures (like `NFSPU_MENU_POINTER`).
+fn forced_steer() -> Option<f32> {
+    static FORCED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| std::env::var("NFSPU_STEER").ok().and_then(|v| v.trim().parse().ok()))
+}
+
+/// How far the steering wheel turns at full lock (radians): about 90 degrees, a sports-car rack.
+/// A guess; retail's exact wheel angle is not traced.
+const STEER_WHEEL_ANGLE: f32 = 1.6;
 
 #[derive(Component)]
 struct CarBody;
@@ -1756,6 +1808,17 @@ struct Orbit {
 #[derive(Component)]
 struct DriverPart;
 
+/// Marks the pieces only the cockpit view shows (the driver's detailed arms and hands, the
+/// detailed steering wheel that turns with the input).
+#[derive(Component)]
+struct CockpitPart;
+
+/// The steering wheel's pivot node and the column axis it turns around (car space).
+#[derive(Component)]
+struct SteerWheel {
+    axis: Vec3,
+}
+
 /// Marks a cabin mesh: the detailed cockpit cabin (`cockpit: true`) or the simpler outside one.
 #[derive(Component)]
 struct CabinPart {
@@ -1792,8 +1855,9 @@ fn camera_input(
 fn driver_visibility(
     mode: Res<CamMode>,
     drive: Res<DriveMode>,
-    mut parts: Query<(Entity, &mut Visibility), (With<DriverPart>, Without<CabinPart>)>,
-    mut cabins: Query<(Entity, &mut Visibility, &CabinPart), Without<DriverPart>>,
+    mut parts: Query<(Entity, &mut Visibility), (With<DriverPart>, Without<CabinPart>, Without<CockpitPart>)>,
+    mut cabins: Query<(Entity, &mut Visibility, &CabinPart), (Without<DriverPart>, Without<CockpitPart>)>,
+    mut cockpit_parts: Query<(Entity, &mut Visibility), (With<CockpitPart>, Without<DriverPart>, Without<CabinPart>)>,
     parents: Query<&ChildOf>,
     ai: Query<&race_mode::AiBody>,
 ) {
@@ -1806,6 +1870,11 @@ fn driver_visibility(
     for (e, mut v, cabin) in &mut cabins {
         let cockpit = in_cockpit && opponent_of(e, &parents, &ai).is_none();
         v.set_if_neq(if cabin.cockpit == cockpit { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    // the arms and the detailed steering wheel only show in the player's cockpit
+    for (e, mut v) in &mut cockpit_parts {
+        let show = in_cockpit && opponent_of(e, &parents, &ai).is_none();
+        v.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 

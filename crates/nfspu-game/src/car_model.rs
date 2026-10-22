@@ -81,6 +81,17 @@ pub struct CarModel {
     /// The driver's body (suit) and head, from the `LODDriver` article of the chosen driver type.
     pub driver_suit: Piece,
     pub driver_head: Piece,
+    /// The cockpit driver's detailed arms (`LeftArm`/`RightArm`) and hands (`LeftHand`/`RightHand`)
+    /// articles at level 1 for the chosen driver type. The arms are shown static in the cockpit;
+    /// the hands ride on the steering wheel so they turn with it.
+    pub driver_arms: Piece,
+    pub driver_hands: Piece,
+    /// The steering wheel (`Steer` article, detailed cabin level), kept apart so the cockpit can
+    /// turn it. `pivot` is its centre and `axis` the column it turns around, in car space (ground
+    /// origin, mirror applied).
+    pub steering: Piece,
+    pub steering_pivot: [f32; 3],
+    pub steering_axis: [f32; 3],
     /// The wheel shadow quads (see `is_shadow_name`): upright, on the wheels' outer faces.
     pub shadow: Piece,
     pub wheels: Vec<Wheel>,
@@ -820,6 +831,11 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         taillights: Piece::default(),
         driver_suit: Piece::default(),
         driver_head: Piece::default(),
+        driver_arms: Piece::default(),
+        driver_hands: Piece::default(),
+        steering: Piece::default(),
+        steering_pivot: [0.0; 3],
+        steering_axis: [0.0, 0.0, 1.0],
         shadow: Piece::default(),
         wheels: Vec::new(),
         exterior: None,
@@ -911,11 +927,17 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         // the driver is chosen by its own type (1 = racing suit and helmet), not by the body style
         // traffic cars have a single driver of their own (`DriverBody0`, at level 1)
         let is_driver = !interior_pass && (article_name.starts_with("LODDriver") || (traffic && article_name.starts_with("DriverBody")));
+        // The cockpit driver's detailed arms and hands (level 1, chosen driver type) and the
+        // steering wheel, kept apart so the cockpit can show hands on a wheel that turns.
+        let is_arm = interior_pass && !outside_cabin && driver != 0 && base.type_index == driver
+            && (article_name.starts_with("LeftArm") || article_name.starts_with("RightArm") || article_name.starts_with("LeftHand") || article_name.starts_with("RightHand"));
+        let is_hand = is_arm && (article_name.starts_with("LeftHand") || article_name.starts_with("RightHand"));
+        let is_steer = interior_pass && !outside_cabin && article_name.starts_with("Steer");
         if is_driver {
             if driver == 0 || base.geometry != 9 || (!traffic && base.type_index != driver) {
                 continue;
             }
-        } else if base.type_index as u32 != style.geometry_type(base.geometry as u32) || is_skipped_name(&article_name) || (interior_pass && (is_hidden_in_cabin(&article_name) || is_shadow_name(&article_name))) {
+        } else if !is_arm && !is_steer && (base.type_index as u32 != style.geometry_type(base.geometry as u32) || is_skipped_name(&article_name) || (interior_pass && (is_hidden_in_cabin(&article_name) || is_shadow_name(&article_name)))) {
             continue;
         }
         let is_shadow = is_shadow_name(&article_name);
@@ -934,7 +956,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
             // the shiny dash top (356) has a body-paint kind but its artwork is on the cabin page
             let finish = if article_name.starts_with("ShinyDash") { Finish::Interior } else { finish };
             // the interior pass keeps only cabin triangles, the exterior pass leaves them out
-            if !is_driver && !is_shadow && (finish == Finish::Interior) != interior_pass {
+            if !is_driver && !is_shadow && !is_arm && !is_steer && (finish == Finish::Interior) != interior_pass {
                 continue;
             }
             // a batch whose UVs span less than 2 texels of the 128-px trim page samples one solid
@@ -1003,6 +1025,12 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
                 // material instead.
                 let target = if is_wheel {
                     &mut wheel_piece
+                } else if is_steer {
+                    &mut model.steering
+                } else if is_hand {
+                    &mut model.driver_hands
+                } else if is_arm {
+                    &mut model.driver_arms
                 } else if is_shadow {
                     &mut model.shadow
                 } else if !interior_pass && !is_driver && finish == Finish::Paint && n[1] < -0.25 {
@@ -1076,6 +1104,18 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
             }
             (Some(only), None) => model.driver_suit = only,
             _ => {}
+        }
+    }
+    // The steering wheel's pivot (its centre) and the axis it turns around (the wheel's mean face
+    // normal, the column direction), from the captured triangles.
+    if !model.steering.positions.is_empty() {
+        let n = model.steering.positions.len() as f32;
+        let c = model.steering.positions.iter().fold([0.0; 3], |a, p| [a[0] + p[0], a[1] + p[1], a[2] + p[2]]);
+        model.steering_pivot = [c[0] / n, c[1] / n, c[2] / n];
+        let a = model.steering.normals.iter().fold([0.0; 3], |a, p| [a[0] + p[0], a[1] + p[1], a[2] + p[2]]);
+        let len = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        if len > 1e-6 {
+            model.steering_axis = [a[0] / len, a[1] / len, a[2] / len];
         }
     }
     if model.paint.positions.is_empty() {
@@ -1207,6 +1247,11 @@ mod tests {
             taillights: Piece::default(),
             driver_suit: Piece::default(),
             driver_head: Piece::default(),
+            driver_arms: Piece::default(),
+            driver_hands: Piece::default(),
+            steering: Piece::default(),
+            steering_pivot: [0.0; 3],
+            steering_axis: [0.0, 0.0, 1.0],
             shadow: Piece::default(),
             wheels: Vec::new(),
             exterior: None,

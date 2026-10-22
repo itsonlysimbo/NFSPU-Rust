@@ -9,7 +9,7 @@ fn main() {
     let name = a.get(1).cloned().unwrap_or_else(|| "993".to_string());
     let m = car_model::load_car(&name, &CarOptions::default()).expect("load car");
     println!("eye {:?}", m.driver_eye);
-    let pieces: [(&str, &Piece); 8] = [
+    let pieces: [(&str, &Piece); 11] = [
         ("paint", &m.paint),
         ("paint_inner", &m.paint_inner),
         ("trim", &m.trim),
@@ -18,6 +18,9 @@ fn main() {
         ("cabin", &m.interior),
         ("cabin_outside", &m.interior_outside),
         ("headlights", &m.headlights),
+        ("driver_arms", &m.driver_arms),
+        ("driver_hands", &m.driver_hands),
+        ("steering", &m.steering),
     ];
     for (label, piece) in pieces {
         // article -> (corners, sum of positions, sum of normals)

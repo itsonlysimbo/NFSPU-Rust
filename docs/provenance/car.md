@@ -468,3 +468,22 @@ player's race car through `CarOptions::body`. Opponents keep their own retail pa
   checked by log only (not tested by eye).
 - Not tested: the palette rows' look in the open list below the retail paints; retail frames to
   compare the smooth shading with (the let's play is at too low a resolution to judge it).
+
+## Cockpit driver and steering wheel (`Steer`, arms and hands), 2026-10-22
+
+From the 993's article list (`car_articles`) and the loaded model (`car_part_info`):
+
+- The detailed cabin (level 1) has its own `Steer` article: the steering wheel, 168 triangles. It
+  is separate geometry from the dash and can be turned on its own.
+- The detailed driver (level 1) is **not** the `LODDriver` article used for the exterior: it is
+  split into `DriverBodyN`, `LegsN`, `LeftArmN`, `RightArmN`, `LeftHandN`, `RightHandN`, where N
+  is the driver type (1 = racing suit and helmet). The arms are 28 triangles each, the hands 257
+  each. The hands are authored on the wheel rim (on the 993, the right hand on the upper-right of
+  the rim and the left on the lower-left), so showing them with the wheel looks like hands on it.
+- Our cockpit draws the arms (static, low-poly) and the hands (on the wheel pivot, so they turn
+  with it), and turns the wheel around its column. The column axis is the mean of the wheel's face
+  normals from the geometry: on the 993 about `(0, 0.28, 0.96)` in car space (mostly +Z, the wheel
+  facing the driver and tilted up). The wheel turns about 90 degrees at full lock (**guess**, not
+  traced). `NFSPU_STEER=-1..1` forces the input for captures.
+- The exterior view still draws the `LODDriver` and the level-3 cabin's own static wheel; the
+  detailed arms and the turning wheel show only in the cockpit view. **Not playtested.**
