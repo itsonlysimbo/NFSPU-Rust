@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| (none) | | | | | | |
+| Retail results screen | Mid | Claude (results-screen) | `claude/results-screen-a9f5cc` | In progress | Retail has no `.lay` for it: it is the in-race `HRaceSummary` table (`docs/provenance/hud.md`); drawing it in `hud.rs` | Finishing shows the retail table, Space/Esc go to the menu |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
