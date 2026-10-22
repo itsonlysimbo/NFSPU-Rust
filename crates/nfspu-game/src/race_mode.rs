@@ -320,7 +320,7 @@ fn start_race(
 
 /// One 64 Hz tick for every opponent: think, drive the car physics, follow it along the slices
 /// and fill its race sample. Cars stuck for long or fallen off the world go back on the road.
-fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet, samples: &mut [CarSample]) {
+fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet, samples: &mut [CarSample]) -> f32 {
     let dir = run.track.dir;
     let held = run.race.held();
     let player_progress = run.race.cars[run.player].progress;
@@ -355,8 +355,10 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
     }
     // car against car: every opponent with the player and with each other (retail's impulse)
     let tick = run.race.tick;
+    let mut player_hit = 0.0f32;
     for i in 0..run.racers.len() {
         if let Some(hit) = car_mod::collide_cars(player, &mut run.racers[i].car) {
+            player_hit = player_hit.max(hit);
             if hit >= 20.0 {
                 race_log(&format!("tick {tick}: player hit {} (impact {hit:.0})", run.racers[i].name));
             }
@@ -370,6 +372,7 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
             }
         }
     }
+    player_hit
 }
 
 /// The road's centre line as one (x, z) polyline per road run, for the HUD map.
@@ -421,12 +424,13 @@ fn race_tick(
     let step = 1.0 / race::TICK_HZ as f32;
     let fraction = run.track.path.fraction(run.slice, dir);
     let name = |names: &[String], car: usize| names.get(car).cloned().unwrap_or_else(|| format!("car {car}"));
+    let mut bump = 0.0f32;
     while run.carry >= step {
         run.carry -= step;
         let mut samples = vec![CarSample::default(); run.race.cars.len()];
         samples[run.player] = CarSample { fraction, crossed_finish: crossed };
         crossed = false;
-        drive_opponents(run, &mut car.car, step, &ground.0, &walls.0, &mut samples);
+        bump = bump.max(drive_opponents(run, &mut car.car, step, &ground.0, &walls.0, &mut samples));
         for e in run.race.step(&samples) {
             let t = run.race.tick;
             match e {
@@ -462,6 +466,12 @@ fn race_tick(
     status.speed_kmh = car.car.speed.abs() * 3.6;
     status.rpm = Some(car.car.rpm());
     status.car_places = std::iter::once(&car.car).chain(run.racers.iter().map(|r| &r.car)).map(|c| [c.pos.x, c.pos.z, c.yaw, c.speed]).collect();
+    let cars = || std::iter::once(&car.car).chain(run.racers.iter().map(|r| &r.car));
+    status.car_rpm = cars().map(|c| c.rpm() / c.sim.spec.redline.max(1.0)).collect();
+    if status.car_specs.len() != status.car_rpm.len() {
+        status.car_specs = cars().map(|c| c.sim.spec.name.clone()).collect();
+    }
+    status.player_bump = bump;
     if status.finished {
         run.finished_for += dt;
     }

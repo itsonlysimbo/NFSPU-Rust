@@ -40,6 +40,21 @@ pub struct Patch {
     pub sample_rate: u32,
     pub samples: u32,
     pub data_offset: usize,
+    /// 0x86 / 0x87: loop start and end sample (both 0 or absent = plays once).
+    pub loop_start: u32,
+    pub loop_end: u32,
+    /// 0x07: the note the sound was recorded at (MIDI key; 60 when absent). The engine layers
+    /// carry their recorded firing pitch here (`docs/provenance/sound.md`).
+    pub key: u8,
+    /// 0x10: fine tune in cents (signed byte).
+    pub fine: i8,
+}
+
+impl Patch {
+    /// The sound loops (a non-empty loop range).
+    pub fn looped(&self) -> bool {
+        self.loop_end > self.loop_start
+    }
 }
 
 /// How a stereo sound's channel frames are laid out (see `decode`).
@@ -70,11 +85,31 @@ pub fn parse(data: &[u8]) -> Result<Vec<Option<Patch>>, BnkError> {
     Ok(out)
 }
 
+/// Sound `n` of a bank, as the game's sound calls number them: entry `n + 1` of the slot table
+/// (entry 0 is never used; the u16 at 6 counts the sounds). Checked on the one-sound opponent
+/// engine banks, whose only patch sits in entry 1, and on the engine tables, whose highest sound
+/// number is the count minus one.
+pub fn sound(data: &[u8], n: usize) -> Option<Patch> {
+    if data.get(0..4) != Some(b"BNKl") {
+        return None;
+    }
+    let count = u16::from_le_bytes(data.get(6..8)?.try_into().unwrap()) as usize;
+    if n >= count {
+        return None;
+    }
+    let slot = 0x14 + n * 4;
+    let rel = u32::from_le_bytes(data.get(slot..slot + 4)?.try_into().unwrap());
+    if rel == 0 || rel == u32::MAX {
+        return None;
+    }
+    parse_patch(data, slot + rel as usize)
+}
+
 pub(crate) fn parse_patch(data: &[u8], at: usize) -> Option<Patch> {
     if data.get(at..at + 2)? != b"PT" {
         return None;
     }
-    let mut p = Patch { channels: 1, sample_rate: 22050, samples: 0, data_offset: 0 };
+    let mut p = Patch { channels: 1, sample_rate: 22050, samples: 0, data_offset: 0, loop_start: 0, loop_end: 0, key: 60, fine: 0 };
     let mut q = at + 4;
     loop {
         let tag = *data.get(q)?;
@@ -93,6 +128,10 @@ pub(crate) fn parse_patch(data: &[u8], at: usize) -> Option<Patch> {
             0x84 => p.sample_rate = value as u32,
             0x85 => p.samples = value as u32,
             0x88 => p.data_offset = value as usize,
+            0x86 => p.loop_start = value as u32,
+            0x87 => p.loop_end = value as u32,
+            0x07 => p.key = value as u8,
+            0x10 => p.fine = value as u8 as i8,
             _ => {}
         }
     }
@@ -205,7 +244,9 @@ mod tests {
         let d = bank();
         let slots = parse(&d).unwrap();
         assert_eq!(slots[0], None);
-        assert_eq!(slots[1], Some(Patch { channels: 1, sample_rate: 22050, samples: 28, data_offset: 48 }));
+        assert_eq!(slots[1], Some(Patch { channels: 1, sample_rate: 22050, samples: 28, data_offset: 48, loop_start: 0, loop_end: 0, key: 60, fine: 0 }));
+        assert_eq!(sound(&d, 0), slots[1]);
+        assert_eq!(sound(&d, 1), None);
         assert_eq!(parse(b"nope"), Err(BnkError::BadMagic));
     }
 

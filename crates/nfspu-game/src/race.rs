@@ -156,6 +156,13 @@ pub struct RaceStatus {
     pub car_progress: Vec<f32>,
     /// Each car's ground position (x, z), yaw and speed (m/s) by race index, for the HUD (set by the race runner).
     pub car_places: Vec<[f32; 4]>,
+    /// Each car's engine speed over its redline, by race index (for the engine sounds).
+    pub car_rpm: Vec<f32>,
+    /// Each car's simulation name (`Spec::name`) by race index (for the engine sounds).
+    pub car_specs: Vec<String>,
+    /// Strongest car-against-car impact the player took this frame (`collide_cars` units), 0
+    /// without one.
+    pub player_bump: f32,
     /// Each car's body colour by race index (set by the race runner).
     pub car_colours: Vec<[u8; 3]>,
     /// The road's centre lines as (x, z) polylines, one per road run (set once per race).

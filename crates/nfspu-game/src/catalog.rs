@@ -33,6 +33,8 @@ pub struct Car {
     pub ai_name: String,
     /// Logo archive in `FEData/Art`, `finallogos2` (at 0x147).
     pub logo_file: String,
+    /// Engine sound name (`GameData/Sounds/<name>.viv`, `sd1a`) at 0x179.
+    pub sound: String,
     /// Logo entry in that archive (`u16` at 0x1f6).
     pub logo_index: u16,
     /// Class string id at 0x1ac: 501 "CLASS 3", 502 "CLASS 2", 503 "CLASS 1".
@@ -83,6 +85,7 @@ impl Car {
             sim: text(&r[0xb1..0xe3]),
             ai_name: text(&r[0x115..0x147]),
             logo_file: text(&r[0x147..0x179]),
+            sound: text(&r[0x179..0x1ab]),
             logo_index: u16_at(r, 0x1f6),
             class: u32_at(r, 0x1ac),
             era: u32_at(r, 0x1b0),
