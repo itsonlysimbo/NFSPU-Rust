@@ -78,6 +78,7 @@ pub fn update(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut paints: ResMut<Assets<nfspu_game::car_shine::CarPaint>>,
     mut images: ResMut<Assets<Image>>,
     holder: Option<ResMut<super::CarModelEntity>>,
     mut name: ResMut<super::CarName>,
@@ -105,7 +106,7 @@ pub fn update(
         name.0 = car.clone();
         style.0 = car_style;
         let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, ..Default::default() };
-        let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car, &options);
+        let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut paints, &mut images, holder.root, &car, &options);
         holder.model = model;
         holder.lean = lean;
         holder.style_count = count;

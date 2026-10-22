@@ -424,15 +424,55 @@ and mirrored in x like the positions, and the viewer's baked lighting uses it. T
 normal is kept as a fallback where a part has no normals, or where a vertex normal points away
 from its triangle; the audit prints how many corners used each.
 
-### The body's reflection (found, not drawn yet)
+### Body reflections (2026-10-22)
 
-Body paint uses material kind `CarExtEnv`, and the engine has a sky-map texture layer for it. In
-the decompile, the layer gives every vertex a second texture coordinate: it takes the vertex
-position plus the vertex normal times a strength, turns that into the camera's frame, and keeps
-x and y, scaled and offset by 0.5. That is a reflection map that slides over the body as the
-camera moves. The strength comes from a table picked by a detail setting (0 turns the layer
-off). Which picture it samples (most likely the track sky's small sky maps `st1a` / `st1b`) and
-how it is blended were not traced. Not implemented.
+Retail draws the paint (`CarExtEnv`) with two extra layers, both computed per vertex on the CPU and
+added to the colour. Both pick one of three detail levels from the `Graphics.Reflections` option
+(a 0-1 slider: below 0.05 level 0, from 0.95 level 2, otherwise 1). With the option off the glow
+textures are not set and the glow layer is skipped.
+
+**Sun highlight.** The light direction is mirrored about the vertex normal and compared with the
+direction from the car to the camera (one direction per car, not per vertex). Above zero the
+cosine is raised to the 8th power and multiplied by the car's light colour (the light colour
+times the track's `.map` colour) and a per-level strength, then added. The level table holds
+0.2, 0.8 and 1.0 (same for red, green and blue).
+
+**Light glow.** The `.map` file's `[sectionN]` blocks (already parsed as `ReflectionSection`)
+give a slice range, three texture names per level in an "open" and a "covered" variant, a
+`texturesize` and an `aspect`. The names are four-character codes stored as numbers, and they
+name pictures in the track's `<track>.env` (`1` black, `2`/`3` clusters of lights, `BT1`/`BT2`
+blue and `YT1`/`YT2` yellow lamp glows, `TT*`, `WT*`, `B2T*`, `T1M*` on other tracks). So the
+`.env` pictures are not sun sprites but the lamps' reflections. The car looks up the section of
+the slice it is on. A body point, pushed along its normal by a strength, is taken relative to
+the slice's centre; its world x divided by `texturesize` and its z times `aspect` / `texturesize`,
+plus 0.5, are the picture coordinates. So the glow is a patch laid flat around the slice
+(5-7 m across, about a fifth as deep on lamp sections) that slides over the body as the car
+passes. Section counts per track: alps 39, autobahn 63, canyon 69, castle 19, coastal 24,
+farmland 4, foothills 14, forest 13, industrial 29, monaco1-5 4/4/21/23/23, skidpad 1.
+
+**Ours** (`crates/nfspu-game/src/car_shine.rs`): a small material for the outer paint pieces
+(page texture times the baked light, cut-outs kept) whose shader adds both layers per pixel, at
+the top detail level. The glow follows each car's own nearest slice; the sun highlight uses
+`.map` `tint` as its colour. The car meshes now carry their normals for this.
+`NFSPU_SHINE=<gain>` scales both layers for tests, `NFSPU_SHINE=0` turns them off.
+
+Guesses, to check against retail:
+- The normal push (we use 0.5 m): the engine reads it from a field we did not see set.
+- Sun direction: we use the baked light's (up, to one side); retail's comes from the track's
+  light, which we do not read yet. At night we scale the highlight by 0.35.
+- Glow blend: we add the picture's colour times its alpha. Two small offsets the engine adds to
+  the picture coordinates (from distances computed with the slice) are left at 0.
+- "Covered" pictures are never used (we always take "open"). What sets the covered flag (a slice
+  flag, maybe tunnels) is not traced; Monaco 3-5 use glows only in the covered variant, so they
+  show none.
+- Only the paint shines; glass and trim get neither layer (not checked what retail does).
+- Per-pixel view direction instead of retail's one direction per car.
+
+Checks: `logs/refl/before/` and `logs/refl/g1/` (farmland, 993, `NFSPU_SHINE=0` vs default): a
+soft highlight on the roof and rear wings in the chase view. `logs/refl/g20/` shows the same at
+20x gain, to show where it falls. The glow was **not tested** by eye (the viewer starts on slice 0,
+which has no glow); the log line `car glow: slice N, picture ...` shows when a car enters a glow
+section.
 
 ## Paint colours are stored as H/S/V (2026-10-20)
 
