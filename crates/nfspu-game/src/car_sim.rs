@@ -40,8 +40,8 @@ const LEAN_SQUAT: f32 = 0.125;
 const LEAN_SIDE: f32 = 0.25;
 const LEAN_LAG: f32 = 0.8;
 const LEAN_LEVER: f32 = 8.0;
-const LEAN_TRAVEL: f32 = 0.1;
-const LEAN_TRACK: f32 = 1.5;
+pub const LEAN_TRAVEL: f32 = 0.1;
+pub const LEAN_TRACK: f32 = 1.5;
 
 /// Gear slots: 0 reverse, 1 neutral, 2.. first and up (as in the `.sim` ratio table).
 pub const REVERSE: usize = 0;
@@ -463,6 +463,8 @@ pub struct CarSim {
     was_held: bool,
     /// 64 Hz tick counter (ABS pulses on every fourth).
     tick: u32,
+    /// Damage zones and what they do to the engine, brakes, wings and steering.
+    pub damage: crate::car_damage::Damage,
 }
 
 fn heading(yaw: f32) -> [f32; 2] {
@@ -527,6 +529,7 @@ impl CarSim {
             held: false,
             was_held: false,
             tick: 0,
+            damage: crate::car_damage::Damage::default(),
         }
     }
 
@@ -714,14 +717,27 @@ impl CarSim {
 
         // steering angle: the lock shrinks with speed; camber pulls the wheel downhill
         let bank = (G * c.right_y * 8.0).round().clamp(-64.0, 64.0);
-        let units = (self.steer_units + bank).clamp(-127.0, 127.0);
+        // damage: a crushed front corner pulls the steering its way, and on every fourth tick bent
+        // suspension shakes it (less below 15 m/s)
+        let mut pull = self.damage.steer_pull();
+        if self.tick % 8 == 0 && self.damage.suspension() > 0.0 {
+            let mut wobble = (self.drive.random() - 0.5) * self.damage.suspension() * 0.5;
+            if speed < 15.0 {
+                wobble *= speed / 15.0;
+            }
+            pull += wobble;
+        }
+        let units = (self.steer_units + bank + pull.round()).clamp(-127.0, 127.0);
         let lock = if speed < 30.0 {
             spec.steer_lock * (1.75 - speed * 0.025)
         } else {
             spec.steer_lock
         }
         .min(20.0);
-        let mut steer256 = [(units + spec.toe) / 127.0 * lock, (units - spec.toe) / 127.0 * lock];
+        let mut steer256 = [
+            (units + spec.toe) / 127.0 * lock * self.damage.wheel_steer(true),
+            (units - spec.toe) / 127.0 * lock * self.damage.wheel_steer(false),
+        ];
         if v_fwd > 80.0 {
             for s in &mut steer256 {
                 *s /= v_fwd * 0.0125;
@@ -746,7 +762,7 @@ impl CarSim {
         }
 
         // brakes: never more than what stops the car in this tick
-        let mut braking = spec.brake_decel * brake;
+        let mut braking = spec.brake_decel * brake * self.damage.brake_factor();
         braking = braking.min(v_fwd.abs() * 32.0);
         if v_fwd > 0.0 {
             braking = -braking;
@@ -870,10 +886,11 @@ impl CarSim {
         loads[1] += right;
         loads[3] += right;
         if v_fwd > 5.0 {
-            loads[0] += spec.downforce_front * v_fwd;
-            loads[1] += spec.downforce_front * v_fwd;
-            loads[2] += spec.downforce_rear * v_fwd;
-            loads[3] += spec.downforce_rear * v_fwd;
+            let aero = self.damage.aero_factor() * v_fwd;
+            loads[0] += spec.downforce_front * aero;
+            loads[1] += spec.downforce_front * aero;
+            loads[2] += spec.downforce_rear * aero;
+            loads[3] += spec.downforce_rear * aero;
         }
         for (w, l) in self.wheels.iter_mut().zip(loads) {
             w.load = l;
@@ -931,7 +948,7 @@ impl CarSim {
         let d = &mut self.drive;
         let slot = d.slot;
         let wheel_rpm = spec.rpm_per_ms[slot] * v_fwd;
-        let full = spec.torque_at(d.rpm) * spec.accel_per_lbft[slot];
+        let full = spec.torque_at(d.rpm) * spec.accel_per_lbft[slot] * self.damage.torque_factor();
         let mut gap = target - wheel_rpm.abs();
         if gap.abs() < 125.0 && target <= redline - 300.0 {
             gap = 0.0;
