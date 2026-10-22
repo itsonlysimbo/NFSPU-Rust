@@ -1757,6 +1757,7 @@ fn drive_car(
     car: Option<ResMut<CarRes>>,
     console: Res<console::Console>,
     hold: Res<race_mode::RaceHold>,
+    status: Option<Res<nfspu_game::race::RaceStatus>>,
     weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
     holder: Option<Res<CarModelEntity>>,
     mut bodies: Query<&mut Transform, (With<CarBody>, Without<BodyLean>)>,
@@ -1785,6 +1786,11 @@ fn drive_car(
         };
         // on the grid until GO: the brake is held on and the automatic waits in neutral, but the
         // engine can be revved (retail)
+        // past the finish line control is taken away: the car rolls on without input (retail
+        // footage 2026-10-22)
+        if status.is_some_and(|s| s.active && s.finished) {
+            input = CarInput::default();
+        }
         state.car.sim.held = hold.0;
         if hold.0 {
             input.steer = 0.0;
