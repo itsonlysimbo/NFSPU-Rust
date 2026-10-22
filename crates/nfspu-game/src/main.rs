@@ -411,6 +411,8 @@ struct TextureData {
     height: u32,
     rgba: Vec<u8>,
     has_alpha: bool,
+    /// Translucent water (`wtr*` pages): blended, not alpha-tested, so the sea shows its soft alpha.
+    water: bool,
 }
 
 struct LoadedTrack {
@@ -518,7 +520,7 @@ fn load_track(name: &str) -> Result<LoadedTrack, String> {
             Some((e.width as u32, e.height as u32, rgba, has_alpha))
         });
         if let Some((w, h, rgba, a)) = decoded {
-            textures.insert(m.index, TextureData { width: *w, height: *h, rgba: rgba.clone(), has_alpha: *a });
+            textures.insert(m.index, TextureData { width: *w, height: *h, rgba: rgba.clone(), has_alpha: *a, water: tex.starts_with("wtr") });
         }
     }
 
@@ -1034,7 +1036,9 @@ fn spawn_track(
                 ..default()
             });
             material.base_color_texture = Some(images.add(image));
-            if t.has_alpha {
+            if t.water {
+                material.alpha_mode = AlphaMode::Blend;
+            } else if t.has_alpha {
                 material.alpha_mode = AlphaMode::Mask(0.5);
             }
         }
