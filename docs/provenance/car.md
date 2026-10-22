@@ -487,3 +487,15 @@ From the 993's article list (`car_articles`) and the loaded model (`car_part_inf
   traced). `NFSPU_STEER=-1..1` forces the input for captures.
 - The exterior view still draws the `LODDriver` and the level-3 cabin's own static wheel; the
   detailed arms and the turning wheel show only in the cockpit view. **Not playtested.**
+
+## Visual damage (`<car>D.fsh`), 2026-10-22
+
+Each car has `<name>D.fsh` (8-bit paletted pictures). Entry names are the damage zone ("0000" to
+"0008"); the header word at offset 8 is the page (0 the body page, 1 its twin, the car's other
+side: this settles why the twin page exists), the position fields are where the picture sits on
+the 256 x 256 page. Retail copies the page and paints each picture over it at alpha zone damage x
+3.5 (capped at 255); an entry with a threshold is drawn solid once the zone passes it (not seen in
+the 993's file). `[damagezones]` in the `.tpg` gives the zone box sizes (width, length, front width
+and length in percent, corner lengths, bottom, height); not used by us yet. `<name>L.fsh` holds a
+similar set (purpose unknown; perhaps a second level of damage). Ours paints `D.fsh` the same way
+(`car_model::paint_damage`), repainting when a zone changes by 2 or more.

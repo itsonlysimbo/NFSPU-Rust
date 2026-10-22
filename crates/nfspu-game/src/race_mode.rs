@@ -42,6 +42,8 @@ pub struct RaceRequest {
     /// Each opponent's car: a catalogue id or a model stem; empty entries (or a shorter list)
     /// use the player's car.
     pub opponent_cars: Vec<String>,
+    /// The Damage option: off, hits leave no damage (they still shake the car).
+    pub damage: bool,
 }
 
 impl RaceRequest {
@@ -57,7 +59,7 @@ impl RaceRequest {
         let laps = parts.next().and_then(|l| l.parse().ok()).filter(|&l| l > 0).unwrap_or(2);
         let opponents: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0).min(7);
         let difficulty = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
-        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new() })
+        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true })
     }
 
     pub fn from_env() -> Option<Self> {
@@ -206,6 +208,7 @@ fn start_race(
     let spot = spots[player];
     let start = spot.pos + Vec3::Y * 1.5;
     car.car = car.car.reset(start, spot.yaw);
+    car.car.sim.damage.enabled = req.damage;
     car.start_pos = start;
     car.start_yaw = spot.yaw;
     let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, req.direction)).collect();
@@ -293,7 +296,9 @@ fn start_race(
         ));
         labels.push(record.name.clone());
         colours.push(nfspu_game::catalog::load_paints(&game, &model).get(options.paint).map_or([128; 3], |p| p.body));
-        racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, lean, name, steer: 0.0, braking: false, resets: 0 });
+        let mut racer_car = Car::with_spec(start, spot.yaw, loaded.spec, Default::default());
+        racer_car.sim.damage.enabled = req.damage;
+        racers.push(Racer { car: racer_car, brain: Opponent::new(spec, driver, spot.slice), body, lean, name, steer: 0.0, braking: false, resets: 0 });
     }
     // opponents that could not be set up drop out of the race
     let cars = 1 + racers.len();
