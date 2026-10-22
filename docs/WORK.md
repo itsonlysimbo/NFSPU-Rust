@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| Damage, suspension and roll-overs | Strong | Claude (damage session) | `claude/damage-6135c5` | Started 2026-10-22: research | Read decomp for suspension, roll-over reset and damage | Cars sit on suspension, roll over and recover, show retail damage; race_drive ALL OK |
+| Damage, suspension and roll-overs | Strong | Claude (damage session) | `claude/damage-6135c5` | WIP, NOT BUILT: car_damage.rs + car_sim hooks + car.rs fields/take_hit/recover done | See `docs/provenance/damage-notes.md`. Next: in `car.rs` tick (after the vertical match) integrate tumble (spring to rest 0 / side / roof via TIP, SIDE_TO_ROOF), crash timer, suspension (susp/susp_vel/susp_road), landing hit zone 8; pass aero to fall_accel; take_hit in collide_cars; handle wants_recover in race_mode/main (draw_pos, wheel_drop); D.fsh stamps in car_model; build + tests + race_drive | Cars sit on suspension, roll over and recover, show retail damage; race_drive ALL OK |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.

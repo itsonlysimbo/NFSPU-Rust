@@ -3,6 +3,7 @@
 //! [`Car::rpm`], [`Car::gear`]). The model runs on the retail clock: [`Car::step`] adds up frame
 //! time and runs whole 64 Hz ticks (forces at 32 Hz). World units are metres.
 
+use crate::car_damage::{self, Damage};
 use crate::car_sim::{self, Aids, Body, CarSim, Contact, Controls, Spec, TICK_HZ};
 use crate::collision::WallSet;
 use crate::ground::Ground;
@@ -46,6 +47,25 @@ pub struct Car {
     pub half: [f32; 3],
     /// Frame time not yet run as a 64 Hz tick.
     pending: f32,
+    /// Free body angles (pitch, roll) on top of the road's slope, from hits and jumps. Past its
+    /// balance point a car falls onto its side or roof (see [`TIP`]).
+    pub tumble: [f32; 2],
+    tumble_rate: [f32; 2],
+    /// Retail's crash timer in 64 Hz ticks (see [`CRASH_TICKS`]); 0 when not running.
+    crash_ticks: i32,
+    /// A hit over [`FORCED_HIT`]: the crash timer is not cancelled by the car landing upright.
+    crash_forced: bool,
+    /// Retail would put the car back on the road now. The race does it with [`Car::recover`];
+    /// left alone the car is set upright where it is on the next step.
+    pub wants_recover: bool,
+    /// Suspension: how far each wheel's corner of the body sits above its rest place (m) and how
+    /// fast it moves. Wheels 0 front left, 1 front right, 2 rear left, 3 rear right.
+    susp: [f32; 4],
+    susp_vel: [f32; 4],
+    /// Road height under each wheel relative to the body's rest plane (m, within the travel).
+    susp_road: [f32; 4],
+    /// Strongest hit of the last step (impact scale) and its damage zone, for logs and sounds.
+    pub last_hit: Option<(f32, usize)>,
 }
 
 /// Height of the car's centre above the road surface.
@@ -75,6 +95,30 @@ const BOUNCE: f32 = 0.7 * 0.4;
 const COVER_HEIGHT: f32 = 3.5;
 /// At most this much frame time is caught up in one step (a stalled frame does not fast-forward).
 const MAX_CATCH_UP: f32 = 0.25;
+/// Balance points (pitch, roll in radians, from the road): tilted further than this the car falls
+/// over; less, it drops back onto its wheels. From the box: atan(half length / ride height) and
+/// atan(half width / ride height) (our estimate).
+pub const TIP: [f32; 2] = [1.35, 1.06];
+/// Rolled further than this the car goes on over onto its roof instead of resting on its side.
+const SIDE_TO_ROOF: f32 = 2.4;
+/// How hard the body is pulled to its resting angle on the ground and how fast that motion dies
+/// (a guess for retail's four-point contact).
+const TUMBLE_SPRING: f32 = 60.0;
+const TUMBLE_DAMP: f32 = 10.0;
+/// A car is upright (on its wheels) while its up axis has more than this world-up component
+/// (retail's 0.75).
+const UPRIGHT: f32 = 0.75;
+/// Retail's crash timer: 192 ticks (3 s) after a big hit, counting ten times as fast while the
+/// car is in the air. Running out with the car not upright puts it back on the road.
+pub const CRASH_TICKS: i32 = 192;
+/// A hit stronger than this puts the car back even if it lands on its wheels (retail, player).
+const FORCED_HIT: f32 = 120.0;
+/// Sliding on its side or roof the car slows at this rate (m/s^2; a guess).
+const BODY_FRICTION: f32 = 6.0;
+/// Suspension spring (1/s^2) and damper (1/s) for each corner: about 1.5 Hz, lightly damped
+/// (guesses; retail's four-point suspension is not decoded).
+const SUSP_SPRING: f32 = 90.0;
+const SUSP_DAMP: f32 = 8.0;
 
 impl Car {
     /// A car with the made-up [`Spec::generic`] and an automatic gearbox.
@@ -99,6 +143,15 @@ impl Car {
             sim: CarSim::new(spec, aids),
             half: [2.2, 0.9, 0.65],
             pending: 0.0,
+            tumble: [0.0; 2],
+            tumble_rate: [0.0; 2],
+            crash_ticks: 0,
+            crash_forced: false,
+            wants_recover: false,
+            susp: [0.0; 4],
+            susp_vel: [0.0; 4],
+            susp_road: [0.0; 4],
+            last_hit: None,
         }
     }
 
@@ -107,11 +160,80 @@ impl Car {
         Car { half: self.half, wet: self.wet, ..Car::with_spec(pos, yaw, self.sim.spec.clone(), self.sim.aids) }
     }
 
-    /// Pitch and roll for drawing the body: the slope under the car plus the lean from braking,
-    /// power and cornering.
+    /// The same car put back on its wheels at a spot (retail's reset onto the road after a
+    /// crash): spec, aids and damage are kept.
+    pub fn recover(&self, pos: Vec3, yaw: f32) -> Car {
+        let mut car = self.reset(pos, yaw);
+        car.sim.damage = self.sim.damage.clone();
+        car
+    }
+
+    /// Pitch and roll for drawing the body: the slope under the car, the tumble, the lean from
+    /// braking, power and cornering and the suspension.
     pub fn body_tilt(&self) -> (f32, f32) {
         let (p, r) = self.sim.body_lean();
-        (self.pitch + p, self.roll + r)
+        let s = &self.susp;
+        let wb = self.sim.spec.wheelbase.max(1.0);
+        let sp = ((s[0] + s[1]) - (s[2] + s[3])) * 0.5 / wb;
+        let sr = ((s[1] + s[3]) - (s[0] + s[2])) * 0.5 / car_sim::LEAN_TRACK;
+        (self.pitch + self.tumble[0] + p + sp, self.roll + self.tumble[1] + r + sr)
+    }
+
+    /// Where to draw the body: the car's centre moved by the suspension and lifted while it lies
+    /// on its side or roof (its centre is then further from the road than the ride height).
+    pub fn draw_pos(&self) -> Vec3 {
+        let heave = self.susp.iter().sum::<f32>() * 0.25;
+        let (sp, cp) = self.tumble[0].sin_cos();
+        let (sr, cr) = self.tumble[1].sin_cos();
+        let up = cp * cr;
+        let extent = self.half[2] * up.abs() + self.half[1] * (cp * sr).abs() + self.half[0] * sp.abs();
+        let lift = (extent - RIDE_HEIGHT).max(0.0) * (1.0 - up.max(0.0));
+        self.pos + Vec3::Y * (heave + lift)
+    }
+
+    /// How far each wheel hangs below its place on the body (m; negative = pushed up into the
+    /// arch). Wheels 0 front left, 1 front right, 2 rear left, 3 rear right.
+    pub fn wheel_drop(&self) -> [f32; 4] {
+        std::array::from_fn(|i| (self.susp_road[i] - self.susp[i]).clamp(-car_sim::LEAN_TRAVEL, car_sim::LEAN_TRAVEL))
+    }
+
+    /// The car's up axis has this world-up component (1 upright, -1 on its roof).
+    pub fn up_y(&self) -> f32 {
+        let (p, r) = (self.pitch + self.tumble[0], self.roll + self.tumble[1]);
+        p.cos() * r.cos()
+    }
+
+    /// The car is on its wheels (retail: up component over 0.75).
+    pub fn upright(&self) -> bool {
+        self.up_y() > UPRIGHT
+    }
+
+    /// Takes a hit of `strength` (impact scale: wall speed in m/s, car-against-car strength) from
+    /// the direction (`right`, `forward`, `up`) in the car's frame: retail's damage, a kick to the
+    /// body (small hits wobble it, big ones can throw it over) and, for a big hit, the crash timer.
+    pub fn take_hit(&mut self, strength: f32, right: f32, forward: f32, up: f32) {
+        if strength <= car_damage::MIN_HIT {
+            return;
+        }
+        let Some(zone) = Damage::zone_for(right, forward, up) else { return };
+        self.sim.damage.hit(strength, zone);
+        if self.last_hit.is_none_or(|(s, _)| strength > s) {
+            self.last_hit = Some((strength, zone));
+        }
+        let big = strength > car_damage::BIG_HIT;
+        let (cap, k) = if big { (2.0, 1.2) } else { (0.33, 1.0) };
+        let kick = (strength / 32.0).min(cap) * k * 0.5;
+        // retail kicks the pitch one way for the front zones and the other way for the rest, and
+        // the roll one way for the left zones and the other way for the rest. Which way is our
+        // guess (a front hit lifts the nose, a hit on the left lifts the left side).
+        self.tumble_rate[0] += if zone <= 2 { kick } else { -kick };
+        self.tumble_rate[1] += if (2..=4).contains(&zone) { -kick } else { kick };
+        if big {
+            self.crash_ticks = CRASH_TICKS;
+            if strength > FORCED_HIT {
+                self.crash_forced = true;
+            }
+        }
     }
 
     /// Unit vector the car is facing (yaw 0 faces -Z).
@@ -150,6 +272,11 @@ impl Car {
         let tick = 1.0 / TICK_HZ;
         self.hit_wall = false;
         self.impact = 0.0;
+        self.last_hit = None;
+        if self.wants_recover {
+            // nobody put the car back on the road: set it on its wheels where it is
+            *self = self.recover(self.pos + Vec3::Y, self.yaw);
+        }
         let ctl = Controls {
             throttle: if input.throttle { 1.0 } else { 0.0 },
             brake: if input.brake { 1.0 } else { 0.0 },
@@ -167,14 +294,22 @@ impl Car {
     /// One 64 Hz tick.
     fn tick(&mut self, ctl: Controls, ground: &Ground, walls: &WallSet) {
         let dt = 1.0 / TICK_HZ;
-        let (sp, cp) = self.pitch.sin_cos();
-        let (sr, cr) = self.roll.sin_cos();
+        let (sp, cp) = (self.pitch + self.tumble[0]).sin_cos();
+        let (sr, cr) = (self.roll + self.tumble[1]).sin_cos();
         let wet = self.wet && {
             let base = self.pos.y - RIDE_HEIGHT;
             ground.surface_near(self.pos.x, self.pos.z, 0.5, base + COVER_HEIGHT, base + 60.0).is_none()
         };
-        let contact = Contact { front_grounded: self.on_ground, rear_grounded: self.on_ground, forward_y: sp, right_y: sr, up_y: cp * cr, wet };
+        // on its side or roof the wheels are off the road: no grip, the body slides to a stop
+        let wheels_down = self.on_ground && cp * cr > 0.5;
+        let contact = Contact { front_grounded: wheels_down, rear_grounded: wheels_down, forward_y: sp, right_y: sr, up_y: cp * cr, wet };
         self.sim.tick(self.yaw, ctl, contact);
+        if self.on_ground && !wheels_down {
+            let v = self.sim.vel[0].hypot(self.sim.vel[1]);
+            let k = if v > 1e-4 { (1.0 - BODY_FRICTION * dt / v).max(0.0) } else { 0.0 };
+            self.sim.vel = [self.sim.vel[0] * k, self.sim.vel[1] * k];
+            self.sim.yaw_rate *= 0.95;
+        }
         self.yaw += self.sim.yaw_rate * dt;
         self.pos.x += self.sim.vel[0] * dt;
         self.pos.z += self.sim.vel[1] * dt;
@@ -188,8 +323,12 @@ impl Car {
             if let Some(push) = walls.resolve(cx, cz, y_min, y_max, BODY_RADIUS) {
                 let len = push[0].hypot(push[1]);
                 if len > 1e-6 {
-                    let into = car_sim::wall_response(&mut self.sim, self.yaw, [push[0] / len, push[1] / len]);
+                    let n = [push[0] / len, push[1] / len];
+                    let into = car_sim::wall_response(&mut self.sim, self.yaw, n);
                     self.impact = self.impact.max(into);
+                    // the hit comes from the wall's side, against the push
+                    let (right, fwd) = (-(n[0] * self.right().x + n[1] * self.right().z), -(n[0] * h.x + n[1] * h.z));
+                    self.take_hit(into, right, fwd, 0.0);
                 }
                 self.pos.x += push[0] * 1.05;
                 self.pos.z += push[1] * 1.05;
