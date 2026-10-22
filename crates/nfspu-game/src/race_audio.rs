@@ -17,21 +17,8 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-/// Sound levels, 0..1.
-// TODO(options-audio): read `AudioSettings` (`audio_settings.rs`, the `claude/options-audio`
-// branch: sfx / music / engine / speech) once it is merged; until then everything is at full.
-#[derive(Clone, Copy)]
-struct Levels {
-    sfx: f32,
-    engine: f32,
-    speech: f32,
-}
-
-impl Default for Levels {
-    fn default() -> Self {
-        Levels { sfx: 1.0, engine: 1.0, speech: 1.0 }
-    }
-}
+/// Sound levels, 0..1, from the player's Options > Audio settings (`audio_settings.rs`).
+use nfspu_game::audio_settings::AudioSettings as Levels;
 
 /// Overall scale on everything this module plays (a guess to leave headroom when several
 /// full-volume layers overlap).
@@ -70,7 +57,6 @@ struct AmbientVoice {
 
 #[derive(Resource)]
 struct RaceSound {
-    levels: Levels,
     listener: Entity,
     engine: Option<(EngineMix, Vec<Entity>)>,
     shift: Option<Handle<AudioSource>>,
@@ -273,7 +259,6 @@ fn start_sound(
     sound_log(&format!("sound set up in {:.0} ms (player car at {:?})", t0.elapsed().as_secs_f64() * 1000.0, car.car.pos));
 
     commands.insert_resource(RaceSound {
-        levels: Levels::default(),
         listener,
         engine,
         shift,
@@ -329,6 +314,7 @@ fn run_sound(
     mut sinks: Query<&mut AudioSink>,
     mut spatial: Query<&mut SpatialAudioSink>,
     mut assets: ResMut<Assets<AudioSource>>,
+    settings: Option<Res<Levels>>,
 ) {
     let (Some(mut sound), Some(car)) = (sound, car) else { return };
     let s = &mut *sound;
@@ -360,7 +346,7 @@ fn run_sound(
         s.wind_walk.tick();
         s.recent_hit = (s.recent_hit - 1.0 / 16.0).max(0.0);
     }
-    let lv = s.levels;
+    let lv = settings.map(|l| *l).unwrap_or_default();
     if let Some((mix, voices)) = &s.engine {
         for (i, v) in voices.iter().enumerate() {
             set_voice(Some(*v), mix.gain(i) * lv.engine * MIX, mix.speed(i), &mut sinks, &mut spatial);
@@ -453,7 +439,7 @@ fn run_sound(
         let pos = Vec3::new(a.sound.pos[0] * mirror, a.sound.pos[1], a.sound.pos[2]);
         let rel = pos - listen;
         let dist = rel.length();
-        let g = a.sound.gain(dist) * fx;
+        let g = a.sound.gain(dist) * lv.ambient * MIX;
         if a.sound.steady() {
             if g > 0.0 && a.voice.is_none() {
                 if let Some((h, _)) = cached(&mut s.track_cache, track_entry(&s.track_sounds, a.sound.sound), a.sound.sound, &mut assets) {

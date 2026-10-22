@@ -16,15 +16,14 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| Options menu: audio settings work and persist | Mid | Claude session `options-audio` | `claude/options-audio-a28663` | Building; 7 files uncommitted (2026-10-22) | Finish build, run tests, commit | Audio sliders move, persist, change music live; tests and `race_drive` pass |
-| In-race sound: engine, announcer, skids, ambience | Strong | Claude session `race-sound` | `claude/race-sound-e8aa02` | Building; 12 files uncommitted (2026-10-22) | Finish build, run tests, commit | Race has engine, countdown voice, skids, ambience; tests and `race_drive` pass |
+| (none) | | | | | | |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Tier | Notes |
 |---|---|---|
-| Playtest round for the 2026-10-20 fixes | User | Flare occlusion on Côte d'Azur is not tested |
+| Playtest round: 2026-10-20 fixes, Options > Audio, race sound | User | Flare on Côte d'Azur, slider dragging and sound levels by ear are not tested |
 | Retail results screen | Mid | Layouts are in `FEData`; placeholder exists |
 | Route choice at AI junctions | Strong | `ai.rs`, `aidata.rs` |
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
@@ -38,6 +37,9 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Merged as |
 |---|---|
+| In-race sound: engine, announcer, skids, ambience, wind | `fb5a9a5` (branch), wired to Options levels on master |
+| Options > Audio sliders, saved to `settings/audio.txt` | `6259450` (branch) |
+| Work board and hand-off rules | `52d4f1e` |
 | Progress treemap tool and checklist | `5844a8d` |
 | Empty effect meshes (slab allocator errors) | `a415ff7` |
 | Sun flare hidden behind terrain | `2ec0561` |
