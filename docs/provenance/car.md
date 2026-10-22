@@ -484,7 +484,7 @@ From the 993's article list (`car_articles`) and the loaded model (`car_part_inf
   with it), and turns the wheel around its column. The column axis is the mean of the wheel's face
   normals from the geometry: on the 993 about `(0, 0.28, 0.96)` in car space (mostly +Z, the wheel
   facing the driver and tilted up). The wheel turns about 90 degrees at full lock (**guess**, not
-  traced). `NFSPU_STEER=-1..1` forces the input for captures.
+  traced). The drawn wheel follows the input at a limited rate (full lock in about 0.6 s) because keyboard input is 0/1 and used to snap it to 90 degrees. Hands ride the rim, arms stay static (guess). `NFSPU_STEER=-1..1` forces the input for captures.
 - The exterior view still draws the `LODDriver` and the level-3 cabin's own static wheel; the
   detailed arms and the turning wheel show only in the cockpit view. **Not playtested.**
 

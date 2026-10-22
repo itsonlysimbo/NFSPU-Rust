@@ -464,3 +464,5 @@ windows. Gated to tracks by the baked-colour part (`fd`), so car parts are never
 Verified: the sea renders on Cote d'Azur (`logs/horizon_coastal_90.png`); not yet compared with
 retail by eye. Other `nid = 0` primitives on other tracks may now draw too (good if they are
 planes, `skipped_batches` still catches non-1/3 modes and out-of-range indices).
+
+**Why the sea still looked missing (2026-10-22):** the water batches use the `wtr3` (64x64) and `wtr4` (16x16) pages whose alpha averages 95 and 50 of 255; the track loader alpha-tested every texture with alpha at 0.5, so nearly all water texels were discarded. `wtr*` pages are now alpha-blended (vertex colours are the sunset tint, 190/136/157). Dump with `examples/water_dump.rs`. Before/after: `logs/water_before_*.png`, `logs/weather/ours_coastal_*.png`. No retail frame of the sea to compare: not tested by eye against retail.
