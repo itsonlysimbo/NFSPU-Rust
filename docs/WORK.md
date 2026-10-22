@@ -45,6 +45,8 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Merged as |
 |---|---|
+| Retail race summary panel after the finish | `a50c753` |
+| Damage zones, roll-over reset, spring suspension, damage option | `42ab8d9` |
 | Body lean over planted wheels + cockpit arms and turning steering wheel (2026-10-22 user ask) | `opencode/lean-cockpit` (branch; merged into master) |
 | Cote d'Azur sea/water planes (`WATER_MID2` index-less triangles) | `opencode/lean-cockpit` (branch; merged into master) |
 | Verified the three merged session branches: build, 336 tests, `race_drive` ALL OK | master `4c9109a` |
