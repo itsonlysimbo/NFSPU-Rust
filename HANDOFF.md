@@ -2,7 +2,8 @@
 
 Last updated 2026-10-20 by the Claude coordinating session. Read `AGENTS.md` first: its hard rules
 (no game data in the repo, whitelist `.gitignore`, read-only installs and decomp, own code only) are
-not optional. This file says where things stand and how to carry on.
+not optional. This file says where things stand and how to carry on. The live list of tasks, who
+holds them and each one's next step is `docs/WORK.md`; check it first.
 
 ## What the project is
 A from-scratch Rust 1.99 / Bevy 0.19.1 recreation of Need for Speed: Porsche Unleashed (2000) that

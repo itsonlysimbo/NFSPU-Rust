@@ -30,6 +30,26 @@ A from-scratch Rust/Bevy/wgpu rewrite of Need for Speed: Porsche Unleashed (NFS5
 - When Claude runs out of usage, the user's other agents (e.g. OpenCode) may keep working directly in the main checkout on `master`, without committing. Before merging, the coordinator runs `git status`. Any uncommitted work is the user's: commit it to an `other-agent/<date>` branch and merge it like a session branch. Never discard it.
 - The user playtests once per milestone, with one recording (game sound on) of everything they noticed.
 
+## Hand-offs (user, 2026-10-22)
+Several different agents (Claude, OpenCode, others) and model sizes work on this project, and any of
+them may stop mid-task (usage limits). Leave every task so the next agent can pick it up cold.
+- **Start:** read this file, then `HANDOFF.md`, then `docs/WORK.md` (the work board). Run `git status`
+  and check the worktrees for unsaved work (commands in `HANDOFF.md`) before anything else.
+- **Claim:** put your agent name and branch in the task's row in `docs/WORK.md` before starting.
+  Don't take a task someone else holds unless its last update is over a day old and its branch is
+  committed.
+- **Branch:** one task, one branch. Committing to your own task branch is always allowed; committing
+  to `master` still needs the user's OK (rule 3) or a coordinator merge.
+- **Checkpoint:** commit at each working step (`WIP: ...` is fine) and update the task's **Next step**
+  line: the one concrete thing to do next, plus anything you learned that isn't in the code
+  (dead ends, what was tested, what's not tested).
+- **Stop:** never end with uncommitted work. If you run out mid-change, commit it as `WIP:` with a
+  Next step saying what is half-done.
+- **Tier:** each task on the board has a tier (Strong / Mid / Light; table at the bottom of
+  `docs/WORK.md`). A lighter model that hits a judgement call writes it into Next step and stops.
+- **Finish:** the coordinator (or whoever merges) moves the task to Done with the merge commit and
+  updates `docs/progress.md`.
+
 ## Builds
 - `.cargo/config.toml` links with `rust-lld` (ships with Rust; much faster than link.exe).
 - The dev profile keeps line tables only (`debug = "line-tables-only"`, none for dependencies).
@@ -52,5 +72,5 @@ A from-scratch Rust/Bevy/wgpu rewrite of Need for Speed: Porsche Unleashed (NFS5
 - PATH note: in agent shells run `$env:PATH="$env:USERPROFILE\.cargo\bin;C:\Program Files\Git\cmd;$env:PATH"` first
 - Real install (patched, played, holds saves): `C:\Users\CB\Downloads\NFS5 - Copy`. Its `SaveData` has the user's test profile `3Greg.sav` (made by the user, not shipped) and `8Driver.sav`.
 - Game dir env var for tools: `NFSPU_GAME_DIR=C:\Users\CB\Downloads\NFS5 - Copy` (the `run_*.bat` launchers use it)
-- Agent: OpenCode
+- Agents: Claude Code (coordinator and sessions), OpenCode, others; see "Hand-offs"
 
