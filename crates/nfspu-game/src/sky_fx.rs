@@ -780,7 +780,7 @@ fn update_drops(
     let (Some(mut fx), Some(weather)) = (fx, weather) else { return };
     if fx.drop_mesh.is_none() {
         let Some((px, w, h)) = common_picture("SPLT") else { return };
-        let mesh = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
+        let mesh = meshes.add(crate::weather_fx::placeholder_mesh());
         let material = materials.add(StandardMaterial {
             base_color_texture: Some(images.add(picture(&px, w, h, false))),
             unlit: true,
@@ -964,7 +964,7 @@ pub fn spawn_glows(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials
         counts.insert(flares[rec].name.clone(), at.len());
         for half in 0..2 {
             let Some(material) = sprite_material(materials, images, &flares[rec], half, 0.0) else { continue };
-            let mesh = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
+            let mesh = meshes.add(crate::weather_fx::placeholder_mesh());
             out.push(commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::IDENTITY, NoFrustumCulling, Visibility::Hidden, GlowMesh)).id());
             groups.push(GlowGroup { mesh, at: at.clone(), half_size: flares[rec].sizes[half] * 0.1, blink: flares[rec].blink });
         }

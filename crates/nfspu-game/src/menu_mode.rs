@@ -431,6 +431,8 @@ struct MenuVisual;
 struct Sounds {
     bank: Option<Vec<u8>>,
     loaded: std::collections::HashMap<usize, Option<Handle<AudioSource>>>,
+    /// The Options > Audio effects level (0..1) the menu sounds play at.
+    level: f32,
 }
 
 /// Sound call numbers (bank slot = number + 1). From two retail recordings: 0 screen change
@@ -449,7 +451,7 @@ impl Sounds {
         if bank.is_none() {
             crate::log_line("front end: fesfx.bnk not found, no menu sounds");
         }
-        Sounds { bank, loaded: Default::default() }
+        Sounds { bank, loaded: Default::default(), level: 1.0 }
     }
 
     /// Plays slot `n` once (decoded on first use).
@@ -463,7 +465,7 @@ impl Sounds {
             Some(assets.add(AudioSource { bytes: wav.into() }))
         });
         if let Some(handle) = handle.clone() {
-            commands.spawn((AudioPlayer(handle), PlaybackSettings::DESPAWN));
+            commands.spawn((AudioPlayer(handle), PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(self.level))));
         }
     }
 }
@@ -535,9 +537,14 @@ impl Music {
 }
 
 /// Copies changed menu levels into the `AudioSettings` resource the sound systems read.
-fn sync_audio(mut state: ResMut<FrontEnd>, mut settings: ResMut<AudioSettings>) {
+fn sync_audio(mut state: ResMut<FrontEnd>, mut settings: ResMut<AudioSettings>, sounds: Option<ResMut<Sounds>>) {
     if std::mem::take(&mut state.audio_changed) && *settings != state.audio {
         *settings = state.audio;
+    }
+    if let Some(mut sounds) = sounds {
+        if sounds.level != settings.sfx {
+            sounds.level = settings.sfx;
+        }
     }
 }
 

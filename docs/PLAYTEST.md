@@ -18,8 +18,23 @@ when they can and notes results here or in a recording. Run the game with `.\run
 | 2026-10-22 | Cockpit view (C) | The driver's arms/hands are visible on the steering wheel, and the wheel turns with the steering; the arms are the model's low-poly ones, judge how they look | `opencode/lean-cockpit` |
 | 2026-10-22 | Cote d'Azur sea | The water/sea shows along the coast (sunset over rippled water); compare its look and extent with retail | `opencode/lean-cockpit` |
 
+| 2026-10-22 | Effects slider in menus; all sliders in a race | Menu clicks get quieter with Effects; in a race Engine, Effects, Speech and Ambient each change their sounds | master |
+| 2026-10-22 | Console during a race (again) | No "Use-after-free" line at all | master |
+
 ## Results
 Add a line per playtest: date, recording path, what was wrong.
+
+### 2026-10-22 (user notes)
+- Console: one "Use-after-free" error left per race (was thousands). **Open.**
+- Sun flare: hidden behind rocks and tunnels. **Pass.**
+- Gravity: feels decent. Wet roads not tested yet.
+- Menus: slide/fade, hover and dropdown all pass. Missing: a small bright light that travels around the button outlines (user can supply retail footage).
+- Cars: shading looks good. Next: reflective surfaces (paint and chrome environment reflections).
+- Options > Audio: sliders drag, music changes live, settings persist. **Bug:** every slider except music has no audible effect.
+- Race sound: close, needs fine-tuning against retail.
+- Body lean: better, not yet retail.
+- Cockpit: hand position on the wheel needs work; the steering wheel turns in 90-degree steps instead of smoothly.
+- Côte d'Azur: no water in the sea. **Fail.**
 
 ## Results screen (claude/results-screen-a9f5cc)
 - Finish a quick race with opponents: about 2 s after the line a 500x325 "Race Summary" panel

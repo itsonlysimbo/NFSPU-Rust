@@ -267,7 +267,7 @@ fn update_conditions(
 }
 
 /// A mesh with one empty triangle, replaced every frame once there is something to draw.
-fn placeholder_mesh() -> Mesh {
+pub(crate) fn placeholder_mesh() -> Mesh {
     let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
     m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; 3]);
