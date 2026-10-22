@@ -57,7 +57,9 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
 - Keep 3 sessions running. When one finishes, merge it and start the next task from `docs/WORK.md`,
   highest first, without asking.
 - Sessions commit to their own branch freely and run in auto permission mode.
-- Delete `target/`, finished worktrees and merged branches after merging, without asking.
+- Delete `target/`, finished worktrees and merged branches after merging, without asking. Only
+  worktrees under `.claude/worktrees/` and `claude/*` branches: never remove Orca's workspaces
+  (`C:\Users\CB\orca\...`, `itsonlysimbo/*` branches) or `other-agent/*` branches.
 - Live game tests, captures and launches need no announcement.
 - Don't wait for playtests: add what needs the user's eyes and ears to `docs/PLAYTEST.md`.
 - Stop and ask only for: networking, unsigned programs, installing software, anything outside the
