@@ -280,8 +280,8 @@ impl<'a> Crp<'a> {
             let d = self.part_data(p);
             let count = p.count;
             let (nif, nid) = (u32le(d, 0x28).ok()?, u32le(d, 0x2C).ok()?);
-            if nid < 2 {
-                corner += count; // keep colour numbering aligned even when skipping
+            if nid == 1 {
+                corner += count; // one index table: not a shape we can read
                 continue;
             }
             let header = 0x30 + nif * 16 + nid * 8;
@@ -308,9 +308,26 @@ impl<'a> Crp<'a> {
                     (d.get(r + 2..r + 4)? == tag).then(|| u32le(d, r + 4).ok()).flatten()
                 })
             };
-            let (vi, ui) = (table_at(b"vI")?, table_at(b"uI")?);
-            let vertex_idx: Vec<u16> = d.get(header + vi..header + vi + count)?.iter().map(|&b| (v_base + b as usize) as u16).collect();
-            let uv_idx: Vec<u16> = d.get(header + ui..header + ui + count)?.iter().map(|&b| (u_base + b as usize) as u16).collect();
+            let (vi, ui) = (table_at(b"vI"), table_at(b"uI"));
+            // Track parts with no index tables (the flat `WATER_MID2` planes, point primitives):
+            // their corners are listed in triangle order, so the corner index is the running
+            // position in the part's windows. Gated to tracks (baked colours, `fd`) so car parts are
+            // never guessed at.
+            let (vertex_idx, uv_idx) = match (vi, ui) {
+                (Some(vi), Some(ui)) => (
+                    d.get(header + vi..header + vi + count)?.iter().map(|&b| (v_base + b as usize) as u16).collect(),
+                    d.get(header + ui..header + ui + count)?.iter().map(|&b| (u_base + b as usize) as u16).collect(),
+                ),
+                _ if nid == 0 && fd.is_some() => (
+                    (0..count).map(|i| (v_base + i) as u16).collect::<Vec<_>>(),
+                    (0..count).map(|i| (u_base + i) as u16).collect::<Vec<_>>(),
+                ),
+                _ => {
+                    skipped_batches += 1;
+                    corner += count;
+                    continue;
+                }
+            };
             if vertex_idx.iter().any(|&i| i as usize >= positions.len()) || uv_idx.iter().any(|&i| i as usize >= uvs.len()) {
                 skipped_batches += 1;
                 corner += count;

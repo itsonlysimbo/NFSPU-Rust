@@ -18,6 +18,15 @@ fn main() {
             continue;
         }
         let Some(m) = c.article_mesh(a, 0) else { println!("{n:<36} (no level-0 mesh)"); continue };
+        if n.starts_with("WATER") {
+            for p in &c.articles[a].parts {
+                let tag = String::from_utf8_lossy(&p.tag).trim_end().to_string();
+                let bytes = c.part_data(p);
+                let u = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).unwrap_or(0);
+                let mode = bytes.get(0..2).map(|b| u16::from_le_bytes([b[0], b[1]])).unwrap_or(0);
+                println!("  WATER part {tag:?} len {} count {} mode {mode} nif {} nid {}", bytes.len(), p.count, u(0x28), u(0x2C));
+            }
+        }
         let tris: usize = m.batches.iter().map(|b| b.vertex_idx.len() / 3).sum();
         let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
         for p in &m.positions {

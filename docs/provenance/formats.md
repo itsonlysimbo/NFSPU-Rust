@@ -452,3 +452,15 @@ check, not proof that every retail surface is rendered. Logs:
 `logs/primitive_inventory.txt`, `logs/primitive_normalization_audit.txt`.
 Fixtures verify strips with repeated indices, winding parity, UV/colour alignment, short
 inputs and unsupported modes. Matched retail visual parity remains **not tested**.
+
+## Track water planes (`WATER_MID2_*`), 2026-10-22
+
+Cote d'Azur's sea is a set of flat `WATER_MID2_*` articles: 8-14 triangles each, `y = 0` at about
+-7 m, 150-300 m across (centres around x 400-2000, z -1200). Their `\0\0rp` / `\1\0rp` parts have
+mode 3 (triangle list), 3 info rows and **no index tables** (`nid = 0`), which our reader used to
+skip, so the sea was missing. When a part has no index tables and mode 1 or 3, the corners are
+listed in triangle order; the reader now uses the running position in the part's vertex and UV
+windows. Gated to tracks by the baked-colour part (`fd`), so car parts are never guessed at.
+Verified: the sea renders on Cote d'Azur (`logs/horizon_coastal_90.png`); not yet compared with
+retail by eye. Other `nid = 0` primitives on other tracks may now draw too (good if they are
+planes, `skipped_batches` still catches non-1/3 modes and out-of-range indices).
