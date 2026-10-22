@@ -81,3 +81,22 @@ data.
   route choice and look-ahead use the retail-ordered table.
 - Retail's walk enters a run backwards one slice further than forwards (an off-by-one); ours is
   symmetric.
+
+## Check (2026-10-22, `race_drive <track> forward 1 7 <0|2>`, seed 12345)
+
+Our junction build matches every `.jnc` record count tested (alps 6, castle 24, industrial 26,
+autobahn 35, canyon 17, farmland 14, monaco3 11), so the file weights are applied. Choices by 7
+opponents, main (heavier) route first:
+
+| Junction | Beginner | Expert |
+|---|---|---|
+| alps 1 (0.85 / 0.15) | 3 / 4 | 7 / 0 |
+| industrial 1 (1.00 / 0.00) | 5 / 2 | 7 / 0 |
+| industrial 18 (0.85 / 0.15) | 2 / 5 | 7 / 0 |
+| canyon 1 (0.85 / 0.15) | 3 / 4 | 7 / 0 |
+| farmland 7 (0.85 / 0.15) | 2 / 5 | 7 / 0 |
+| autobahn 10 (0.85 / 0.15) | 5 / 2 | 7 / 0 |
+| autobahn 11 (0.60 / 0.30 / 0.10) | 5 / 1 / 1 | 3 / 4 / 0 |
+
+Expert follows the weights (a 0.00 route is never taken); beginner splits near 55 / 45 as the
+two-route rule says, so beginners take side roads often. No car got stuck or failed to finish.

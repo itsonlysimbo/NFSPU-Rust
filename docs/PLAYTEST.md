@@ -26,3 +26,5 @@ Add a line per playtest: date, recording path, what was wrong.
   opens with eight places, NAME / CAR / BEST LAP / TIME, your row in amber. Compare its look,
   position and timing with retail (panel colours, position and delay are guesses).
 - Opponents still racing show dashes and fill in as they finish. Space, Enter or Esc return to the menu.
+
+- **Opponent routes at junctions** (castle, industrial, autobahn, canyon, farmland, alps): on beginner, about half the opponents take side roads; on expert they keep to the main road. Do they look like retail, and do they drive the side roads cleanly?
