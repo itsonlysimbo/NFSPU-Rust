@@ -292,6 +292,33 @@ Verified offline (`NFSPU_MIRROR=1` on the examples):
 **Not tested**: whether retail's image is mirrored by the projection instead (the difference is
 only the car model and sign lettering, plus steering feel); the live feel of a mirrored race.
 
+## Pause (decomp `HPause`, `0x42a440`; input table `0x4b0ff0`)
+Retail has no front-end layout for the in-race pause: no `FEData/Layouts/*.lay` mentions it. It is
+an in-race HUD billboard, class `HPause`, built from the same billboard base as the race summary.
+
+| What | Value | Source |
+|---|---|---|
+| Panel | 500 x 325, title string 18128 "Pause Menu" | constructor arguments |
+| Buttons | three, 142 x 19 each, strings 18108 "continue", 18109 "race again", 18110 "quit…" | constructor; size from constants at `0x5b2d48` / `0x5b2d4c` |
+| Column | x = screen width / 2 - 71 (centred) | constructor |
+| Rows | step = 19 x 1.6 = 30.4; first row y = screen height / 2 - 1.5 x step | doubles/floats at `0x5b2b00`, `0x5b2600`, `0x5b23f0` |
+| Button results | continue 2, race again 3, quit 0x1a (handled by the race loop; not traced) | `HPause` click handler |
+| Options button | none: the pause menu has no options | three buttons only |
+| Input actions | `I_PAUSE` (0x1f7), `I_PAUSEJOY` (0x1f8), `I_TOGGLEPAUSEMENU` (0x1fd) | input name table |
+| Keys | "pause game" = Alt-P; Esc listed as a function key; "hide pause menu" and "rotate pause camera" keys exist | `FEStrings.csv` 14600-14606, 12202-12205 (`funckeys.lay`) |
+
+Quit strings in the HUD group: 18171 "Are you sure you want to exit?", 18104 "exit to game menu",
+18103 "exit to windows", 18105 "cancel", 18174 "Confirmation". That quit leads to this prompt is a
+**guess** from the strings; its layout here copies the pause page.
+
+Ours (`hud_pause.rs`, `pause.rs`): Esc or P pauses (retail's Alt-P works too, as P; Esc is a guess
+from the function-key list). The panel and rows follow the table. **Guesses:** panel colours (the
+summary's gold), button look (black, amber when highlighted), centred labels, pausing allowed from
+the grid, quit page layout. **Not done:** the orbiting pause camera (12202-12205) and the hide-menu
+key. While paused the virtual clock is stopped (race clock, AI, effects), the car, camera keys and
+race sound systems do not run, and every playing sound is paused, then resumed on continue.
+"Race again" leaves `Race` and sets the same race up again behind the loading screen.
+
 ## Results screen
 
 Retail shows the results as an in-race HUD table (`HRaceSummary`), not a front-end layout: see

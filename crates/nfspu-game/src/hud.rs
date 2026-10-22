@@ -56,6 +56,8 @@ pub struct HudInput {
     pub summary_since: f32,
     /// Whether the summary has the BEST LAP column (a race with laps).
     pub summary_laps: bool,
+    /// The pause menu, drawn over everything while the race is paused.
+    pub pause: Option<crate::hud_pause::PauseView>,
 }
 
 /// One car as the map and the opponent list need it.
@@ -95,6 +97,7 @@ impl Default for HudInput {
             summary: Vec::new(),
             summary_since: 0.0,
             summary_laps: true,
+            pause: None,
         }
     }
 }
@@ -170,6 +173,15 @@ pub mod word {
     pub const RPM: u16 = 18144; // "rpm"
     pub const REVERSE: u16 = 18145; // "R"
     pub const NEUTRAL: u16 = 18146; // "N"
+    pub const EXIT_WINDOWS: u16 = 18103; // "exit to windows"
+    pub const EXIT_FRONTEND: u16 = 18104; // "exit to game menu"
+    pub const CANCEL: u16 = 18105; // "cancel"
+    pub const CONTINUE: u16 = 18108; // "continue"
+    pub const RACE_AGAIN: u16 = 18109; // "race again"
+    pub const QUIT: u16 = 18110; // "quit…"
+    pub const PAUSE_MENU: u16 = 18128; // "Pause Menu"
+    pub const EXIT_PROMPT: u16 = 18171; // "Are you sure you want to exit?"
+    pub const CONFIRMATION: u16 = 18174; // "Confirmation"
 }
 
 impl HudSettings {
@@ -197,6 +209,15 @@ impl HudSettings {
             word::RPM => "rpm",
             word::REVERSE => "R",
             word::NEUTRAL => "N",
+            word::EXIT_WINDOWS => "exit to windows",
+            word::EXIT_FRONTEND => "exit to game menu",
+            word::CANCEL => "cancel",
+            word::CONTINUE => "continue",
+            word::RACE_AGAIN => "race again",
+            word::QUIT => "quit…",
+            word::PAUSE_MENU => "Pause Menu",
+            word::EXIT_PROMPT => "Are you sure you want to exit?",
+            word::CONFIRMATION => "Confirmation",
             _ => "",
         }
         .to_string()
@@ -429,6 +450,15 @@ pub(crate) const AMBER: [f32; 3] = [0xFA as f32 / 255.0, 0xB4 as f32 / 255.0, 0.
 
 /// Builds the draw list for one frame on a `screen`-sized window.
 pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u32; 2]) -> Vec<HudDraw> {
+    let mut out = race_draws(input, settings, boxes, screen);
+    if let Some(view) = &input.pause {
+        crate::hud_pause::draw(&mut out, settings, view, screen);
+    }
+    out
+}
+
+/// The HUD without the pause menu.
+fn race_draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u32; 2]) -> Vec<HudDraw> {
     let mut out = Vec::new();
     let sw = &settings.switches;
     let s = settings.scale;

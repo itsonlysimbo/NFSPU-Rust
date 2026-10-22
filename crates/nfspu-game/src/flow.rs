@@ -123,6 +123,7 @@ impl RaceConfig {
     /// Puts the race's resources in place (replacing the last race's) and sets the world's mirror
     /// flag; call before `Loading` starts.
     pub fn apply(self, world: &mut World) {
+        world.insert_resource(LastRace(self.clone()));
         nfspu_game::set_world_mirrored(self.mirrored);
         if self.mirrored {
             log_line("race: mirrored track layout");
@@ -197,12 +198,31 @@ pub fn leave_race(back: &ReturnToMenu, next: &mut NextState<AppState>, exit: &mu
     }
 }
 
+/// The last race set up, for "race again" on the pause menu.
+#[derive(Resource)]
+pub struct LastRace(pub RaceConfig);
+
+/// Inserted when the race is left to be run again: once the scene is down (`end_race`, on leaving
+/// `Race`), entering `Loading` sets the last race up again and builds it afresh.
+#[derive(Resource)]
+pub struct RestartRace;
+
+fn restart_race(world: &mut World) {
+    if world.remove_resource::<RestartRace>().is_none() {
+        return;
+    }
+    let Some(config) = world.get_resource::<LastRace>().map(|l| l.0.clone()) else { return };
+    log_line(&format!("flow: race again on {}", config.track));
+    config.apply(world);
+}
+
 pub struct FlowPlugin;
 
 impl Plugin for FlowPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(FlowTest::from_env())
             .add_systems(OnExit(AppState::Race), end_race)
+            .add_systems(OnEnter(AppState::Loading), restart_race.before(super::race_load::enter))
             .add_systems(OnEnter(AppState::Menu), note_menu_entry)
             .add_systems(Update, (log_state_changes, report_after_race, flow_test_race.run_if(in_state(AppState::Race))));
     }

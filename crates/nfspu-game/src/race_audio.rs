@@ -28,7 +28,7 @@ pub struct RaceAudioPlugin;
 
 impl Plugin for RaceAudioPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (start_sound, run_sound).chain().run_if(crate::flow::in_race_scene))
+        app.add_systems(Update, (start_sound, run_sound).chain().run_if(crate::flow::in_race_scene).run_if(crate::pause::running))
             .add_systems(OnExit(AppState::Race), |mut commands: Commands| commands.remove_resource::<RaceSound>());
     }
 }
