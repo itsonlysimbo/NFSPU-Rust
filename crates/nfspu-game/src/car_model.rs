@@ -1499,3 +1499,83 @@ color1.b=0
         assert!(is_wheel("WheelFront") && is_wheel("WheelRear") && !is_wheel("WheelWell") && !is_wheel("WheelShadowFront"));
     }
 }
+
+/// One picture of damage (dents, scratches) that retail paints over a body page as its damage zone
+/// fills (`<car>D.fsh`, see `docs/provenance/car.md`).
+#[derive(Clone, Debug)]
+pub struct DamageStamp {
+    /// Damage zone (the entry's name, "0000".."0008").
+    pub zone: usize,
+    /// 0: the body page, 1: its twin (the car's other side).
+    pub page: u8,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The car's damage pictures, or none when it has no `D.fsh` file.
+pub fn load_damage_stamps(name: &str) -> Vec<DamageStamp> {
+    let Ok(dir) = car_dir() else { return Vec::new() };
+    let Some(path) = find_case_insensitive(&dir, &format!("{name}D.fsh")) else { return Vec::new() };
+    let Ok(data) = fs::read(path) else { return Vec::new() };
+    let Ok(archive) = shpi::parse(&data) else { return Vec::new() };
+    archive
+        .entries
+        .iter()
+        .filter_map(|e| {
+            let zone: usize = e.name.trim().parse().ok()?;
+            // the third header word (0 or 1) picks the page
+            let page = data.get(e.offset + 8).copied()?;
+            let rgba = shpi::decode_rgba8(&data, e)?;
+            (zone < crate::car_damage::ZONES && page < 2).then(|| DamageStamp { zone, page, x: e.x as u32, y: e.y as u32, width: e.width as u32, height: e.height as u32, rgba })
+        })
+        .collect()
+}
+
+/// A body page with the damage painted on: each stamp of the page whose zone has damage is
+/// blended over it at alpha damage x 3.5 (full from about 73), times the stamp's own alpha.
+/// The page's own alpha is kept.
+pub fn paint_damage(base: &[u8], size: u32, page: u8, stamps: &[DamageStamp], zones: &[f32]) -> Vec<u8> {
+    let mut out = base.to_vec();
+    for s in stamps.iter().filter(|s| s.page == page) {
+        let d = zones.get(s.zone).copied().unwrap_or(0.0);
+        if d <= 0.0 {
+            continue;
+        }
+        let k = (d * 3.5).min(255.0) / 255.0;
+        for row in 0..s.height {
+            for col in 0..s.width {
+                let (px, py) = (s.x + col, s.y + row);
+                if px >= size || py >= size {
+                    continue;
+                }
+                let si = ((row * s.width + col) * 4) as usize;
+                let di = ((py * size + px) * 4) as usize;
+                let a = k * s.rgba[si + 3] as f32 / 255.0;
+                for c in 0..3 {
+                    out[di + c] = (out[di + c] as f32 * (1.0 - a) + s.rgba[si + c] as f32 * a).round() as u8;
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod damage_tests {
+    use super::*;
+
+    #[test]
+    fn damage_paints_by_zone_and_page() {
+        let base = vec![0u8; 4 * 4 * 4];
+        let stamp = DamageStamp { zone: 1, page: 0, x: 1, y: 1, width: 1, height: 1, rgba: vec![200, 200, 200, 255] };
+        let mut zones = [0.0f32; 10];
+        assert_eq!(paint_damage(&base, 4, 0, std::slice::from_ref(&stamp), &zones), base);
+        zones[1] = 100.0;
+        let out = paint_damage(&base, 4, 0, std::slice::from_ref(&stamp), &zones);
+        assert_eq!(out[(4 + 1) * 4], 200);
+        assert_eq!(paint_damage(&base, 4, 1, &[stamp], &zones), base, "other page untouched");
+    }
+}

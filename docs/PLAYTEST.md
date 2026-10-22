@@ -17,6 +17,7 @@ when they can and notes results here or in a recording. Run the game with `.\run
 | 2026-10-22 | Body lean and wheels | In a hard corner the body rolls but the wheels stay flat on the road, like retail; the lean should not look excessive | `opencode/lean-cockpit` |
 | 2026-10-22 | Cockpit view (C) | The driver's arms/hands are visible on the steering wheel, and the wheel turns with the steering; the arms are the model's low-poly ones, judge how they look | `opencode/lean-cockpit` |
 | 2026-10-22 | Cote d'Azur sea | The water/sea shows along the coast (sunset over rippled water); compare its look and extent with retail | `opencode/lean-cockpit` |
+| 2026-10-22 | Damage, roll-overs, suspension | Hitting walls/cars leaves dents and scratches on the side hit; heavy damage pulls the steering and loses power; landings make the body dip and bounce; a car on its side or roof is put back on the road after about 3 s (in the air much sooner) | `claude/damage-6135c5` |
 
 | 2026-10-22 | Effects slider in menus; all sliders in a race | Menu clicks get quieter with Effects; in a race Engine, Effects, Speech and Ambient each change their sounds | master |
 | 2026-10-22 | Console during a race (again) | No "Use-after-free" line at all | master |

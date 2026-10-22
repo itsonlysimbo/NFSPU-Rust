@@ -25,7 +25,7 @@ use nfspu_game::collision::WallSet;
 use nfspu_game::chase_cam::{self, CarFrame, ChaseCam, ChaseView};
 use nfspu_game::ground::Ground;
 use nfspu_game::race_path::{self, Direction, RoadPath};
-use nfspu_game::{refbuild, sky, track};
+use nfspu_game::{car_damage, refbuild, sky, track};
 use nfspu_game::MIRROR_X;
 mod car_probe;
 mod console;
@@ -141,7 +141,7 @@ Press Enter to close this console.");
         .add_systems(Update, (console::handle_input, console::apply).chain().run_if(flow::in_race_scene))
         .add_systems(
             Update,
-            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
+            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, paint_car_damage, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
                 .chain()
                 .run_if(flow::in_race_scene),
         )
@@ -1144,6 +1144,11 @@ fn spawn_car_model(
         CarBounds { centre_height: m.centre_height, half_length: m.size[2] / 2.0 },
     ));
     let mut looks = CarLooks::new(&m, images);
+    // damage pictures are painted over the body page and its twin (each side its own copy)
+    let stamps = car_model::load_damage_stamps(name);
+    if let Some(look) = looks.damage_look(&m, images, stamps) {
+        commands.entity(root).insert(look);
+    }
     // Faces are drawn one-sided, as the engine does: the cabin, interior glass and the inner faces of
     // the shell are separate parts that face inwards. Glass blends; the arch liners sample a texel
     // whose alpha is 0 and are drawn without cut-outs.
@@ -1239,7 +1244,7 @@ fn spawn_car_model(
         Err(e) => log_line(&format!("no ground shadow: {e}")),
     }
     for w in &m.wheels {
-        let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0 })).id();
+        let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0, rest: Vec3::from(w.offset) })).id();
         commands.entity(model).add_child(wheel);
         for (page, part) in by_page(&w.piece) {
             let mat = looks.material(page, Look::Cut, materials);
@@ -1386,6 +1391,22 @@ impl CarLooks {
         CarLooks { images: out, made: HashMap::new(), grey: None }
     }
 
+    /// Gives the twin body page its own image and returns what [`paint_car_damage`] needs, or
+    /// `None` when the car has no damage pictures or no body page.
+    fn damage_look(&mut self, m: &car_model::CarModel, images: &mut Assets<Image>, stamps: Vec<car_model::DamageStamp>) -> Option<DamageLook> {
+        if stamps.is_empty() {
+            return None;
+        }
+        let page = m.pages.first()?.as_ref()?;
+        let (body, alpha) = self.images.first()?.clone()?;
+        let twin = images.add(page_image(page));
+        match self.images.get_mut(1) {
+            Some(slot @ Some(_)) => *slot = Some((twin.clone(), alpha)),
+            _ => return None,
+        }
+        Some(DamageLook { images: [body, twin], base: page.rgba.clone(), size: page.size, stamps, shown: [0.0; car_damage::ZONES] })
+    }
+
     fn material(&mut self, page: u8, look: Look, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
         let page = page as usize;
         let Some((image, has_alpha)) = self.images.get(page).cloned().flatten() else {
@@ -1501,11 +1522,45 @@ struct CarRes {
     braking: bool,
 }
 
+/// The body page and its twin as painted with the car's damage (see `car_model::paint_damage`).
+#[derive(Component)]
+struct DamageLook {
+    images: [Handle<Image>; 2],
+    base: Vec<u8>,
+    size: u32,
+    stamps: Vec<car_model::DamageStamp>,
+    /// Zones as last painted.
+    shown: [f32; car_damage::ZONES],
+}
+
+/// Repaints a car's body pages when its damage has grown (or been repaired) by more than a step.
+fn paint_car_damage(car: Option<Res<CarRes>>, mut looks: Query<(&mut DamageLook, Option<&race_mode::AiBody>)>, mut images: ResMut<Assets<Image>>) {
+    for (mut look, ai) in &mut looks {
+        let zones = match (ai, &car) {
+            (Some(b), _) => b.damage,
+            (None, Some(c)) => c.car.sim.damage.zones,
+            (None, None) => continue,
+        };
+        if zones.iter().zip(look.shown).all(|(a, b)| (a - b).abs() < 2.0) {
+            continue;
+        }
+        look.shown = zones;
+        for page in 0..2u8 {
+            let painted = car_model::paint_damage(&look.base, look.size, page, &look.stamps, &zones);
+            if let Some(mut image) = images.get_mut(&look.images[page as usize]) {
+                image.data = Some(painted);
+            }
+        }
+    }
+}
+
 /// A wheel of the car model; it spins with the speed and the front ones steer.
 #[derive(Component)]
 struct WheelComp {
     front: bool,
     spin: f32,
+    /// Its place on the car; the suspension moves it up and down from here.
+    rest: Vec3,
 }
 
 /// Wheel radius of the cars (about 0.31 m).
@@ -1552,7 +1607,10 @@ fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(
     let Some(state) = car else { return };
     let dt = time.delta_secs().min(0.05);
     for (e, mut t, mut w) in &mut wheels {
-        let (speed, steer) = opponent_of(e, &parents, &ai).map_or((state.car.speed, state.steer), |b| (b.speed, b.steer));
+        let (speed, steer, heights) = opponent_of(e, &parents, &ai).map_or((state.car.speed, state.steer, state.car.wheel_heights()), |b| (b.speed, b.steer, b.wheel_y));
+        // which corner: the model's +x side is taken as the right (not checked)
+        let corner = if w.front { 0 } else { 2 } + usize::from(w.rest.x > 0.0);
+        t.translation = w.rest + Vec3::Y * heights[corner];
         w.spin -= speed * dt / WHEEL_RADIUS; // rolling forward turns the top toward the front
         let steer = if w.front { steer * 0.45 } else { 0.0 };
         t.rotation = Quat::from_rotation_y(steer) * Quat::from_rotation_x(w.spin);
@@ -1800,7 +1858,7 @@ fn drive_car(
         state.car.step(input, time.delta_secs(), &ground.0, &walls.0);
     }
     for mut t in &mut bodies {
-        t.translation = state.car.pos;
+        t.translation = state.car.draw_pos();
         let (pitch, roll) = state.car.chassis_tilt();
         t.rotation = Quat::from_euler(EulerRot::YXZ, state.car.yaw, pitch, roll);
     }

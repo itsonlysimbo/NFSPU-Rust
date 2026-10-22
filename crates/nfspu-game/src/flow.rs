@@ -103,6 +103,7 @@ impl RaceConfig {
         let mut race = RaceRequest::parse(&rules);
         if let Some(r) = &mut race {
             r.opponent_cars = opponents;
+            r.damage = setup.damage;
         }
         let options = setup.car_options();
         RaceConfig {

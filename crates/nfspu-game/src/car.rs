@@ -68,6 +68,9 @@ pub struct Car {
     pub last_hit: Option<(f32, usize)>,
 }
 
+/// Hits at least this strong are written to the race log.
+pub const BIG_HIT_LOG: f32 = 40.0;
+
 /// Height of the car's centre above the road surface.
 pub const RIDE_HEIGHT: f32 = 0.45;
 /// Collision circles (front/rear axle) around the car's line of travel.
@@ -207,6 +210,14 @@ impl Car {
     /// arch). Wheels 0 front left, 1 front right, 2 rear left, 3 rear right.
     pub fn wheel_drop(&self) -> [f32; 4] {
         std::array::from_fn(|i| (self.susp_road[i] - self.susp[i]).clamp(-car_sim::LEAN_TRAVEL, car_sim::LEAN_TRAVEL))
+    }
+
+    /// Height of each wheel relative to its place on the drawn chassis (m), so it stays on the road
+    /// while the body moves on its springs. Wheels 0 front left, 1 front right, 2 rear left, 3
+    /// rear right.
+    pub fn wheel_heights(&self) -> [f32; 4] {
+        let heave = self.susp.iter().sum::<f32>() * 0.25;
+        std::array::from_fn(|i| (self.susp_road[i] - heave).clamp(-2.0 * car_sim::LEAN_TRAVEL, 2.0 * car_sim::LEAN_TRAVEL))
     }
 
     /// The car's up axis has this world-up component (1 upright, -1 on its roof).
@@ -368,7 +379,8 @@ impl Car {
         // Airborne, retail's gravity applies (stronger at speed through the rear downforce). A car
         // landing hard bounces back up; otherwise it takes the road's vertical speed.
         let y0 = self.pos.y;
-        let fall = self.sim.spec.fall_accel(self.sim.forward_speed(self.yaw), cp * cr);
+        let was_on_ground = self.on_ground;
+        let fall = self.sim.spec.fall_accel(self.sim.forward_speed(self.yaw) * self.sim.damage.aero_factor(), cp * cr);
         let vy_air = self.vy - fall * dt;
         let y_air = y0 + vy_air * dt;
         match support {
@@ -413,7 +425,93 @@ impl Car {
             self.pitch += (want_pitch - self.pitch) * k;
             self.roll += (want_roll - self.roll) * k;
         }
+        let was_upright = cp * cr > UPRIGHT;
+        let landed = self.on_ground && !was_on_ground;
+        if landed && !was_upright {
+            // came down on its side or roof: that landing is a hit from above
+            self.take_hit(self.landing + self.speed.abs() * 0.5, 0.0, 0.0, 1.0);
+        } else if landed && self.landing > HARD_LANDING {
+            self.take_hit(self.landing, 0.0, 0.0, -1.0);
+        }
+        self.tumble_tick(dt);
+        self.crash_tick();
+        self.suspension_tick(dt, landed, ground);
         self.speed = self.sim.forward_speed(self.yaw);
+    }
+
+    /// The free body angles: in the air they keep turning; on the road the body falls to the
+    /// nearest resting angle (on its wheels, its side or its roof) past the balance points.
+    fn tumble_tick(&mut self, dt: f32) {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        for i in 0..2 {
+            let a = self.tumble[i];
+            if self.on_ground {
+                let rest = if a.abs() < TIP[i] {
+                    0.0
+                } else if i == 1 && a.abs() < SIDE_TO_ROOF {
+                    FRAC_PI_2 * a.signum()
+                } else {
+                    PI * a.signum()
+                };
+                self.tumble_rate[i] += ((rest - a) * TUMBLE_SPRING - self.tumble_rate[i] * TUMBLE_DAMP) * dt;
+            }
+            self.tumble[i] = (a + self.tumble_rate[i] * dt).clamp(-PI, PI);
+            if self.tumble[i].abs() >= PI {
+                self.tumble_rate[i] = 0.0;
+            }
+        }
+    }
+
+    /// Retail's crash timer. Our own addition: a car resting off its wheels starts the timer too
+    /// (retail starts it only on big hits; not settled whether a slow roll-over resets).
+    fn crash_tick(&mut self) {
+        let upright = self.upright();
+        if self.crash_ticks == 0 && !upright && self.on_ground {
+            self.crash_ticks = CRASH_TICKS;
+        }
+        if self.crash_ticks <= 0 {
+            return;
+        }
+        self.crash_ticks -= if self.on_ground { 1 } else { 10 };
+        if upright && !self.crash_forced {
+            self.crash_ticks = 0;
+        } else if self.crash_ticks < 1 {
+            self.crash_ticks = 0;
+            self.crash_forced = false;
+            let settled = upright && self.on_ground && self.tumble_rate[0].abs() < 1.0 && self.tumble_rate[1].abs() < 1.0;
+            if !settled {
+                self.wants_recover = true;
+            }
+        }
+    }
+
+    /// The four corners on springs: each follows the road under its wheel within the travel,
+    /// overshooting a little; a landing pushes them all down.
+    fn suspension_tick(&mut self, dt: f32, landed: bool, ground: &Ground) {
+        let travel = car_sim::LEAN_TRAVEL;
+        let h = self.heading();
+        let r = self.right();
+        let half_wb = self.sim.spec.wheelbase.max(1.0) * 0.5;
+        let half_track = car_sim::LEAN_TRACK * 0.5;
+        let base = self.pos.y - RIDE_HEIGHT;
+        let (tp, tr) = (self.pitch.tan(), self.roll.tan());
+        for i in 0..4 {
+            let f = if i < 2 { half_wb } else { -half_wb };
+            let s = if i % 2 == 0 { -half_track } else { half_track };
+            let target = if self.on_ground && self.upright() {
+                let p = self.pos + h * f + r * s;
+                let plane = base + f * tp + s * tr;
+                ground.surface_near(p.x, p.z, 0.4, plane - 0.5, plane + 0.5).map_or(-travel, |y| y - plane).clamp(-travel, travel)
+            } else {
+                -travel
+            };
+            self.susp_road[i] = target;
+            if landed {
+                self.susp_vel[i] -= self.landing.min(8.0) * 0.5;
+            }
+            self.susp_vel[i] += ((target - self.susp[i]) * SUSP_SPRING - self.susp_vel[i] * SUSP_DAMP) * dt;
+            self.susp[i] = (self.susp[i] + self.susp_vel[i] * dt).clamp(target - travel, target + travel);
+        }
     }
 }
 
@@ -432,6 +530,11 @@ pub fn collide_cars(a: &mut Car, b: &mut Car) -> Option<f32> {
     b.pos.z = bb.pos[1];
     a.speed = a.sim.forward_speed(a.yaw);
     b.speed = b.sim.forward_speed(b.yaw);
+    // each car is hit from the other's side
+    let d = b.pos - a.pos;
+    let (ah, ar, bh, br) = (a.heading(), a.right(), b.heading(), b.right());
+    a.take_hit(hit, d.dot(ar), d.dot(ah), 0.0);
+    b.take_hit(hit, -d.dot(br), -d.dot(bh), 0.0);
     Some(hit)
 }
 
@@ -674,5 +777,69 @@ mod tests {
         assert!(chassis_pitch.abs() < 1e-4, "chassis pitch must not take the lean: {chassis_pitch}");
         assert!(lean_roll.abs() > 0.01, "the body should roll in the turn: {lean_roll}");
         assert!(lean_pitch.abs() < 0.05, "only a slight dive in a flat turn: {lean_pitch}");
+    }
+
+    #[test]
+    fn tipped_past_the_balance_point_it_rolls_over_and_is_recovered() {
+        let g = plane(0.0, 0.0);
+        let walls = WallSet::new(vec![], 4.0);
+        // a small tilt drops back onto the wheels
+        let mut car = Car::new(Vec3::new(0.0, RIDE_HEIGHT, 0.0), 0.0);
+        car.on_ground = true;
+        car.tumble = [0.0, 0.6];
+        run(&mut car, Input::default(), 2.0, &g);
+        assert!(car.upright() && car.tumble[1].abs() < 0.05, "tumble {:?}", car.tumble);
+        // past it the car ends on its side, slides to a stop and the crash timer asks for a reset
+        let mut car = Car::new(Vec3::new(0.0, RIDE_HEIGHT, 0.0), 0.0);
+        car.on_ground = true;
+        car.set_speed(15.0);
+        car.tumble = [0.0, 1.3];
+        let mut asked = false;
+        for _ in 0..(4.0 * 64.0) as usize {
+            car.step(Input { throttle: true, ..Default::default() }, 1.0 / 64.0, &g, &walls);
+            assert!(!car.upright() || asked);
+            asked |= car.wants_recover;
+            if asked {
+                break;
+            }
+        }
+        assert!(asked, "no reset; tumble {:?}", car.tumble);
+        assert!((car.tumble[1] - std::f32::consts::FRAC_PI_2).abs() < 0.2, "should lie on its side: {:?}", car.tumble);
+        assert!(car.speed.abs() < 1.0, "should have slid to a stop: {}", car.speed);
+        car.sim.damage.hit(60.0, 1);
+        let back = car.recover(Vec3::new(0.0, RIDE_HEIGHT, 0.0), 0.0);
+        assert!(back.upright() && !back.wants_recover && back.sim.damage.zones[1] == 30.0);
+    }
+
+    #[test]
+    fn big_hits_damage_and_kick_small_ones_do_not_reset() {
+        let mut car = Car::new(Vec3::new(0.0, RIDE_HEIGHT, 0.0), 0.0);
+        car.take_hit(30.0, 0.0, 1.0, 0.0);
+        assert_eq!(car.sim.damage.zones[1], 15.0);
+        assert_eq!(car.crash_ticks, 0);
+        car.take_hit(100.0, -1.0, 0.0, 0.0);
+        assert_eq!(car.sim.damage.zones[3], 50.0);
+        assert_eq!(car.crash_ticks, CRASH_TICKS);
+        assert!(car.tumble_rate[1] < -1.0, "left hit lifts the left side: {:?}", car.tumble_rate);
+        // upright on the road the timer is cancelled
+        let g = plane(0.0, 0.0);
+        run(&mut car, Input::default(), 0.5, &g);
+        assert_eq!(car.crash_ticks, 0);
+        assert!(!car.wants_recover);
+    }
+
+    #[test]
+    fn suspension_dips_on_landing_and_settles() {
+        let g = plane(0.0, 0.0);
+        let walls = WallSet::new(vec![], 4.0);
+        let mut car = Car::new(Vec3::new(0.0, 2.0, 0.0), 0.0);
+        let mut lowest = 0.0f32;
+        for _ in 0..128 {
+            car.step(Input::default(), 1.0 / 64.0, &g, &walls);
+            lowest = lowest.min(car.draw_pos().y - car.pos.y);
+        }
+        assert!(lowest < -0.03, "body should dip on landing: {lowest}");
+        assert!((car.draw_pos().y - car.pos.y).abs() < 0.01, "settled: {}", car.draw_pos().y - car.pos.y);
+        assert!(car.wheel_heights().iter().all(|w| w.abs() < 0.02), "{:?}", car.wheel_heights());
     }
 }
