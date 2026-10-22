@@ -8,6 +8,9 @@
 //! - `FEData/Data/nfs5.per`: the opponent drivers, 44-byte records: u16 id, u16 0, u32 name string
 //!   id (`festrings.loc`), u16 difficulty (0 beginner, 1 advanced, 2 expert), u16 0, then four
 //!   (skill, range) float pairs: slow corners, medium corners, fast road, default.
+//! - `GameData/Track/<track>.jnc`: 36 bytes per road junction, in the order the game builds its
+//!   junctions: a u32 (the junction's number), then 8 floats, the weight of each route out of
+//!   that junction in route order (unused slots 0). See `docs/provenance/ai.md`.
 //!
 //! Layouts worked out from the shipped files; the meaning of each field from what the retail
 //! executable does with it. Readers only; nothing is copied into the repository.
@@ -61,6 +64,22 @@ pub fn parse_lsp(d: &[u8]) -> Option<Vec<[f32; 2]>> {
         return None;
     }
     (0..(d.len() - 4) / 8).map(|i| Some([f32_at(d, 4 + i * 8)?, f32_at(d, 8 + i * 8)?])).collect()
+}
+
+pub const JNC_RECORD: usize = 36;
+pub const JNC_ROUTES: usize = 8;
+
+/// Route weights per junction (`.jnc`), in file order.
+pub fn parse_jnc(d: &[u8]) -> Vec<[f32; JNC_ROUTES]> {
+    d.chunks_exact(JNC_RECORD)
+        .map(|r| {
+            let mut w = [0.0; JNC_ROUTES];
+            for (i, v) in w.iter_mut().enumerate() {
+                *v = f32_at(r, 4 + i * 4).unwrap_or(0.0);
+            }
+            w
+        })
+        .collect()
 }
 
 pub const PER_RECORD: usize = 44;
@@ -143,5 +162,13 @@ mod tests {
         assert_eq!(d.len(), 1);
         assert_eq!((d[0].id, d[0].name_id, d[0].difficulty), (9, 18007, 1));
         assert_eq!(d[0].skill(Stretch::Default), (0.8, 0.05));
+
+        let mut jnc = vec![0u8; JNC_RECORD * 2];
+        jnc[JNC_RECORD] = 1;
+        jnc[JNC_RECORD + 4..JNC_RECORD + 8].copy_from_slice(&0.85f32.to_le_bytes());
+        jnc[JNC_RECORD + 8..JNC_RECORD + 12].copy_from_slice(&0.15f32.to_le_bytes());
+        let j = parse_jnc(&jnc);
+        assert_eq!(j.len(), 2);
+        assert_eq!(&j[1][..3], &[0.85, 0.15, 0.0]);
     }
 }

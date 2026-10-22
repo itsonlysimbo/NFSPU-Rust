@@ -334,7 +334,7 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
         let race_car = i + 1;
         let finished = run.race.cars[race_car].state == race::CarState::Finished;
         let lead = run.race.cars[race_car].progress - player_progress;
-        let view = View { path: &run.track.path, line: &run.line, dir, held, finished, difficulty: run.difficulty, lead, player_rate: rate };
+        let view = View { path: &run.track.path, routes: &run.track.routes, line: &run.line, dir, held, finished, difficulty: run.difficulty, lead, player_rate: rate };
         let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != race_car).map(|(_, o)| *o).collect();
         let r = &mut run.racers[i];
         let input = r.brain.think(&r.car, &view, &near, &mut run.rng);

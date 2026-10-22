@@ -20,12 +20,14 @@
 //!   steer value proportional to the sideways part of that direction, full lock at about 30 deg.
 //! - Throttle when slower than the target, brake when faster.
 //! - Stuck: slower than 2 m/s for 160 ticks, or facing backwards under 10 m/s, starts a recovery.
+//! - Junctions: the route is picked by `ai_route` (retail rules) and every look along the road
+//!   follows it.
 //!
 //! Ours (not read from retail, marked "guess" where used): how far ahead the steering looks, the
-//! recovery manoeuvre and the reset after 10 s stuck, the avoidance of other cars, the route at
-//! junctions (always the main route), the yaw-rate damping of the steering, and lifting off at
+//! recovery manoeuvre and the reset after 10 s stuck, the avoidance of other cars, the yaw-rate damping of the steering, and lifting off at
 //! full lock or while sliding.
 
+use crate::ai_route::{Choice, Routes};
 use crate::car::{Car, Input};
 use crate::catalog;
 use crate::race_path::{Direction, RoadPath};
@@ -94,12 +96,12 @@ pub fn lookahead_slices(spec: &AiSpec, speed: f32) -> usize {
 }
 
 /// Sum of the sharpest bend left and the sharpest bend right (degrees) between the slice a car is
-/// on and the slices 2..=`ahead` in front of it.
-pub fn bend_degrees(path: &RoadPath, slice: usize, ahead: usize, dir: Direction) -> f32 {
+/// on and the slices 2..=`ahead` in front of it, along the route `walk` takes.
+pub fn bend_degrees(path: &RoadPath, slice: usize, ahead: usize, walk: impl Fn(usize, i32) -> usize) -> f32 {
     let here = path.slices[slice].forward;
     let (mut left, mut right) = (0.0f32, 0.0f32);
     for k in 2..=ahead {
-        let s = &path.slices[path.walk(slice, k as i32, dir)];
+        let s = &path.slices[walk(slice, k as i32)];
         let angle = s.forward.dot(here).clamp(-1.0, 1.0).acos().to_degrees();
         if s.right.dot(here) >= 0.0 {
             left = left.max(angle);
@@ -195,6 +197,7 @@ pub fn reset_pose(path: &RoadPath, line: &[Vec3], slice: usize, dir: Direction) 
 /// What a driver needs to know about the race this tick.
 pub struct View<'a> {
     pub path: &'a RoadPath,
+    pub routes: &'a Routes,
     pub line: &'a [Vec3],
     pub dir: Direction,
     /// Cars must stay on the grid.
@@ -230,6 +233,10 @@ pub struct Opponent {
     reverse_ticks: u32,
     since_moving: u32,
     pub recoveries: u32,
+    /// The junction last chosen at and the route taken there.
+    pub route: Option<Choice>,
+    /// Set when a route was chosen this tick (for logs); the caller may take it.
+    pub new_choice: Option<Choice>,
 }
 
 fn car_right(car: &Car) -> Vec3 {
@@ -238,7 +245,7 @@ fn car_right(car: &Car) -> Vec3 {
 
 impl Opponent {
     pub fn new(spec: AiSpec, driver: Driver, slice: usize) -> Self {
-        Opponent { spec, driver, slice, stretch: None, skill: 1.0, target_speed: 0.0, slow_ticks: 0, reverse_ticks: 0, since_moving: 0, recoveries: 0 }
+        Opponent { spec, driver, slice, stretch: None, skill: 1.0, target_speed: 0.0, slow_ticks: 0, reverse_ticks: 0, since_moving: 0, recoveries: 0, route: None, new_choice: None }
     }
 
     /// True once the car has been stuck long enough to be put back on the road (guess).
@@ -257,7 +264,8 @@ impl Opponent {
     /// The speed this driver wants at its slice.
     pub fn target(&mut self, speed: f32, v: &View, rng: &mut Rng) -> f32 {
         let ahead = lookahead_slices(&self.spec, speed);
-        let bend = bend_degrees(v.path, self.slice, ahead, v.dir);
+        let route = self.route;
+        let bend = bend_degrees(v.path, self.slice, ahead, |s, k| v.routes.walk(s, k, v.dir, route));
         let stretch = stretch_for(bend);
         if self.stretch != Some(stretch) {
             self.stretch = Some(stretch);
@@ -271,6 +279,16 @@ impl Opponent {
     /// One tick of driving: where to steer and whether to accelerate or brake.
     pub fn think(&mut self, car: &Car, v: &View, others: &[Other], rng: &mut Rng) -> Input {
         self.slice = v.path.track(self.slice, car.pos);
+        // route choice: once per junction, when it comes within the look-ahead
+        if let Some(j) = v.routes.junction_ahead(self.slice, lookahead_slices(&self.spec, car.speed), v.dir) {
+            if self.route.is_none_or(|c| c.junction != j) {
+                let r = rng.unit();
+                if let Some(c) = v.routes.choose(j, v.difficulty, r, v.dir) {
+                    self.route = Some(c);
+                    self.new_choice = Some(c);
+                }
+            }
+        }
         if v.held {
             return Input::default();
         }
@@ -286,7 +304,7 @@ impl Opponent {
         let lead = ((speed.max(0.0) * 0.6 / 6.0).round() as i32).clamp(2, 12);
         let mut aim = Vec3::ZERO;
         for i in 0..4 {
-            aim += v.line[v.path.walk(self.slice, lead + i, v.dir)];
+            aim += v.line[v.routes.walk(self.slice, lead + i, v.dir, self.route)];
         }
         aim /= 4.0;
 
@@ -441,6 +459,10 @@ mod tests {
     /// A rounded square loop (file space): 4 straights of 40 slices 6 m apart joined by
     /// quarter-circle corners of 10 slices.
     fn track() -> RoadPath {
+        RoadPath::new(&track_sim())
+    }
+
+    fn track_sim() -> SimData {
         let mut s = Vec::new();
         let (mut x, mut z, mut a) = (0.0f32, 0.0f32, 0.0f32);
         for _ in 0..4 {
@@ -458,7 +480,7 @@ mod tests {
                 z += 6.0 * f[2];
             }
         }
-        RoadPath::new(&SimData { groups: vec![(0, s.len())], slices: s })
+        SimData { groups: vec![(0, s.len())], slices: s }
     }
 
     #[test]
@@ -469,9 +491,9 @@ mod tests {
         assert_eq!(lookahead_slices(&sp, 30.0), 14);
         assert_eq!(lookahead_slices(&sp, 500.0), 31, "index capped at 23");
         // middle of a straight, looking 10 slices: no bend
-        assert!(bend_degrees(&p, 10, 10, Direction::Forward) < 0.5);
+        assert!(bend_degrees(&p, 10, 10, |s, k| p.walk(s, k, Direction::Forward)) < 0.5);
         // ahead of a corner: about 90 degrees once the whole corner is in view
-        let b = bend_degrees(&p, 35, 20, Direction::Forward);
+        let b = bend_degrees(&p, 35, 20, |s, k| p.walk(s, k, Direction::Forward));
         assert!((b - 90.0).abs() < 2.0, "bend {b}");
         assert_eq!(stretch_for(b), Stretch::Slow);
         assert_eq!(stretch_for(45.0), Stretch::Medium);
@@ -480,7 +502,7 @@ mod tests {
         assert_eq!(table_speed(&sp, 90.0), 60.0 - 30.0 * 1.2);
         assert_eq!(table_speed(&sp, 400.0), 60.0 - 38.0 * 1.2, "bend capped at 115");
         // backwards the same corner is still about 90 degrees
-        let b = bend_degrees(&p, 55, 20, Direction::Backward);
+        let b = bend_degrees(&p, 55, 20, |s, k| p.walk(s, k, Direction::Backward));
         assert!((b - 90.0).abs() < 2.0, "backward bend {b}");
     }
 
@@ -529,7 +551,8 @@ mod tests {
         let mut visited = vec![false; p.slices.len()];
         let mut worst = 0.0f32;
         for _ in 0..64 * 60 {
-            let v = View { path: &p, line: &line, dir: Direction::Forward, held: false, finished: false, difficulty: 2, lead: 0.0, player_rate: 0.0 };
+            let routes = Routes::build(&track_sim(), None);
+            let v = View { path: &p, routes: &routes, line: &line, dir: Direction::Forward, held: false, finished: false, difficulty: 2, lead: 0.0, player_rate: 0.0 };
             let input = ai.think(&car, &v, &[], &mut rng);
             car.step(input, 1.0 / 64.0, &ground, &walls);
             visited[ai.slice] = true;
@@ -564,7 +587,8 @@ mod tests {
         let line = racing_line(&p, None);
         let mut ai = Opponent::new(spec(), driver(0.9), 5);
         let car = Car::new(p.slices[5].pos, 0.0);
-        let v = View { path: &p, line: &line, dir: Direction::Forward, held: true, finished: false, difficulty: 2, lead: 0.0, player_rate: 0.0 };
+        let routes = Routes::build(&track_sim(), None);
+        let v = View { path: &p, routes: &routes, line: &line, dir: Direction::Forward, held: true, finished: false, difficulty: 2, lead: 0.0, player_rate: 0.0 };
         let i = ai.think(&car, &v, &[], &mut Rng::new(1));
         assert!(!i.throttle && !i.brake && i.steer == 0.0);
     }

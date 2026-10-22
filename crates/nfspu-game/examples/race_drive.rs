@@ -67,6 +67,8 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         })
         .collect();
     let mut resets = vec![0u32; opponents];
+    let mut taken = std::collections::BTreeMap::<(usize, usize), u32>::new();
+    let mut choice_lines = 0u32;
     let mut hits = 0u32;
     let who = |c: usize, racers: &[(Car, Opponent, String)]| if c == 0 { "player".to_string() } else { racers[c - 1].2.clone() };
     if opponents > 0 {
@@ -132,11 +134,21 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         let others: Vec<Other> = std::iter::once(Other { pos: car.pos, speed: car.speed }).chain(racers.iter().map(|x| Other { pos: x.0.pos, speed: x.0.speed })).collect();
         let mut samples = vec![CarSample::default(); cars];
         for i in 0..racers.len() {
-            let view = View { path: p, line: &line, dir, held: r.held(), finished: r.cars[i + 1].state == race::CarState::Finished, difficulty, lead: r.cars[i + 1].progress - player_progress, player_rate: rate };
+            let view = View { path: p, routes: &t.routes, line: &line, dir, held: r.held(), finished: r.cars[i + 1].state == race::CarState::Finished, difficulty, lead: r.cars[i + 1].progress - player_progress, player_rate: rate };
             let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != i + 1).map(|(_, o)| *o).collect();
             let (c, brain, rname) = &mut racers[i];
             let before_rec = brain.recoveries;
             let input = brain.think(c, &view, &near, &mut rng);
+            if let Some(ch) = brain.new_choice.take() {
+                if ch.options > 1 {
+                    *taken.entry((ch.junction, ch.route)).or_insert(0u32) += 1;
+                    if choice_lines < 40 {
+                        choice_lines += 1;
+                        let rt = t.routes.junctions[ch.junction].routes[ch.route];
+                        let _ = writeln!(out, "      tick {:>5}: {rname} at junction {} takes route {} (run {} weight {:.2}, r {:.2}, {} ways)", r.tick, ch.junction, ch.route, rt.run, rt.weight, ch.r, ch.options);
+                    }
+                }
+            }
             c.sim.held = r.held();
             if brain.recoveries != before_rec && brain.recoveries <= 5 {
                 let s = &p.slices[brain.slice];
@@ -208,6 +220,16 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         let _ = writeln!(out, "   {n}: progress {:.3}, {} recoveries, {} resets{}", r.cars[i + 1].progress, brain.recoveries, resets[i], if r.cars[i + 1].finish_time.is_none() { " (DID NOT FINISH)" } else { "" });
     }
     if opponents > 0 {
+        let rt = &t.routes;
+        let _ = writeln!(out, "   junctions: {} ({} weights), runs {}", rt.junctions.len(), if rt.from_file { ".jnc" } else { "default" }, rt.runs.len());
+        for (j, jn) in rt.junctions.iter().enumerate() {
+            let out_ways = rt.leaving(j, dir == Direction::Forward);
+            if out_ways.len() < 2 {
+                continue;
+            }
+            let ways: Vec<String> = out_ways.iter().map(|&i| format!("route {i} run {} w {:.2} taken {}", jn.routes[i].run, jn.routes[i].weight, taken.get(&(j, i)).copied().unwrap_or(0))).collect();
+            let _ = writeln!(out, "   junction {j}: {}", ways.join("; "));
+        }
         let _ = writeln!(out, "   car-to-car hits of impact 20+: {hits}");
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
