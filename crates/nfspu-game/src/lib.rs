@@ -24,6 +24,7 @@ pub mod quick_race;
 pub mod race;
 pub mod race_path;
 pub mod race_setup;
+pub mod race_sound;
 pub mod refbuild;
 pub mod sky;
 pub mod sky_fx;

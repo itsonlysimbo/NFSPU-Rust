@@ -31,6 +31,7 @@ mod car_probe;
 mod console;
 mod flow;
 mod menu_mode;
+mod race_audio;
 mod race_load;
 mod race_mode;
 mod visual_probe;
@@ -121,6 +122,7 @@ Press Enter to close this console.");
         // The front end; its screens are read now only when the program starts there.
         .add_plugins(menu_mode::MenuPlugin(menu_start.clone()))
         .add_plugins(race_mode::RacePlugin)
+        .add_plugins(race_audio::RaceAudioPlugin)
         // Runs `setup` directly, or behind the loading screen.
         .add_plugins(race_load::RaceLoad)
         // In-race HUD: always in a race from the menu, otherwise only with NFSPU_HUD=1.

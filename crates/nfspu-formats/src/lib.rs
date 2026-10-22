@@ -7,6 +7,7 @@ pub mod bnk;
 pub mod carsim;
 pub mod cardash;
 pub mod crp;
+pub mod engine_snd;
 pub mod fe;
 pub mod fe_room;
 pub mod ffn;

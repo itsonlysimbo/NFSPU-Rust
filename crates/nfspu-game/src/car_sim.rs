@@ -555,6 +555,12 @@ impl CarSim {
         self.vel[0].hypot(self.vel[1])
     }
 
+    /// The throttle the engine used in the last force tick, 0..1 (after the aids and gear
+    /// changes; for the engine sound).
+    pub fn throttle(&self) -> f32 {
+        self.throttle
+    }
+
     /// The gear for display: -1 reverse, 0 neutral, 1.. forward.
     pub fn gear(&self) -> i32 {
         self.drive.slot as i32 - 1
