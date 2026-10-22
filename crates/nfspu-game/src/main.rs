@@ -1208,7 +1208,7 @@ fn spawn_car_model(
     let steer_pivot = (!m.steering.positions.is_empty()).then(|| {
         let p = Vec3::from(m.steering_pivot);
         let node = commands
-            .spawn((Transform::from_xyz(p.x, p.y - RIDE_HEIGHT, p.z), Visibility::default(), SteerWheel { axis: Vec3::from(m.steering_axis) }, CockpitPart))
+            .spawn((Transform::from_xyz(p.x, p.y - RIDE_HEIGHT, p.z), Visibility::default(), SteerWheel { axis: Vec3::from(m.steering_axis), pos: 0.0 }, CockpitPart))
             .id();
         commands.entity(lean).add_child(node);
         for (page, part) in by_page(&m.steering) {
@@ -1603,7 +1603,7 @@ fn page_image(page: &Page) -> Image {
     image
 }
 
-fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(Entity, &mut Transform, &mut WheelComp), Without<SteerWheel>>, mut steer_wheels: Query<(Entity, &mut Transform, &SteerWheel), Without<WheelComp>>, parents: Query<&ChildOf>, ai: Query<&race_mode::AiBody>) {
+fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(Entity, &mut Transform, &mut WheelComp), Without<SteerWheel>>, mut steer_wheels: Query<(Entity, &mut Transform, &mut SteerWheel), Without<WheelComp>>, parents: Query<&ChildOf>, ai: Query<&race_mode::AiBody>) {
     let Some(state) = car else { return };
     let dt = time.delta_secs().min(0.05);
     for (e, mut t, mut w) in &mut wheels {
@@ -1617,9 +1617,12 @@ fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(
     }
     // the steering wheel turns with the input (its hands are part of the cockpit driver)
     let forced = forced_steer();
-    for (e, mut t, wheel) in &mut steer_wheels {
-        let steer = forced.unwrap_or_else(|| opponent_of(e, &parents, &ai).map_or(state.steer, |b| b.steer));
-        t.rotation = Quat::from_axis_angle(wheel.axis, steer * STEER_WHEEL_ANGLE);
+    for (e, mut t, mut wheel) in &mut steer_wheels {
+        let target = forced.unwrap_or_else(|| opponent_of(e, &parents, &ai).map_or(state.steer, |b| b.steer));
+        // full lock in about 0.6 s (the sim's keyboard rate limit is 12 of 127 units per tick)
+        let step = STEER_WHEEL_RATE * dt;
+        wheel.pos += (target - wheel.pos).clamp(-step, step);
+        t.rotation = Quat::from_axis_angle(wheel.axis, wheel.pos * STEER_WHEEL_ANGLE);
     }
 }
 
@@ -1632,6 +1635,8 @@ fn forced_steer() -> Option<f32> {
 /// How far the steering wheel turns at full lock (radians): about 90 degrees, a sports-car rack.
 /// A guess; retail's exact wheel angle is not traced.
 const STEER_WHEEL_ANGLE: f32 = 1.6;
+/// How fast the drawn wheel follows the input (full lock per second). A guess.
+const STEER_WHEEL_RATE: f32 = 1.7;
 
 #[derive(Component)]
 struct CarBody;
@@ -1899,6 +1904,9 @@ struct CockpitPart;
 #[derive(Component)]
 struct SteerWheel {
     axis: Vec3,
+    /// The wheel's current position, -1..1: it follows the input at a limited rate, so a keyboard
+    /// press sweeps the wheel round instead of snapping it to full lock.
+    pos: f32,
 }
 
 /// Marks a cabin mesh: the detailed cockpit cabin (`cockpit: true`) or the simpler outside one.
