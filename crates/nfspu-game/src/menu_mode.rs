@@ -30,6 +30,7 @@ use bevy::window::PrimaryWindow;
 use nfspu_formats::fe::{ControlTemplate, Locale};
 use nfspu_game::menu::{self, Draw, Hit, Screen};
 use crate::flow::{self, AppState};
+use nfspu_game::audio_settings::{self, AudioSettings};
 use nfspu_game::menu_canvas;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -41,6 +42,8 @@ const SCREEN_WIDTH: f32 = 640.0;
 const SCREEN_HEIGHT: f32 = 480.0;
 /// The bar of back / options / exit buttons along the bottom of framed screens.
 const BOTTOM_BAR: &str = "bottombar";
+/// The Options tab with the sound levels.
+const AUDIO_PANEL: &str = "ID_audio_panel";
 
 /// Everything the front end needs to move between screens.
 #[derive(Resource)]
@@ -75,8 +78,11 @@ struct FrontEnd {
     combo_slide: Option<(f32, bool)>,
     /// What the pointer was last over (for the hover sound).
     last_hover: Option<Hit>,
-    /// The selected player's `Audio.MusicLevel` (0-127; retail's default is 55).
-    music_level: u32,
+    /// The Options > Audio levels (our `settings/audio.txt`), copied to the `AudioSettings`
+    /// resource when `audio_changed`; the level bar being dragged (accessor, left, width).
+    audio: AudioSettings,
+    audio_changed: bool,
+    dragging: Option<(String, i32, i32)>,
     /// Help tips: the hover clock and the tip last drawn (`nfspu_game::menu_help`).
     help: nfspu_game::menu_help::HelpTimer,
     tip: Vec<Draw>,
@@ -122,6 +128,31 @@ impl FrontEnd {
         self.session.watch = self.quick.watches(&self.locale, self.language);
         self.session.car_logo = self.quick.car_logo();
         self.session.track_art = self.quick.track_art();
+        // Options: only the chosen tab's panel shows; the Audio page's playlist panel (the CD
+        // player) is not built yet.
+        let panel = self.session.panel.clone();
+        self.session.hidden.extend(menu::OPTION_PANELS.iter().filter(|p| !p.eq_ignore_ascii_case(&panel)).map(|p| p.to_string()));
+        self.session.hidden.push("ID_PLAYLISTPANEL".to_string());
+        for a in audio_settings::ACCESSORS {
+            let level = self.audio.level(a).unwrap_or(audio_settings::MAX_LEVEL);
+            self.session.levels.insert(a.to_string(), level);
+            // Retail's `(PERCENT)` view of a 0..=127 level (rounding is a **guess**).
+            self.session.watch.insert(format!("{a}(PERCENT)"), format!("{}%", (level * 100 + 63) / 127));
+        }
+    }
+
+    /// Sets a level bar from the pointer's x and keeps it (our settings file, never the save).
+    fn drag_level(&mut self, accessor: &str, left: i32, width: i32, x: f32) {
+        let t = ((x - left as f32) / width.max(1) as f32).clamp(0.0, 1.0);
+        let level = (t * audio_settings::MAX_LEVEL as f32).round() as u32;
+        if self.audio.level(accessor) == Some(level) {
+            return;
+        }
+        self.audio.set_level(accessor, level);
+        self.audio_changed = true;
+        self.reload();
+        self.stack();
+        self.dirty = true;
     }
 
     /// Reloads the page and popup, so controls that show the profiles pick up a change.
@@ -190,7 +221,13 @@ impl FrontEnd {
         self.session.open_combo = None;
         // `NFSPU_MUSIC_LEVEL=0..127` overrides it for testing (the save is never written).
         let forced = std::env::var("NFSPU_MUSIC_LEVEL").ok().and_then(|v| v.trim().parse().ok());
-        self.music_level = forced.or_else(|| save.as_deref().and_then(|d| menu::save_value(d, "Audio.MusicLevel"))).unwrap_or(55).min(127);
+        // Our settings file wins; without one the levels start from the player's save.
+        self.audio = AudioSettings::load().unwrap_or_else(|| save.as_deref().map(AudioSettings::from_save).unwrap_or_default());
+        if let Some(level) = forced {
+            self.audio.set_level("Audio.MusicLevel", level);
+        }
+        self.audio_changed = true;
+        crate::log_line(&format!("front end: audio levels {:?} ({})", self.audio, AudioSettings::path().display()));
         let progress = save.as_deref().and_then(nfspu_game::menu_movie::CareerProgress::from_save);
         // Quick-race lists and last choices (tracks open with the career year; 1950 at the start).
         let player = self.profiles.selected.and_then(|i| self.profiles.names.get(i)).cloned().unwrap_or_default();
@@ -497,6 +534,13 @@ impl Music {
     }
 }
 
+/// Copies changed menu levels into the `AudioSettings` resource the sound systems read.
+fn sync_audio(mut state: ResMut<FrontEnd>, mut settings: ResMut<AudioSettings>) {
+    if std::mem::take(&mut state.audio_changed) && *settings != state.audio {
+        *settings = state.audio;
+    }
+}
+
 /// A fresh random number for song picks (retail mixes the clock in too).
 fn random_u32() -> u32 {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -518,17 +562,25 @@ fn play_music(
     mut assets: ResMut<Assets<AudioSource>>,
     mut sinks: Query<&mut AudioSink, With<MusicTrack>>,
     tracks: Query<(), With<MusicTrack>>,
+    settings: Res<AudioSettings>,
 ) {
     use bevy::audio::{AudioSinkPlayback, Volume};
     use nfspu_game::menu_music::Cue;
-    let volume = state.music_level as f32 / 127.0;
+    // How retail maps a level to loudness is not known; linear level/127.
+    let volume = settings.music;
     let top = state.popup.as_ref().unwrap_or(&state.page);
     // While the race loads the music only finishes its fade (`leave_menu`).
-    if *app_state.get() == AppState::Menu && top.name != music.screen {
-        music.screen = top.name.clone();
+    // Options is `NONE`, but its audio tab plays the CD player's selected song, the archive's
+    // first (retail recording; the playlist itself is not built, and the other tabs staying
+    // silent is a **guess**).
+    let audio_tab = top.name.eq_ignore_ascii_case("Options") && state.session.panel == AUDIO_PANEL;
+    let key = if audio_tab { format!("{}/{}", top.name, AUDIO_PANEL) } else { top.name.clone() };
+    if *app_state.get() == AppState::Menu && key != music.screen {
+        music.screen = key;
         let main_menu = top.name.eq_ignore_ascii_case("GameSetup");
-        if let Some(Cue::Change { fade_ms, next }) = music.jukebox.enter_screen(&top.music, main_menu, time.elapsed_secs_f64(), random_u32()) {
-            crate::log_line(&format!("front end: screen '{}' music '{}' -> {:?}", top.name, top.music, next.map(|n| music.jukebox.name(n).to_string())));
+        let pattern = if audio_tab { music.jukebox.name(0).to_string() } else { top.music.clone() };
+        if let Some(Cue::Change { fade_ms, next }) = music.jukebox.enter_screen(&pattern, main_menu, time.elapsed_secs_f64(), random_u32()) {
+            crate::log_line(&format!("front end: screen '{}' music '{pattern}' -> {:?}", top.name, next.map(|n| music.jukebox.name(n).to_string())));
             if music.playing.is_some() {
                 let elapsed = music.fade.map(|f| f.0).unwrap_or(0.0);
                 music.fade = Some((elapsed, fade_ms, next));
@@ -557,6 +609,12 @@ fn play_music(
         }
         return;
     }
+    // The music slider changes the playing song at once.
+    if settings.is_changed() {
+        for mut sink in &mut sinks {
+            sink.set_volume(Volume::Linear(volume));
+        }
+    }
     // A finished song despawns itself: play the next one.
     if std::mem::take(&mut music.just_started) {
         return;
@@ -584,7 +642,7 @@ impl Plugin for MenuPlugin {
             .add_systems(OnExit(AppState::Menu), leave_menu.run_if(resource_exists::<FrontEnd>))
             .add_systems(OnEnter(AppState::Race), stop_music.run_if(resource_exists::<Music>))
             .add_systems(Update, (click, present, capture, flow_test_menu, quit_on_escape).chain().run_if(in_state(AppState::Menu)).run_if(resource_exists::<FrontEnd>))
-            .add_systems(Update, play_music.run_if(resource_exists::<FrontEnd>).run_if(menu_or_loading));
+            .add_systems(Update, (sync_audio, play_music).chain().run_if(resource_exists::<FrontEnd>).run_if(menu_or_loading));
         let Some(start) = &self.0 else { return };
         let game_dir = PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
         match front_end(game_dir, start) {
@@ -665,7 +723,9 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
         session: menu::Session::default(),
         combo_slide: None,
         last_hover: None,
-        music_level: 55,
+        audio: AudioSettings::default(),
+        audio_changed: true,
+        dragging: None,
         help: Default::default(),
         tip: Vec::new(),
         quick: Default::default(),
@@ -978,6 +1038,19 @@ fn click(
             return;
         }
     }
+    // Dragging a level bar: follow the pointer, keep the level when the button comes up.
+    if let Some((accessor, left, width)) = state.dragging.clone() {
+        if buttons.pressed(MouseButton::Left) {
+            state.drag_level(&accessor, left, width, pointer.x);
+            return;
+        }
+        state.dragging = None;
+        let level = state.audio.level(&accessor);
+        match state.audio.save() {
+            Ok(()) => crate::log_line(&format!("menu: {accessor} = {level:?}, saved {}", AudioSettings::path().display())),
+            Err(e) => crate::log_line(&format!("menu: could not save {}: {e}", AudioSettings::path().display())),
+        }
+    }
     let back = keys.just_pressed(KeyCode::Backspace);
     if !buttons.just_pressed(MouseButton::Left) && !back {
         return;
@@ -1062,6 +1135,24 @@ fn click(
             state.scroll_combo(&accessor, rows);
             return;
         }
+        Hit::Slider(accessor, left, width) => {
+            sounds.play(SOUND_SELECT, &mut commands, &mut audio);
+            state.drag_level(&accessor, left, width, pointer.x);
+            state.dragging = Some((accessor, left, width));
+            return;
+        }
+        Hit::Tab(panel) => {
+            if state.session.panel == panel {
+                return;
+            }
+            sounds.play(SOUND_SELECT, &mut commands, &mut audio);
+            crate::log_line(&format!("menu: Options tab {panel}"));
+            state.session.panel = panel;
+            state.reload();
+            state.stack();
+            state.dirty = true;
+            return;
+        }
         Hit::Callback(name) => {
             sounds.play(SOUND_SELECT, &mut commands, &mut audio);
             match name.as_str() {
@@ -1081,6 +1172,17 @@ fn click(
                     } else {
                         state.popup = None;
                     }
+                }
+                // The bottom bar's options button opens the Options screen, on its audio tab.
+                "OPTIONS" => {
+                    if from.eq_ignore_ascii_case("Options") {
+                        return;
+                    }
+                    let Some(next) = state.load("Options") else { return };
+                    let snapshot = (state.page.clone(), state.popup.clone());
+                    state.history.push(snapshot);
+                    state.page = next;
+                    state.popup = None;
                 }
                 "TRACK1INC" | "LOOPEDINC" => state.quick.step_track(1),
                 "TRACK1DEC" | "LOOPEDDEC" => state.quick.step_track(-1),

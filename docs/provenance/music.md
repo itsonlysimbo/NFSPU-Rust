@@ -36,7 +36,7 @@ Every song is a chain of blocks: a 4-byte id and a u32 little-endian size that i
 - **Screen change**: when the active screen's pattern differs from the current one, the music fades over 1.5 s. Unless the pattern is `NONE`, a random song whose name matches it then starts. An empty pattern counts as `menu*`. The pattern match is a wildcard match, and we treat it as case-insensitive.
 - **Song ends**: the next matching song plays, in archive order. A `RANDOMPLAYLIST` option makes this a random different song instead; it is off unless set.
 - **Main menu**: on arrival, if the main menu has not picked a song for 7680 ticks (60 s), it starts a random `Menu*` song. A song change from a pick fades the old one over 0.5 s.
-- **Level**: `Audio.MusicLevel` in the player's save (0-127; the executable's default is 55). At 0 the game plays no music. How the level maps to loudness is **not known**; we use a linear level/127.
+- **Level**: `Audio.MusicLevel` (0-127, starts at 127; see `options-audio.md`), from our `settings/audio.txt` or else the player's save. At 0 the game plays no music. How the level maps to loudness is **not known**; we use a linear level/127.
 - **Recording check** (`music_match` example, which cross-correlates recording clips against every song):
   - From 0 to about 24 s (quick race, then the main menu), `menu05` plays without a break.
   - At about 26 s the author opens Options (`NONE`), and its audio tab plays `game13`, the archive's first song (the tab previews the song selected in its list; not modelled).

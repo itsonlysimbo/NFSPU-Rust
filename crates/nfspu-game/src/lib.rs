@@ -1,6 +1,7 @@
 //! Game logic that does not need a window: ground lookup, wall collision, the placeholder car and track loading.
 
 pub mod ai;
+pub mod audio_settings;
 pub mod car;
 pub mod car_load;
 pub mod car_sim;

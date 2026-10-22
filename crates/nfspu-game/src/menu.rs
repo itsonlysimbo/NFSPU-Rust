@@ -159,6 +159,11 @@ pub enum Hit {
     /// Inside an open dropdown list but on nothing choosable (a section title, the scroll bar's
     /// track, the edge): the click is used up, so nothing under the list reacts.
     Inert,
+    /// A level bar (`NFS5.GouraudIndicatorBar` with `changeable=1`): its accessor and the bar's
+    /// left edge and width, so the pointer's x sets the level.
+    Slider(String, i32, i32),
+    /// An Options tab (`NFS5.GRAPHICTABBUTTON`): show the panel it names.
+    Tab(String),
 }
 
 /// One row of a dropdown list: a centred section title, or a choosable item with an optional
@@ -426,6 +431,9 @@ pub fn load_templates(game_dir: &Path) -> BTreeMap<String, ControlTemplate> {
     out
 }
 
+/// The Options screen's panels (`Options.lay`), in tab order of the layout's sections.
+pub const OPTION_PANELS: [&str; 5] = ["ID_controllers_panel", "ID_graphics_panel", "ID_display_panel", "ID_audio_panel", "ID_cameras_panel"];
+
 /// Builds one screen. `name` is the layout's file stem (`singleplayer`, `quickrace`, ...).
 pub fn load_screen(
     game_dir: &Path,
@@ -470,6 +478,27 @@ pub fn load_screen_with(
 
     for block in lay.controls() {
         let Some(id) = block.control() else { continue };
+        // A panel or tab group draws another layout in place (`Panel.Ctr`, `Radio Group.Ctr`);
+        // all of them sit at 0,0. A hidden panel draws nothing.
+        if matches!(id, "NFS5.PANEL" | "NFS5.RADIOGROUP") {
+            let name_field = block.get("name").map(str::trim).unwrap_or("");
+            if session.hidden.iter().any(|h| h == name_field) {
+                continue;
+            }
+            let file = block.get("filename").map(str::trim).unwrap_or("");
+            match (!file.is_empty() && !file.eq_ignore_ascii_case(name)).then(|| load_screen_with(game_dir, file, locale, language, templates, profiles, disabled, session)).flatten() {
+                // Its own `top` pieces are already at the front of its draw list.
+                Some(sub) => {
+                    let base = screen.draw.len();
+                    screen.draw.extend(sub.draw);
+                    screen.trans.extend(sub.trans.into_iter().map(|(a, b, on, off)| (a + base, b + base, on, off)));
+                    screen.help.extend(sub.help);
+                    screen.skipped.extend(sub.skipped);
+                }
+                None => screen.skipped.push(id.to_string()),
+            }
+            continue;
+        }
         let Some(template) = templates.get(id) else {
             screen.skipped.push(id.to_string());
             continue;
@@ -583,6 +612,10 @@ pub struct Session {
     pub car_logo: Option<(String, usize)>,
     /// Picture drawn for a `room=ID_TRACK` screen (`TrackArt/<name>.fsh`).
     pub track_art: Option<String>,
+    /// Values of the level bars by accessor, 0..=127 (`Audio.MusicLevel`, ...).
+    pub levels: BTreeMap<String, u32>,
+    /// The Options tab's selected panel (`ID_audio_panel`, ...).
+    pub panel: String,
 }
 
 impl Default for Session {
@@ -599,6 +632,8 @@ impl Default for Session {
             watch: BTreeMap::new(),
             car_logo: None,
             track_art: None,
+            levels: BTreeMap::new(),
+            panel: OPTION_PANELS[3].to_string(),
         }
     }
 }
@@ -904,6 +939,63 @@ fn append_control_with(
                 let x = if number("align").unwrap_or(0.0) as i32 == 1 { (x - (left_w + right_w) / 2.0).round() } else { x };
                 screen.draw.push(Draw::Picture { file: file.clone(), index: logo * 2 + 1, pos: [x + left_w, y], flip: 0, alpha: 1.0 });
                 screen.draw.push(Draw::Picture { file, index: logo * 2, pos: [x, y], flip: 0, alpha: 1.0 });
+            }
+            true
+        }
+        // A level bar (`GouraudIndicatorBar.ctr`): filled from the left to its accessor's level
+        // (0..=127). The fill blends `c0` -> `c50` -> `c100` along the bar (**guess**: how retail
+        // uses the three colours is not traced). `changeable=1` makes it a slider.
+        "NFS5.GouraudIndicatorBar" => {
+            if hidden(&data) {
+                return true;
+            }
+            let Some((w, h)) = size else { return false };
+            let accessor = accessor_key(data.get("accessor").map(String::as_str).unwrap_or(""));
+            let level = context.session.and_then(|s| s.levels.get(&accessor)).copied().unwrap_or(127).min(127);
+            if number("changeable").unwrap_or(0.0) != 0.0 {
+                screen.draw.push(Draw::Target { rect: [x, y - 3.0, w, h + 6.0], hit: Hit::Slider(accessor, x as i32, w as i32) });
+            }
+            let colour = |k: &str| data.get(k).and_then(|c| eval_colour(c, &data)).unwrap_or([1.0; 4]);
+            let stops = [colour("c0"), colour("c50"), colour("c100")];
+            let at = |t: f32| {
+                let (a, b, f) = if t <= 0.5 { (stops[0], stops[1], t * 2.0) } else { (stops[1], stops[2], t * 2.0 - 1.0) };
+                std::array::from_fn::<f32, 4, _>(|i| a[i] + (b[i] - a[i]) * f)
+            };
+            let fill = level as f32 / 127.0;
+            for (t0, t1) in [(0.0f32, 0.5f32), (0.5, 1.0)] {
+                let t1 = t1.min(fill);
+                if t1 <= t0 {
+                    continue;
+                }
+                let (x0, x1) = (x + w * t0, x + w * t1);
+                let (a, b) = (at(t0), at(t1));
+                screen.draw.push(Draw::Gradient { corners: [[x0, y], [x1, y], [x0, y + h], [x1, y + h]], colours: [a, b, a, b], when: Show::Always });
+            }
+            true
+        }
+        // An Options tab (`Graphic Tab Button.ctr`): its label at `pos` + `textoffset`, over the
+        // `tabs.fsh` frame `selectedshape` when its panel shows or `hovershape` under the pointer
+        // (`flipit` mirrors it). **Stand-in**: the unselected look and the corner offsets
+        // (`TLoffsetx`, ...) are not drawn.
+        "NFS5.GRAPHICTABBUTTON" => {
+            let panel = data.get("panel").map(|s| s.trim().to_string()).unwrap_or_default();
+            let Some(text) = label_text(block, locale, language) else { return false };
+            let font = font_name(template, &data);
+            let file = data.get("bgSmallPathName").map(|s| s.trim().to_string()).unwrap_or_else(|| "tabs.fsh".to_string());
+            let selected = context.session.map(|s| s.panel.eq_ignore_ascii_case(&panel)).unwrap_or(false);
+            let flip = if number("flipit").unwrap_or(0.0) != 0.0 { 1 } else { 0 };
+            let shape = |k: &str| number(k).unwrap_or(0.0).max(0.0) as usize;
+            let (sw, sh) = shape_size(game_dir, &file, shape("selectedshape")).unwrap_or((label_width(game_dir, &font, &text) + 40.0, 24.0));
+            let rect = [x, y, sw, sh];
+            let (tx, ty) = (x + number("textoffsetx").unwrap_or(0.0), y + number("textoffsety").unwrap_or(0.0));
+            let white = [1.0, 1.0, 1.0, 1.0];
+            screen.draw.push(Draw::Text { text, pos: [tx, ty], size: point_size(&font), colour: white, font });
+            screen.draw.push(Draw::Target { rect, hit: Hit::Tab(panel) });
+            if selected {
+                screen.draw.push(Draw::Picture { file, index: shape("selectedshape"), pos: [x, y], flip, alpha: 1.0 });
+            } else {
+                let pic = Draw::Picture { file, index: shape("hovershape"), pos: [x, y], flip, alpha: 1.0 };
+                screen.draw.push(Draw::Shown { when: Show::Hover(rect), draw: Box::new(pic) });
             }
             true
         }
@@ -2261,5 +2353,23 @@ mod tests {
         let mut screen = Screen::default();
         assert!(!append_control(&mut screen, &button_block(), &template, &Locale::default(), 0));
         assert!(screen.draw.is_empty());
+    }
+
+    #[test]
+    fn a_level_bar_fills_to_its_level_and_is_a_slider() {
+        let template = ControlTemplate { id: "NFS5.GouraudIndicatorBar".into(), description: String::new(), parts: vec![], states: vec![], blocks: vec![] };
+        let b = block(&[("id", "NFS5.GouraudIndicatorBar"), ("pos", "307,150"), ("size", "198,9"), ("accessor", "Audio.MusicLevel"), ("changeable", "1"), ("c0", "0xffe60000"), ("c50", "0xffffd76c"), ("c100", "0xfffdb306")]);
+        let profiles = Profiles::default();
+        let mut session = Session::default();
+        session.levels.insert("Audio.MusicLevel".into(), 32);
+        let mut context = Context::new(&profiles);
+        context.session = Some(&session);
+        let mut screen = Screen::default();
+        assert!(append_control_with(&mut screen, &b, &template, &Locale::default(), 0, &context));
+        assert_eq!(screen.hit_at(400.0, 154.0), Some(Hit::Slider("Audio.MusicLevel".into(), 307, 198)));
+        // A quarter full: one gradient piece, ending a quarter along.
+        let ends: Vec<f32> = screen.draw.iter().filter_map(|d| if let Draw::Gradient { corners, .. } = d { Some(corners[1][0]) } else { None }).collect();
+        assert_eq!(ends.len(), 1);
+        assert!((ends[0] - (307.0 + 198.0 * 32.0 / 127.0)).abs() < 1e-3);
     }
 }
