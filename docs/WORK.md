@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| (none) | | | | | | |
+| Damage, suspension and roll-overs | Strong | Claude (damage session) | `claude/damage-6135c5` | Started 2026-10-22: research | Read decomp for suspension, roll-over reset and damage | Cars sit on suspension, roll over and recover, show retail damage; race_drive ALL OK |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
@@ -27,7 +27,6 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Retail results screen | Mid | Layouts are in `FEData`; placeholder exists |
 | Route choice at AI junctions | Strong | `ai.rs`, `aidata.rs` |
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
-| Damage and roll-overs | Strong | Physics plus car model |
 | Roof up/down drawing | Mid | Choice already reaches the race |
 | Location screen 3D track room | Mid | |
 | Evolution career, Factory Driver | Strong | Big; split into pieces first |
