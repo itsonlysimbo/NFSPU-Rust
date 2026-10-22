@@ -86,6 +86,8 @@ struct Racer {
     car: Car,
     brain: Opponent,
     body: Entity,
+    /// The body art's lean node under `body` (the wheels ride on `body` and stay planted).
+    lean: Entity,
     name: String,
     steer: f32,
     braking: bool,
@@ -271,7 +273,7 @@ fn start_race(
         let paint = if paints.is_empty() { CarOptions::default().paint } else { paints[rng.below(paints.len())].section };
         let options = CarOptions { paint, style: record.style, ..Default::default() };
         let body = commands.spawn((Transform::from_translation(start).with_rotation(Quat::from_rotation_y(spot.yaw)), Visibility::default(), AiBody::default(), DespawnOnExit(AppState::Race))).id();
-        crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, body, &model, &options);
+        let (_, lean, _) = crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, body, &model, &options);
         let name = names.get(&(driver.name_id as u16)).cloned().unwrap_or_else(|| format!("Driver {}", driver.id));
         race_log(&format!(
             "car {}: {name} (driver {}, difficulty {}, skills {:?}) in {} '{model}' style {} paint {}, {ais}.ais (top table speed {:.1} m/s); {}",
@@ -287,7 +289,7 @@ fn start_race(
         ));
         labels.push(record.name.clone());
         colours.push(nfspu_game::catalog::load_paints(&game, &model).get(options.paint).map_or([128; 3], |p| p.body));
-        racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, name, steer: 0.0, braking: false, resets: 0 });
+        racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, lean, name, steer: 0.0, braking: false, resets: 0 });
     }
     // opponents that could not be set up drop out of the race
     let cars = 1 + racers.len();
@@ -385,13 +387,18 @@ fn road_lines(path: &race_path::RoadPath) -> Vec<Vec<[f32; 2]>> {
 }
 
 /// Puts the opponents' bodies where their cars are and shares their speed with the wheels.
-fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform, &mut AiBody)>) {
+fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform, &mut AiBody), Without<crate::BodyLean>>, mut leans: Query<&mut Transform, (With<crate::BodyLean>, Without<AiBody>)>) {
     let Some(run) = run else { return };
     for r in &run.racers {
         if let Ok((mut t, mut b)) = bodies.get_mut(r.body) {
             t.translation = r.car.pos;
-            let (pitch, roll) = r.car.body_tilt();
+            // the chassis (road slope + tumble) carries the wheels; the body art leans over it
+            let (pitch, roll) = r.car.chassis_tilt();
             t.rotation = Quat::from_euler(EulerRot::YXZ, r.car.yaw, pitch, roll);
+            if let Ok(mut lt) = leans.get_mut(r.lean) {
+                let (lp, lr) = r.car.lean_tilt();
+                lt.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, lp, lr);
+            }
             *b = AiBody { speed: r.car.speed, steer: r.steer, braking: r.braking };
         }
     }

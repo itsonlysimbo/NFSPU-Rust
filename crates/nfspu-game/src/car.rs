@@ -119,6 +119,10 @@ const BODY_FRICTION: f32 = 6.0;
 /// (guesses; retail's four-point suspension is not decoded).
 const SUSP_SPRING: f32 = 90.0;
 const SUSP_DAMP: f32 = 8.0;
+/// How much of the computed body lean is drawn. Retail's lean felt excessive in the playtest
+/// (the whole car used to roll, wheels included); the split now keeps the wheels planted, and this
+/// scales the body's roll/pitch down to a look-only value. A guess until the next playtest.
+const LEAN_LOOK: f32 = 0.6;
 
 impl Car {
     /// A car with the made-up [`Spec::generic`] and an automatic gearbox.
@@ -168,15 +172,23 @@ impl Car {
         car
     }
 
-    /// Pitch and roll for drawing the body: the slope under the car, the tumble, the lean from
-    /// braking, power and cornering and the suspension.
-    pub fn body_tilt(&self) -> (f32, f32) {
+    /// Pitch and roll for the chassis (the car entity the wheels ride on): the road slope under
+    /// the car plus the tumble from hits and jumps. The body lean is *not* here, so the wheels
+    /// stay planted while the body rolls over them (see [`Car::lean_tilt`]).
+    pub fn chassis_tilt(&self) -> (f32, f32) {
+        (self.pitch + self.tumble[0], self.roll + self.tumble[1])
+    }
+
+    /// Pitch and roll of the body over the chassis: the lean from braking, power and cornering
+    /// plus the suspension tilt, scaled for looks. The wheels do not take this, so they never
+    /// lean into the road.
+    pub fn lean_tilt(&self) -> (f32, f32) {
         let (p, r) = self.sim.body_lean();
         let s = &self.susp;
         let wb = self.sim.spec.wheelbase.max(1.0);
         let sp = ((s[0] + s[1]) - (s[2] + s[3])) * 0.5 / wb;
         let sr = ((s[1] + s[3]) - (s[0] + s[2])) * 0.5 / car_sim::LEAN_TRACK;
-        (self.pitch + self.tumble[0] + p + sp, self.roll + self.tumble[1] + r + sr)
+        ((p + sp) * LEAN_LOOK, (r + sr) * LEAN_LOOK)
     }
 
     /// Where to draw the body: the car's centre moved by the suspension and lifted while it lies
@@ -646,5 +658,21 @@ mod tests {
         car.set_speed(25.0);
         run(&mut car, Input { steer: 1.0, ..Default::default() }, 1.0, &g);
         assert!(car.sim.body_lean().1 < -0.01, "lean {:?}", car.sim.body_lean());
+    }
+
+    /// The body lean stays off the chassis (which the wheels ride on), so on a flat road the
+    /// chassis tilt is zero while the body still rolls in a turn. The wheels never lean with it.
+    #[test]
+    fn body_lean_stays_off_the_planted_wheels() {
+        let g = plane(0.0, 0.0);
+        let mut car = Car::new(Vec3::new(0.0, 0.45, 0.0), 0.0);
+        car.set_speed(25.0);
+        run(&mut car, Input { steer: 1.0, ..Default::default() }, 1.0, &g);
+        let (chassis_pitch, chassis_roll) = car.chassis_tilt();
+        let (lean_pitch, lean_roll) = car.lean_tilt();
+        assert!(chassis_roll.abs() < 1e-4, "chassis roll must not take the lean: {chassis_roll}");
+        assert!(chassis_pitch.abs() < 1e-4, "chassis pitch must not take the lean: {chassis_pitch}");
+        assert!(lean_roll.abs() > 0.01, "the body should roll in the turn: {lean_roll}");
+        assert!(lean_pitch.abs() < 0.05, "only a slight dive in a flat turn: {lean_pitch}");
     }
 }

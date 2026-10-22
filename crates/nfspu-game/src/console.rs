@@ -403,8 +403,9 @@ pub fn apply(
     let Some(mut holder) = world.holder.take() else { return };
     commands.entity(holder.model).despawn();
     let options = super::car_model::CarOptions { style: car.style.0, driver: car.driver.0, paint: car.paint.0, ..Default::default() };
-    let (model, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car.name.0, &options);
+    let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car.name.0, &options);
     holder.model = model;
+    holder.lean = lean;
     holder.style_count = count;
     super::log_line(&format!(
         "console: car '{}' style {} of {} paint {} driver {}",
@@ -431,7 +432,7 @@ mod tests {
         let driver = super::super::CarDriver(1);
         let cam = super::super::CamMode(0);
         let lights = super::super::LightsOn(false);
-        let holder = super::super::CarModelEntity { root: Entity::PLACEHOLDER, model: Entity::PLACEHOLDER, style_count: 9 };
+        let holder = super::super::CarModelEntity { root: Entity::PLACEHOLDER, model: Entity::PLACEHOLDER, lean: Entity::PLACEHOLDER, style_count: 9 };
         run(line, &mut console, &catalog, &mut pending, &car, &track, &style, &paint, &driver, &cam, &lights, Some(&holder));
         (console, pending)
     }

@@ -176,12 +176,14 @@ struct CarName(String);
 #[derive(Resource)]
 struct CarList(Vec<String>);
 
-/// The car body entity, the model entity under it (despawned and rebuilt when the car changes) and
-/// how many body styles the current car has.
+/// The car body entity, the model entity under it (despawned and rebuilt when the car changes),
+/// the body-lean node (all the body art that rolls over the planted wheels) and how many body
+/// styles the current car has.
 #[derive(Resource)]
 struct CarModelEntity {
     root: Entity,
     model: Entity,
+    lean: Entity,
     style_count: usize,
 }
 
@@ -243,8 +245,9 @@ fn switch_car(
     }
     commands.entity(holder.model).despawn();
     let options = CarOptions { style: style.0, driver: driver.0, paint: paint.0, ..Default::default() };
-    let (model, count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &name.0, &options);
+    let (model, lean, count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &name.0, &options);
     holder.model = model;
+    holder.lean = lean;
     holder.style_count = count;
     log_line(&format!("switched to car '{}' style {} of {}", name.0, style.0, count));
 }
@@ -943,8 +946,8 @@ fn setup(
     let body = quick.0.as_ref().filter(|q| q.car_model.eq_ignore_ascii_case(&car_name.0)).and_then(|q| q.custom_colour);
     let options = CarOptions { style: car_style.0, driver: car_driver.0, paint: car_paint.0, body, ..Default::default() };
     log_line(&format!("race car '{}': paint section {}, custom body colour {:?}", car_name.0, car_paint.0, body));
-    let (model, style_count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, root, &car_name.0, &options);
-    commands.insert_resource(CarModelEntity { root, model, style_count });
+    let (model, lean, style_count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, root, &car_name.0, &options);
+    commands.insert_resource(CarModelEntity { root, model, lean, style_count });
 }
 
 /// A loaded track: its mesh entities (despawn them to unload it), where the camera goes and the
@@ -1105,18 +1108,24 @@ fn spawn_car_model(
     root: Entity,
     name: &str,
     options: &CarOptions,
-) -> (Entity, usize) {
+) -> (Entity, Entity, usize) {
     // the model's origin is at ground level, the car's position is its centre
     let model = commands.spawn((Transform::from_xyz(0.0, -RIDE_HEIGHT, 0.0), Visibility::default())).id();
     commands.entity(root).add_child(model);
+    // The body's lean node: all the body art rolls over the planted wheels. It sits at the car's
+    // centre (RIDE_HEIGHT above the model origin, which is the ground), so the lean pivots there;
+    // the pieces under it keep the ground origin by offsetting back down by RIDE_HEIGHT.
+    let lean = commands.spawn((Transform::from_xyz(0.0, RIDE_HEIGHT, 0.0), Visibility::default(), BodyLean)).id();
+    commands.entity(model).add_child(lean);
+    let body_at = || Transform::from_xyz(0.0, -RIDE_HEIGHT, 0.0);
     let m = match car_model::load_car(name, options) {
         Ok(m) => m,
         Err(e) => {
             log_line(&format!("car model '{}' failed ({e}); using a plain box", name));
             let red = materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.1, 0.1), unlit: true, ..default() });
-            let box_mesh = commands.spawn((Mesh3d(meshes.add(Cuboid::new(1.8, 0.7, 4.4))), MeshMaterial3d(red), Transform::from_xyz(0.0, RIDE_HEIGHT, 0.0))).id();
-            commands.entity(model).add_child(box_mesh);
-            return (model, 0);
+            let box_mesh = commands.spawn((Mesh3d(meshes.add(Cuboid::new(1.8, 0.7, 4.4))), MeshMaterial3d(red), Transform::from_xyz(0.0, 0.0, 0.0))).id();
+            commands.entity(lean).add_child(box_mesh);
+            return (model, lean, 0);
         }
     };
     log_line(&format!(
@@ -1142,8 +1151,8 @@ fn spawn_car_model(
     for (piece, look) in pieces {
         for (page, part) in by_page(piece) {
             let mat = looks.material(page, look, materials);
-            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], look.alpha()))), MeshMaterial3d(mat), Transform::default())).id();
-            commands.entity(model).add_child(e);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], look.alpha()))), MeshMaterial3d(mat), body_at())).id();
+            commands.entity(lean).add_child(e);
         }
     }
     // two cabins: the detailed one only in the cockpit view, the simpler one (which fits inside the
@@ -1151,8 +1160,8 @@ fn spawn_car_model(
     for (piece, cockpit) in [(&m.interior, true), (&m.interior_outside, false)] {
         for (page, part) in by_page(piece) {
             let mat = looks.material(page, Look::Cut, materials);
-            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default(), CabinPart { cockpit })).id();
-            commands.entity(model).add_child(e);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), body_at(), CabinPart { cockpit })).id();
+            commands.entity(lean).add_child(e);
         }
     }
     // lamps get their own copy of the material so they can glow independently
@@ -1162,17 +1171,17 @@ fn spawn_car_model(
             let Some(copy) = materials.get(&shared).cloned() else { continue };
             let handle = materials.add(copy);
             let e = commands
-                .spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(handle.clone()), Transform::default(), Lamp { front, material: handle }))
+                .spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(handle.clone()), body_at(), Lamp { front, material: handle }))
                 .id();
-            commands.entity(model).add_child(e);
+            commands.entity(lean).add_child(e);
         }
     }
     // the driver is hidden in the cockpit view, where the camera sits inside the head
     for piece in [&m.driver_suit, &m.driver_head] {
         for (page, part) in by_page(piece) {
             let mat = looks.material(page, Look::Cut, materials);
-            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::default(), DriverPart)).id();
-            commands.entity(model).add_child(e);
+            let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), body_at(), DriverPart)).id();
+            commands.entity(lean).add_child(e);
         }
     }
     // the wheel shadow quads: upright squares outside the wheels, blended from the shared 4444
@@ -1202,7 +1211,7 @@ fn spawn_car_model(
             commands.entity(wheel).add_child(e);
         }
     }
-    (model, m.style_count)
+    (model, lean, m.style_count)
 }
 
 /// How a car part is drawn: with cut-outs where its texture is transparent, fully opaque, or as
@@ -1517,6 +1526,11 @@ fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(
 #[derive(Component)]
 struct CarBody;
 
+/// The body art's lean node (a child of the car model): its local rotation is the body lean over
+/// the planted wheels (`Car::lean_tilt`), so the wheels never roll into the road with it.
+#[derive(Component)]
+struct BodyLean;
+
 fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, console: Res<console::Console>, mut mode: ResMut<DriveMode>, mut cams: Query<(&Transform, &mut FlyCamera)>) {
     if console.open {
         return;
@@ -1674,7 +1688,9 @@ fn drive_car(
     console: Res<console::Console>,
     hold: Res<race_mode::RaceHold>,
     weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
-    mut bodies: Query<&mut Transform, With<CarBody>>,
+    holder: Option<Res<CarModelEntity>>,
+    mut bodies: Query<&mut Transform, (With<CarBody>, Without<BodyLean>)>,
+    mut leans: Query<&mut Transform, (With<BodyLean>, Without<CarBody>)>,
 ) {
     let (Some(ground), Some(walls), Some(mut state)) = (ground, walls, car) else { return };
     state.car.wet = weather.is_some_and(|w| w.track.wet);
@@ -1709,8 +1725,15 @@ fn drive_car(
     }
     for mut t in &mut bodies {
         t.translation = state.car.pos;
-        let (pitch, roll) = state.car.body_tilt();
+        let (pitch, roll) = state.car.chassis_tilt();
         t.rotation = Quat::from_euler(EulerRot::YXZ, state.car.yaw, pitch, roll);
+    }
+    // The body art leans over the chassis; the wheels ride on the chassis and stay planted.
+    if let Some(holder) = &holder {
+        if let Ok(mut t) = leans.get_mut(holder.lean) {
+            let (lp, lr) = state.car.lean_tilt();
+            t.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, lp, lr);
+        }
     }
 }
 

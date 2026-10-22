@@ -105,8 +105,9 @@ pub fn update(
         name.0 = car.clone();
         style.0 = car_style;
         let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, ..Default::default() };
-        let (model, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car, &options);
+        let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car, &options);
         holder.model = model;
+        holder.lean = lean;
         holder.style_count = count;
         probe.loaded = true;
         probe.frames = 0;
