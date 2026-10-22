@@ -315,3 +315,27 @@ with full lock, which retail's yaw sum rotates into the corner. The scripted dri
 steering at full lock, which a player braking in a straight line avoids. Whether retail's cars feel
 the same is **not tested** against the running game. race_drive still finishes all 15 tracks with
 the made-up car, the '50 356, the 993 Turbo and the 959 (3, 1 and 0 spins), and with 7 AI opponents.
+
+### Gravity (2026-10-20)
+
+`handling_check`, '50 356 unless named, before and after section 7b's gravity, landing and lean
+rules:
+
+| Test | Before | After |
+|---|---|---|
+| Hill 100 km/h, time airborne | 0 s | 0.62 s |
+| Hill 150 km/h, highest point | 1.65 m | 1.29 m |
+| Hill 150 km/h, landing speed | 10.3 m/s | 6.2 m/s |
+| Crest 100 km/h, highest point | 2.92 m | 2.43 m |
+| Crest 150 km/h, highest point | 4.61 m | 4.50 m |
+| Kicker, highest point (two speeds) | 2.67 / 4.02 m | 2.45 / 3.44 m |
+| 993 crest 150 km/h | 6.67 m | 5.01 m |
+| 959 crest 150 km/h | 6.69 m | 4.92 m |
+| Flat spins (scripted) | 8 | 8 |
+| Track spins (race_drive) | 42 | 46 (noise) |
+
+Cars now fly lower and land softer, from downforce pressing harder with speed. Guesses: the
+upright threshold (0.5), a 1.5 m track width for sideways lean, lean directions, wing damage
+ignored, road speed at landing taken from the slope, asphalt bounce everywhere. Whether this matches
+the retail game in flight is **not tested**. race_drive (generic, car 213, monaco1 with 7 AI) is
+ALL OK after merging master.
