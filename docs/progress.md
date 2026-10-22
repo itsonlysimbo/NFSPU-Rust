@@ -22,14 +22,14 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Physics | Walls and car-vs-car collisions | Partial | 60 |  |
 | Physics | Suspension, roll-overs | Not started | 5 |  |
 | Physics | Damage (visual and mechanical) | Not started | 0 |  |
-| Graphics | Tracks: geometry, textures, objects | Done | 90 |  |
-| Graphics | Cars: textures, smooth shading, cabin, shadows | Done | 85 | Roof drawing |
+| Graphics | Tracks: geometry, textures, objects | Done | 92 | Côte d'Azur water planes |
+| Graphics | Cars: textures, smooth shading, cabin, shadows | Done | 88 | Roof drawing; cockpit arms/wheel |
 | Graphics | Cameras: chase and in-car | Done | 85 |  |
 | Graphics | Sky, sun, lens flare, glows | Done | 85 | Flare occlusion untested on Cote d'Azur |
 | Graphics | Weather, night, fog, rain/snow, headlights | Done | 80 | Feel vs retail |
 | HUD | Retail HUD, minimap, positions | Done | 90 |  |
 | Sound | Menu music | Done | 95 |  |
-| Sound | In-race sound: engine, announcer, skids, ambience | In progress | 5 | Session running |
+| Sound | In-race sound: engine, announcer, skids, ambience | Partial | 60 | Implemented; levels need an ear |
 | Career | Evolution career (eras, money, upgrades) | Not started | 0 |  |
 | Career | Factory Driver mode | Not started | 0 |  |
 | Career | Used cars, dealership, parts, paint shop | Not started | 0 | Screens exist as layouts only |

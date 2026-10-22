@@ -14,6 +14,9 @@ when they can and notes results here or in a recording. Run the game with `.\run
 | 2026-10-22 | Cars | Smooth shading; every paint for the model plus a custom colour | `cf2d8fe` |
 | 2026-10-22 | Options > Audio | Five sliders drag; music changes live; settings kept after restart | `6259450` |
 | 2026-10-22 | Race sound | Engine pitch with revs and gears, opponents passing, countdown voice, skids, wall hits, wind, road noise, track ambience; levels follow the sliders | `031dcef` |
+| 2026-10-22 | Body lean and wheels | In a hard corner the body rolls but the wheels stay flat on the road, like retail; the lean should not look excessive | `opencode/lean-cockpit` |
+| 2026-10-22 | Cockpit view (C) | The driver's arms/hands are visible on the steering wheel, and the wheel turns with the steering; the arms are the model's low-poly ones, judge how they look | `opencode/lean-cockpit` |
+| 2026-10-22 | Cote d'Azur sea | The water/sea shows along the coast (sunset over rippled water); compare its look and extent with retail | `opencode/lean-cockpit` |
 
 ## Results
 Add a line per playtest: date, recording path, what was wrong.
