@@ -230,6 +230,11 @@ linear light (retail: gamma space), which shifts gradients slightly (**not measu
   counts pixels that still hold the sky's depth (reference read when the sun was first drawn) and
   uses count / 16 as the intensity. Ours casts 16 rays round the sun's pixel against the world
   meshes. Retail also gives up on the flare if the read is too slow (not copied).
+- **Depth test sees both face directions (fixed 2026-10-20)**: retail's depth buffer sees every
+  surface whichever way it faces. Bevy's ray cast skipped back faces, and the track import's X
+  mirror turns every track triangle round, so the sun test looked straight through rocks, tunnels
+  and buildings (playtest 2026-10-20: the flare stayed visible behind geometry). Every world mesh
+  now counts both faces (`RayCastBackfaces`), so the 16-ray test behaves like the depth read.
 - Ours: the sun sprites are camera-facing squares in the sky pass, sized to retail's screen size;
   the ghosts are drawn by a third camera (640 x 480 orthographic, render layer 2) over the picture.
   **Additive blending is our guess** (the sprite render state was not traced).
