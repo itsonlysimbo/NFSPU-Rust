@@ -50,6 +50,23 @@ them may stop mid-task (usage limits). Leave every task so the next agent can pi
 - **Finish:** the coordinator (or whoever merges) moves the task to Done with the merge commit and
   updates `docs/progress.md`.
 
+## Continuous running (user standing approval, 2026-10-22, until the user says stop)
+These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 still hold.
+- Coordinator commits and merges to `master` without asking once tests and `race_drive` pass, and
+  pushes `master` to GitHub after each merge.
+- Keep 3 sessions running. When one finishes, merge it and start the next task from `docs/WORK.md`,
+  highest first, without asking.
+- Sessions commit to their own branch freely and run in auto permission mode.
+- Delete `target/`, finished worktrees and merged branches after merging, without asking.
+- Live game tests, captures and launches need no announcement.
+- Don't wait for playtests: add what needs the user's eyes and ears to `docs/PLAYTEST.md`.
+- Stop and ask only for: networking, unsigned programs, installing software, anything outside the
+  project folder, or a real design choice the evidence can't settle. Otherwise decide, write it
+  down as a guess, and continue.
+- Keep the computer awake while work runs.
+- When Claude usage runs out, every task is left as a committed WIP with a Next step on the board
+  so OpenCode can continue.
+
 ## Builds
 - `.cargo/config.toml` links with `rust-lld` (ships with Rust; much faster than link.exe).
 - The dev profile keeps line tables only (`debug = "line-tables-only"`, none for dependencies).
