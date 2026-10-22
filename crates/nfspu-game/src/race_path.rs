@@ -394,6 +394,8 @@ pub struct TrackRace {
     pub triggers: Vec<Trigger>,
     pub start_slice: usize,
     pub finish: Option<(Vec3, Vec3)>,
+    /// Junctions and their route weights, for the opponents' route choice.
+    pub routes: crate::ai_route::Routes,
 }
 
 impl TrackRace {
@@ -432,7 +434,10 @@ pub fn load(track: &str, dir: Direction) -> Result<TrackRace, String> {
     let raw = std::fs::read(tdir.join(format!("{track}.crp"))).map_err(|e| format!("{track}.crp: {e}"))?;
     let data = refpack::decompress(&raw).map_err(|e| format!("{e}"))?;
     let c = crp::parse(&data).map_err(|e| format!("{e}"))?;
-    let path = RoadPath::new(&sim::read(&c).map_err(|e| format!("{e}"))?);
+    let simd = sim::read(&c).map_err(|e| format!("{e}"))?;
+    let path = RoadPath::new(&simd);
+    let jnc = std::fs::read(tdir.join(format!("{track}.jnc"))).ok().map(|d| nfspu_formats::aidata::parse_jnc(&d));
+    let routes = crate::ai_route::Routes::build(&simd, jnc.as_deref());
     let suffix = if dir == Direction::Forward { "fstart" } else { "bstart" };
     // file names differ in case between tracks; Windows does not mind, but look it up anyway
     let wanted = format!("{track}_{suffix}.scn").to_ascii_lowercase();
@@ -443,7 +448,7 @@ pub fn load(track: &str, dir: Direction) -> Result<TrackRace, String> {
     };
     let start_slice = start_slice(&path, &triggers, dir);
     let finish = finish_line(&triggers);
-    Ok(TrackRace { path, dir, triggers, start_slice, finish })
+    Ok(TrackRace { path, dir, triggers, start_slice, finish, routes })
 }
 
 #[cfg(test)]

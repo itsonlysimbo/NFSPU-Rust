@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| Route choice at AI junctions | Strong | Claude (ai-routes) | `claude/ai-routes-be7221` | Started 2026-10-22 | Study retail junction choice in decomp + `.jnc` data | Opponents take branches like retail (log); race_drive ALL OK; tests pass |
+| Route choice at AI junctions | Strong | Claude (ai-routes) | `claude/ai-routes-be7221` | WIP, not built yet | Retail rules found and coded (`ai_route.rs`, `docs/provenance/ai.md`). Next: `cargo build -p nfspu-game --example race_drive --release -j 2`, fix compile errors, run race_drive on junction tracks (e.g. castle, industrial, autobahn with 7 opponents) and check `junctions: N (.jnc weights)` matches .jnc count; then all 15 tracks + `cargo test --workspace -j 2` | Opponents take branches like retail (log); race_drive ALL OK; tests pass |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
