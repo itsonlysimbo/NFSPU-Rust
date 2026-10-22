@@ -30,7 +30,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Audio sliders other than music have no effect | Mid | Menu sounds now follow the effects slider; in-race levels were already wired (031dcef) but not confirmed by ear |
 | Côte d'Azur sea water not visible | Mid | OpenCode's water planes (3efc9be) draw nothing in the user's playtest |
 | Cockpit: steering wheel turns in 90-degree steps; hand position on the wheel | Mid | From b478ea6 |
-| Car reflections (paint and chrome environment map) | Strong | Claimed: Claude, claude/car-reflections-9ce0ac. User's next ask for cars |
+| Car reflections (paint and chrome environment map) | Strong | Claude, `claude/car-reflections-9ce0ac`: ready to merge (tests pass, race_drive ALL OK). Sun highlight checked by eye; lamp glow not tested by eye. Next: trace the 'covered' flag (Monaco 3-5 glows) and the sun direction |
 | Menu button outline light that travels around the border | Mid | Needs retail footage (user can supply) |
 | Race sound fine-tuning against retail | Strong | Needs a retail recording with game sound |
 | Body lean closer to retail | Strong | After damage/suspension merges |
