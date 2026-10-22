@@ -29,7 +29,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Last slab-allocator "Use-after-free" error (one per race) | Mid | Likely fix on master (sky meshes start non-empty); not reproduced here, needs playtest |
 | Audio sliders other than music have no effect | Mid | Menu sounds now follow the effects slider; in-race levels were already wired (031dcef) but not confirmed by ear |
 | Côte d'Azur sea water not visible | Mid | **Claude `claude/water-cockpit-213623`, claimed 2026-10-22.** OpenCode's water planes (3efc9be) draw nothing in the user's playtest |
-| Cockpit: steering wheel turns in 90-degree steps; hand position on the wheel | Mid | **Claude `claude/water-cockpit-213623`, claimed 2026-10-22.** From b478ea6 |
+| Cockpit: hand position on the wheel and hand animation | Mid | **Claude `claude/cockpit-hands-afa0a8`, claimed 2026-10-22.** Wheel smoothing done (merged) |
 | Car reflections (paint and chrome environment map) | Strong | User's next ask for cars |
 | Menu button outline light that travels around the border | Mid | Needs retail footage (user can supply) |
 | Race sound fine-tuning against retail | Strong | Needs a retail recording with game sound |
