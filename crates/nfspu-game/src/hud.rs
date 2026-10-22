@@ -54,6 +54,8 @@ pub struct HudInput {
     pub summary: Vec<crate::hud_results::SummaryRow>,
     /// Seconds the summary has been up (drives its opening animation).
     pub summary_since: f32,
+    /// Whether the summary has the BEST LAP column (a race with laps).
+    pub summary_laps: bool,
 }
 
 /// One car as the map and the opponent list need it.
@@ -92,6 +94,7 @@ impl Default for HudInput {
             lap_metres: 0.0,
             summary: Vec::new(),
             summary_since: 0.0,
+            summary_laps: true,
         }
     }
 }
@@ -161,6 +164,7 @@ pub mod word {
     pub const BEST_LAP_CAPS: u16 = 18113; // "BEST LAP"
     pub const TOTAL_TIME: u16 = 18114; // "TIME"
     pub const RACE_SUMMARY: u16 = 18130; // "Race Summary"
+    pub const SINGLE_RACE: u16 = 18129; // "Single Race"
     pub const ESC_TO_EXIT: u16 = 18100; // "Esc to exit"
     pub const SPACE_TO_PROCEED: u16 = 18101; // "Spacebar to proceed"
     pub const RPM: u16 = 18144; // "rpm"
@@ -186,6 +190,7 @@ impl HudSettings {
             word::CAR => "CAR",
             word::BEST_LAP_CAPS => "BEST LAP",
             word::TOTAL_TIME => "TIME",
+            word::SINGLE_RACE => "Single Race",
             word::RACE_SUMMARY => "Race Summary",
             word::ESC_TO_EXIT => "Esc to exit",
             word::SPACE_TO_PROCEED => "Spacebar to proceed",
@@ -429,6 +434,12 @@ pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u
     let s = settings.scale;
     let night = if settings.night { "N" } else { "" };
 
+    // Retail footage (2026-10-22): the summary replaces the rest of the HUD.
+    if !input.summary.is_empty() {
+        crate::hud_results::summary(&mut out, settings, &input.summary, input.summary_since, screen, input.summary_laps);
+        return out;
+    }
+
     if let Some(left) = input.countdown {
         countdown(&mut out, left, screen, s);
         return out;
@@ -483,9 +494,6 @@ pub fn draws(input: &HudInput, settings: &HudSettings, boxes: &Boxes, screen: [u
 
     if let Some((place, since)) = input.finished {
         finish(&mut out, place, since, screen, s);
-    }
-    if !input.summary.is_empty() {
-        crate::hud_results::summary(&mut out, settings, &input.summary, input.summary_since, screen);
     }
     out
 }

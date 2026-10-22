@@ -26,3 +26,4 @@ Add a line per playtest: date, recording path, what was wrong.
   opens with eight places, NAME / CAR / BEST LAP / TIME, your row in amber. Compare its look,
   position and timing with retail (panel colours, position and delay are guesses).
 - Opponents still racing show dashes and fill in as they finish. Space, Enter or Esc return to the menu.
+- Retail takes control away at the checkered line and the car rolls on; ours does not yet. Compare the panel with your 2026-10-22 recording (gold tint is a guess).

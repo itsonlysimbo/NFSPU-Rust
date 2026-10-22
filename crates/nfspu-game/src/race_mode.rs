@@ -242,7 +242,7 @@ fn start_race(
     race_log(&format!("opponents: {}, difficulty {}, seed {seed}, {} drivers in nfs5.per", cars - 1, req.difficulty, drivers.len()));
     let mut racers = Vec::new();
     // body colours by race index, for the HUD map and opponent list; the player's from its paint
-    let catalogue_name = |model: &str| catalogue.iter().find(|c| c.kind == 0 && c.model.eq_ignore_ascii_case(model)).map(|c| c.name.clone());
+    let catalogue_name = |model: &str| catalogue.iter().find(|c| c.kind == 0 && c.model.eq_ignore_ascii_case(model)).map(|c| c.year_and_model().1);
     let mut labels = vec![catalogue_name(&car_name.0).unwrap_or_else(|| car_name.0.clone())];
     let mut colours = vec![nfspu_game::catalog::load_paints(&game, &car_name.0).get(player_paint.0).map_or([128; 3], |p| p.body)];
     for (i, driver) in picked.into_iter().enumerate() {
@@ -287,7 +287,7 @@ fn start_race(
             spec.speeds[0],
             loaded.note
         ));
-        labels.push(record.name.clone());
+        labels.push(record.year_and_model().1);
         colours.push(nfspu_game::catalog::load_paints(&game, &model).get(options.paint).map_or([128; 3], |p| p.body));
         racers.push(Racer { car: Car::with_spec(start, spot.yaw, loaded.spec, Default::default()), brain: Opponent::new(spec, driver, spot.slice), body, lean, name, steer: 0.0, braking: false, resets: 0 });
     }
