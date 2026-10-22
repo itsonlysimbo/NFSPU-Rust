@@ -116,6 +116,7 @@ Press Enter to close this console.");
         .insert_resource(CamMode(0))
         .insert_resource(Orbit { yaw: 0.6, pitch: 0.35, radius: 6.0 })
         .insert_resource(RetailFov::from_env())
+        .add_plugins(nfspu_game::audio_settings::AudioSettingsPlugin)
         .add_plugins(flow::FlowPlugin)
         // The front end; its screens are read now only when the program starts there.
         .add_plugins(menu_mode::MenuPlugin(menu_start.clone()))
