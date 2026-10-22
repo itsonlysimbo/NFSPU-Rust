@@ -349,6 +349,7 @@ pub fn apply(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut paints: ResMut<Assets<nfspu_game::car_shine::CarPaint>>,
     mut images: ResMut<Assets<Image>>,
     mut car: CarState,
     mut world: World,
@@ -403,7 +404,7 @@ pub fn apply(
     let Some(mut holder) = world.holder.take() else { return };
     commands.entity(holder.model).despawn();
     let options = super::car_model::CarOptions { style: car.style.0, driver: car.driver.0, paint: car.paint.0, ..Default::default() };
-    let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &car.name.0, &options);
+    let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut paints, &mut images, holder.root, &car.name.0, &options);
     holder.model = model;
     holder.lean = lean;
     holder.style_count = count;

@@ -178,6 +178,7 @@ fn start_race(
     mut hold: ResMut<RaceHold>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut car_paints: ResMut<Assets<nfspu_game::car_shine::CarPaint>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     if tried.is_some() || car.is_none() {
@@ -280,7 +281,7 @@ fn start_race(
         let paint = if paints.is_empty() { CarOptions::default().paint } else { paints[rng.below(paints.len())].section };
         let options = CarOptions { paint, style: record.style, ..Default::default() };
         let body = commands.spawn((Transform::from_translation(start).with_rotation(Quat::from_rotation_y(spot.yaw)), Visibility::default(), AiBody::default(), DespawnOnExit(AppState::Race))).id();
-        let (_, lean, _) = crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, body, &model, &options);
+        let (_, lean, _) = crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut car_paints, &mut images, body, &model, &options);
         let name = names.get(&(driver.name_id as u16)).cloned().unwrap_or_else(|| format!("Driver {}", driver.id));
         race_log(&format!(
             "car {}: {name} (driver {}, difficulty {}, skills {:?}) in {} '{model}' style {} paint {}, {ais}.ais (top table speed {:.1} m/s); {}",

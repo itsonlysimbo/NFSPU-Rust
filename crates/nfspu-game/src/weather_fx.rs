@@ -118,6 +118,13 @@ impl WeatherState {
         Some((self.slice?, self.path.as_ref()?.slices.len()))
     }
 
+    /// The road slice nearest a point, and its centre (world).
+    pub fn slice_near(&self, p: Vec3) -> Option<(usize, Vec3)> {
+        let path = self.path.as_ref()?;
+        let i = path.nearest(p);
+        Some((i, path.slices.get(i)?.pos))
+    }
+
     /// Night lighting is on for this track.
     pub fn night(&self) -> bool {
         self.track.night
@@ -277,7 +284,7 @@ pub(crate) fn placeholder_mesh() -> Mesh {
 }
 
 /// Writes to the shared game log (`logs/m0.log`), the same file main.rs uses.
-fn crate_log(msg: &str) {
+pub(crate) fn crate_log(msg: &str) {
     use std::io::Write as _;
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("logs").join("m0.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {

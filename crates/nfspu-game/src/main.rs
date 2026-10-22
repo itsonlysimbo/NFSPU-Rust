@@ -129,6 +129,7 @@ Press Enter to close this console.");
         .add_plugins(nfspu_game::hud_plugin::HudPlugin(flow::AppState::Race))
         // Fog, rain, snow, lightning and night headlights (weather_fx.rs).
         .add_plugins(nfspu_game::weather_fx::WeatherFxPlugin)
+        .add_plugins(nfspu_game::car_shine::CarShinePlugin)
         .add_plugins(nfspu_game::sky_fx::SkyFxPlugin)
         // The sky effects' camera, layers and glows are not tied to the race state; clear them on leaving it.
         .add_systems(OnExit(flow::AppState::Race), nfspu_game::sky_fx::clear)
@@ -211,6 +212,7 @@ fn switch_car(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut paints: ResMut<Assets<nfspu_game::car_shine::CarPaint>>,
     mut images: ResMut<Assets<Image>>,
     list: Res<CarList>,
     mut name: ResMut<CarName>,
@@ -245,7 +247,7 @@ fn switch_car(
     }
     commands.entity(holder.model).despawn();
     let options = CarOptions { style: style.0, driver: driver.0, paint: paint.0, ..Default::default() };
-    let (model, lean, count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, holder.root, &name.0, &options);
+    let (model, lean, count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut paints, &mut images, holder.root, &name.0, &options);
     holder.model = model;
     holder.lean = lean;
     holder.style_count = count;
@@ -904,6 +906,7 @@ fn setup(
     track: Res<TrackName>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut paints: ResMut<Assets<nfspu_game::car_shine::CarPaint>>,
     mut images: ResMut<Assets<Image>>,
     car_name: Res<CarName>,
     car_style: Res<CarStyle>,
@@ -953,7 +956,7 @@ fn setup(
     let body = quick.0.as_ref().filter(|q| q.car_model.eq_ignore_ascii_case(&car_name.0)).and_then(|q| q.custom_colour);
     let options = CarOptions { style: car_style.0, driver: car_driver.0, paint: car_paint.0, body, ..Default::default() };
     log_line(&format!("race car '{}': paint section {}, custom body colour {:?}", car_name.0, car_paint.0, body));
-    let (model, lean, style_count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut images, root, &car_name.0, &options);
+    let (model, lean, style_count) = spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut paints, &mut images, root, &car_name.0, &options);
     commands.insert_resource(CarModelEntity { root, model, lean, style_count });
 }
 
@@ -1111,6 +1114,7 @@ fn spawn_car_model(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    paints: &mut Assets<nfspu_game::car_shine::CarPaint>,
     images: &mut Assets<Image>,
     root: Entity,
     name: &str,
@@ -1162,6 +1166,14 @@ fn spawn_car_model(
     ];
     for (piece, look) in pieces {
         for (page, part) in by_page(piece) {
+            // the outer paint carries retail's shine layers (sun highlight, lamp glow)
+            if std::ptr::eq(piece, &m.paint) {
+                if let Some(mat) = looks.paint(page, paints) {
+                    let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), body_at())).id();
+                    commands.entity(lean).add_child(e);
+                    continue;
+                }
+            }
             let mat = looks.material(page, look, materials);
             let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], look.alpha()))), MeshMaterial3d(mat), body_at())).id();
             commands.entity(lean).add_child(e);
@@ -1365,6 +1377,7 @@ impl Look {
 struct CarLooks {
     images: Vec<Option<(Handle<Image>, bool)>>,
     made: HashMap<(usize, Look), Handle<StandardMaterial>>,
+    paints: HashMap<usize, Handle<nfspu_game::car_shine::CarPaint>>,
     grey: Option<Handle<StandardMaterial>>,
 }
 
@@ -1388,7 +1401,7 @@ impl CarLooks {
                 })
             }));
         }
-        CarLooks { images: out, made: HashMap::new(), grey: None }
+        CarLooks { images: out, made: HashMap::new(), paints: HashMap::new(), grey: None }
     }
 
     /// Gives the twin body page its own image and returns what [`paint_car_damage`] needs, or
@@ -1405,6 +1418,12 @@ impl CarLooks {
             _ => return None,
         }
         Some(DamageLook { images: [body, twin], base: page.rgba.clone(), size: page.size, stamps, shown: [0.0; car_damage::ZONES] })
+    }
+
+    /// The shining paint material of a page, or `None` when the page has no picture.
+    fn paint(&mut self, page: u8, paints: &mut Assets<nfspu_game::car_shine::CarPaint>) -> Option<Handle<nfspu_game::car_shine::CarPaint>> {
+        let (image, has_alpha) = self.images.get(page as usize).cloned().flatten()?;
+        Some(self.paints.entry(page as usize).or_insert_with(|| paints.add(nfspu_game::car_shine::CarPaint::new(image, has_alpha))).clone())
     }
 
     fn material(&mut self, page: u8, look: Look, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
@@ -1579,6 +1598,7 @@ fn piece_mesh(piece: &Piece, base: [f32; 3], alpha: f32) -> Mesh {
         .collect();
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, piece.positions.clone());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, piece.normals.clone());
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, piece.uvs.clone());
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh
