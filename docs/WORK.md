@@ -17,8 +17,6 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
 | Retail results screen | Mid | OpenCode (continuing) | `claude/results-screen-a9f5cc` | merged, built, tests pass, `race_drive` ALL OK; visual not checked by eye | Next: capture `logs/menu_results*.png` (finish a race) and compare the panel's look/position/timing with retail; add to PLAYTEST | Finishing shows the retail table, Space/Esc go to the menu |
-| Route choice at AI junctions | Strong | OpenCode (continuing) | `claude/ai-routes-be7221` | merged, built, tests pass, `race_drive` ALL OK on all 15 tracks; the `junctions: N` log line is **not added yet**, so the `.jnc` weight check is still to do | Next: add a log line counting junctions and their route weights (`.jnc`) and compare on castle/industrial/autobahn; then playtest | Opponents take branches like retail (log); race_drive ALL OK; tests pass |
-| Damage, suspension and roll-overs | Strong | Claude (damage session) | `claude/damage-6135c5` | Done on branch: damage zones + effects, tumble/roll-over, crash timer recovery, suspension, D.fsh stamps, Damage option; tests pass | Next: coordinator merge after race_drive; playtest (PLAYTEST.md). Open: zone side signs, parts zone masks, L.fsh purpose, [damagezones] unused | Cars sit on suspension, roll over and recover, show retail damage; race_drive ALL OK |
 | Race sound effects polish | Mid | OpenCode | — | 2026-10-22: verified working from a race's `logs/race_sound.log` (engine layers, SND_coll skid/road/wind/wall, countdown voice, 75 coastal ambience including water lapping; levels follow the Options sliders). No specific fault found; the mix balance (MIX 0.7) and the missing Doppler/rain/opponent-skid channels are the open items | Next: wait for the user's ear (PLAYTEST), then adjust `MIX`/channel levels or add rain/opponent skids; `docs/provenance/sound.md` "Not done" lists the gaps | Sounds match retail |
 
 ## Up next (unclaimed)
@@ -45,6 +43,9 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Merged as |
 |---|---|
+| AI route choice at junctions (verified against `.jnc` on 7 tracks) | `8d39abc` |
+| Car paint sun highlight and lamp glow | `845babe` |
+| Côte d'Azur water, smooth cockpit wheel | `510f236` |
 | Retail race summary panel after the finish | `a50c753` |
 | Damage zones, roll-over reset, spring suspension, damage option | `42ab8d9` |
 | Body lean over planted wheels + cockpit arms and turning steering wheel (2026-10-22 user ask) | `opencode/lean-cockpit` (branch; merged into master) |

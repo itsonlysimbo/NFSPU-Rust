@@ -45,3 +45,5 @@ Add a line per playtest: date, recording path, what was wrong.
   position and timing with retail (panel colours, position and delay are guesses).
 - Opponents still racing show dashes and fill in as they finish. Space, Enter or Esc return to the menu.
 - Retail takes control away at the checkered line and the car rolls on; ours does not yet. Compare the panel with your 2026-10-22 recording (gold tint is a guess).
+
+- **Opponent routes at junctions** (castle, industrial, autobahn, canyon, farmland, alps): on beginner, about half the opponents take side roads; on expert they keep to the main road. Do they look like retail, and do they drive the side roads cleanly?
