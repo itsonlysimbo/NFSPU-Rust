@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| (none) | | | | | | |
+| Car lamp glow + 'covered'; location header flags | Mid | Claude (glow-flags) | claude/glow-flags-e70b14 | started | trace covered flag; draw flags overlay | both show in captures, tests + race_drive OK |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
