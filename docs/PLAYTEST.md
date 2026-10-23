@@ -159,3 +159,10 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 - Check: does the payout size feel right? Does retail pay per race or at the end? Does the
   description text under the event name appear in retail (ours is missing)? Entry fee and start
   cash are guesses.
+
+## Button outline light and pause panel (footage-menus)
+- Main menu: hover a red button (singleplayer, load game...). A white streak should run along its
+  top edge left to right as it turns yellow. Compare with retail: does the light continue round the
+  right, bottom and left sides? How long does it last, does it repeat while you stay on the button?
+- Race, press Esc/P: the panel should be pale yellow-to-teal with the world showing through, title
+  at the top right, red buttons. Retail also squashes the panel up on continue (ours just closes).

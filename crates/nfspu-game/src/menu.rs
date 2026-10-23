@@ -45,6 +45,8 @@ pub enum Draw {
     Movie { rect: Rect, source: String, stencil: Vec<Draw> },
     /// An animated icon (`NFS5.BOTTOMBARBUTTON`): frames of `file`, from `idle`, from `hover` while
     /// the pointer is over `rect`, or from `down` while it is also pressed; otherwise as `Picture`.
+    /// The bright light that runs once round a hovered button's outline (measured from retail footage).
+    Glint { rect: Rect },
     Anim { file: String, idle: Frames, hover: Frames, down: Frames, rect: Rect, pos: [f32; 2], flip: u8, alpha: f32 },
 }
 
@@ -1033,6 +1035,9 @@ fn append_control_with(
             // Retail paints fill, label, drop shadow, then gloss (see `button_gloss`); this list is
             // topmost first, so the order is reversed here.
             // Hovered (live buttons only): the pressed-in bevel replaces gloss and shadow.
+            if template.id == "NFS5.GOTOBUTTON" && !disabled {
+                screen.draw.push(Draw::Glint { rect: [x, y, w, h] });
+            }
             if template.id == "NFS5.GOTOBUTTON" {
                 // `glintybox` other than -1 (template default 1; empty reads as 0): a black
                 // 1-unit outline the button's size, drawn last (on top) by the retail button.

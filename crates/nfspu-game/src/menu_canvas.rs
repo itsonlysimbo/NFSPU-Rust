@@ -7,6 +7,7 @@
 //! the retail result (`src * a + dst * (1 - a)` per channel) and pixel positions at the layout's
 //! own resolution. See `docs/provenance/fe.md`.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use crate::menu::{rasterise_gradient, rasterise_text, Draw, Rect, Shape, Show};
 use nfspu_formats::ffn::Font;
 use std::collections::HashMap;
@@ -302,9 +303,58 @@ pub fn compose(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]
     canvas
 }
 
+/// Front-end tick (128 Hz) at which the pointer last moved onto another control; the viewer sets it.
+pub static HOVER_START: AtomicU32 = AtomicU32::new(0);
+
+/// Glint speed in menu units per tick (footage: about 750 px/s at 1080p = 333 units/s), tail length
+/// and brightness fall-off. Measured from the 2026-10-23 recording; one lap then it stops (**guess**).
+const GLINT_SPEED: f32 = 333.0 / 128.0;
+const GLINT_TAIL: f32 = 12.0;
+
+/// A point on a rectangle's outline `d` units clockwise from its top-left corner.
+fn outline_point([x, y, w, h]: Rect, d: f32) -> [f32; 2] {
+    let per = 2.0 * (w + h);
+    let d = d.rem_euclid(per);
+    if d < w {
+        [x + d, y]
+    } else if d < w + h {
+        [x + w - 1.0, y + d - w]
+    } else if d < 2.0 * w + h {
+        [x + w - (d - w - h), y + h - 1.0]
+    } else {
+        [x, y + h - (d - 2.0 * w - h)]
+    }
+}
+
+/// Draws the glint `age` ticks after the hover began: a white head with a tail fading behind it.
+fn draw_glint(canvas: &mut Canvas, rect: Rect, age: u32) {
+    let head = age as f32 * GLINT_SPEED;
+    if head > 2.0 * (rect[2] + rect[3]) + GLINT_TAIL {
+        return;
+    }
+    for i in 0..GLINT_TAIL as i32 {
+        let d = head - i as f32;
+        if d < 0.0 || d > 2.0 * (rect[2] + rect[3]) {
+            continue;
+        }
+        let [px, py] = outline_point(rect, d);
+        let alpha = 1.0 - i as f32 / GLINT_TAIL;
+        canvas.fill_rect([px, py, 1.0, 1.0], [1.0, 1.0, 1.0, alpha]);
+    }
+}
+
 /// The frame every animated icon shows now, for deciding when to recompose.
 pub fn anim_frames(layers: &[(&crate::menu::Screen, bool)], pointer: Option<[f32; 2]>, clock: (u32, bool)) -> Vec<usize> {
-    layers.iter().flat_map(|(screen, live)| screen.draw.iter().filter_map(move |d| anim_frame(d, *live, pointer, clock))).collect()
+    let age = clock.0.saturating_sub(HOVER_START.load(Ordering::Relaxed));
+    layers
+        .iter()
+        .flat_map(|(screen, live)| {
+            screen.draw.iter().filter_map(move |d| match d {
+                Draw::Glint { rect } if *live && pointer.map(|p| inside(*rect, p)).unwrap_or(false) && age as f32 * GLINT_SPEED < 2.0 * (rect[2] + rect[3]) + GLINT_TAIL => Some(1_000_000 + age as usize),
+                _ => anim_frame(d, *live, pointer, clock),
+            })
+        })
+        .collect()
 }
 
 /// The frame an animated icon shows: the mouse-down set while pressed over it, the hover set
@@ -372,6 +422,12 @@ fn draw_one(canvas: &mut Canvas, draw: &Draw, live: bool, pointer: Option<[f32; 
             let Some(index) = anim_frame(draw, live, pointer, clock) else { return };
             let Some(shape) = art.shape(file, index) else { return };
             canvas.draw_image(pos[0].round() as i32, pos[1].round() as i32, shape.width, shape.height, &shape.rgba, *flip, *alpha);
+        }
+        Draw::Glint { rect } => {
+            if over(*rect) {
+                let age = art.clock().0.saturating_sub(HOVER_START.load(Ordering::Relaxed));
+                draw_glint(canvas, *rect, age);
+            }
         }
         Draw::Target { .. } => {}
         Draw::Clipped { rect: [x, y, w, h], draws } => {
