@@ -104,3 +104,10 @@ Add a line per playtest: date, recording path, what was wrong.
   position and timing with retail (panel colours, position and delay are guesses).
 - Opponents still racing show dashes and fill in as they finish. Space, Enter or Esc return to the menu.
 - Retail takes control away at the checkered line and the car rolls on; ours does not yet. Compare the panel with your 2026-10-22 recording (gold tint is a guess).
+
+## Body lean (claude/body-lean-2c2196)
+- Logged numbers (`logs/lean_check.txt`, `lean_check` example): retail's decoded lean model gives
+  about 7.6 degrees of roll from roughly 0.8 g up (travel limit) and 3-5 degrees of nose-down
+  under hard braking, before our 0.6 look scale (`LEAN_LOOK` in `car.rs`; drawn 4.6 / 3 degrees).
+- Look for: how far the body rolls in a hard corner and dips under braking compared with retail
+  footage. If retail looks bigger, raise `LEAN_LOOK` toward 1.0; if smaller, lower it. Not tested by eye.
