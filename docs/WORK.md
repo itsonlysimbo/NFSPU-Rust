@@ -34,7 +34,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Location screen header overlay (flags) | Mid | Track room merged (673c0b3); the header overlay isn't drawn yet |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
 | Menu button outline light that travels around the border | Mid | Waiting for retail footage from the user |
-| Body lean scale (`LEAN_LOOK`) | Mid | CLAIMED: Claude (car-tune), branch claude/car-tune-d706e3. Sim already matches the decoded numbers; pick the scale from retail footage (user) |
+| Body lean scale (`LEAN_LOOK`) | Mid | Sim already matches the decoded numbers; pick the scale from retail footage (user) |
 | Race sound fine-tuning against retail | Strong | DONE (cloud, 2026-10-23: tests pass, race_drive GT1 sound run ALL OK; numbers in sound.md). Engine+road+wind level and pitch matched to GT1 footage (MIX 0.7 to 0.6; branch claude/footage-sound-a19d43). Next: run `cargo test --workspace -j 2` and race_drive (not yet run; builds were slow); then skids, hits, opponents, ambience and countdown timing have no footage markers yet; a clip with a hard slide or wall hit would settle them |
 | Cockpit hand placement | Mid | Arms follow the wheel (45d5bec); retail placement not found in the decomp; compare with footage |
 | Playtest round (see `docs/PLAYTEST.md`) | User | Many merged items wait for eyes and ears |

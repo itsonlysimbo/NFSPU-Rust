@@ -20,7 +20,14 @@ fn flat() -> Ground {
 fn main() {
     let game = PathBuf::from(env::var("NFSPU_GAME_DIR").expect("set NFSPU_GAME_DIR"));
     let cars = car_load::catalogue(&game);
-    let mut ids: Vec<u16> = env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
+    let mut ids: Vec<u16> = Vec::new();
+    for a in env::args().skip(1) {
+        let w = a.to_lowercase();
+        match a.parse() {
+            Ok(id) => ids.push(id),
+            Err(_) => ids.extend(cars.iter().filter(|c| c.kind == 0 && (c.name.to_lowercase().contains(&w) || c.short.to_lowercase().contains(&w))).take(1).map(|c| c.id)),
+        }
+    }
     if ids.is_empty() {
         for w in ["356 1100 Coup", "911 Carrera Coupé (993)", "'87 959"] {
             if let Some(c) = cars.iter().find(|c| c.kind == 0 && c.name.contains(w)) {

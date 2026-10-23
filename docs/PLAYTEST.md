@@ -166,3 +166,6 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 ## Body lean and cameras (branch claude/footage-car-7859f5)
 - `LEAN_LOOK` is now 1.0. Drive the 356 in chase view through hard corners: the tail should roll about 6-10 degrees, like retail.
 - Coordinator: take screen captures of the 356 and GT1 in chase and cockpit views at the corners in the 2026-10-23 videos (the cloud has no window). Compare hand positions (retail: 10 and 2) and camera distance and FOV.
+
+- GT1 lean: expect about 2-3 degrees of body roll in medium bends and a stiff feel; the 356 rolls 6-8. (car-tune, 2026-10-23)
+- GT1 cockpit: hands/arm look wrong (right arm a big block at the screen edge) and the wheel sits lower than retail. Known gap.
