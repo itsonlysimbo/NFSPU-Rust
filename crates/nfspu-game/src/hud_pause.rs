@@ -91,7 +91,6 @@ pub fn draw(out: &mut Vec<HudDraw>, settings: &HudSettings, view: &PauseView, sc
     out.push(HudDraw::Gradient { rect: [panel[0], panel[1] + panel[3] - foot, panel[2], foot], top: [0.0, 0.0, 0.0, 1.0], bottom: [0.0, 0.0, 0.0, 0.9] });
 
     let font = if settings.layout.fonts[1].is_empty() { settings.layout.fonts[0].clone() } else { settings.layout.fonts[1].clone() };
-    let pad = 12.0 * s;
     let title = match view.page {
         PausePage::Main => word::PAUSE_MENU,
         PausePage::Quit => word::CONFIRMATION,
