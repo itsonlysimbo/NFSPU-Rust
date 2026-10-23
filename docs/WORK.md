@@ -72,3 +72,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 A light agent that finds the task needs judgement (a retail behaviour question, a design choice)
 writes what it found into the task's **Next step** and stops rather than guessing.
+
+## Active: footage-car (Claude, branch claude/footage-car-7859f5)
+- Done: `LEAN_LOOK` 0.6 -> 1.0 (356 footage 6-10 deg roll in hard corners). Notes in physics.md 7c, car.md.
+- **Next step:** measure GT1 lean, cockpit hands and each camera's position/FOV/lag from the local videos (the cloud can't see them), compare ours, fix `main.rs` arm skinning / `chase_cam.rs`. Then run spin, airtime, `race_drive`, `cargo test --workspace -j 2` (no result seen). Add a playtest line to docs/PLAYTEST.md.

@@ -371,3 +371,18 @@ Wall hits count only the speed into the wall, so a big hit (> 80) needs a very f
 Each corner follows the road under its wheel within the 0.1 m travel on a spring (90 /s^2, damper
 8 /s, about 1.5 Hz). A landing pushes the corners down by half the landing speed. The body is drawn
 on the corners (heave, pitch, roll); the wheels stay on the road. Driving is unchanged (rigid follower).
+
+## 7c. Body lean against the 2026-10-23 footage (356 1100 Cabriolet, chase view)
+
+Measured by eye on 1080p frames (rear chase view, about 1 s apart); angles are rough (+-3 degrees).
+- Straights and gentle bends: 0-3 degrees of roll.
+- Hard corners: the tail's number plate and bumper line tilt 6-10 degrees, with the body leaning
+  outward over planted wheels. The old `LEAN_LOOK` 0.6 gave at most about 4.5, so it is now 1.0
+  (the decoded lean, drawn as is). Per-car differences come from each `.sim`'s spring/damper.
+- Not done: the GT1 lean (its chase frames show a stiff car with little visible roll, not measured),
+  and a side-by-side of our 356 at the same corners.
+
+### Still to measure from the footage (videos are local only: `C:\Users\CB\Videos\2026-10-23 11-00-02.mp4` race, `11-10-04.mp4` 356 lean)
+- 356 (11-10-04, chase from ~26 s to ~42 s, then cockpit around 22 s): see 7c. Tightest corner at ~39-40 s shows ~10 degrees roll plus the car yawing to the camera.
+- GT1 (race video, chase views from ~2:20 on): roll/pitch per corner and brake moment: **not measured**.
+- Then compare our `lean_check` output (logs/lean_check.txt) and a capture at the same corners.

@@ -555,3 +555,13 @@ targa roofs (piece 7 and 8) have no up/down pair. Garage, race and cockpit use t
 (the cockpit camera sits inside the same model). Which pieces move, and the folding animation, are not
 traced in the decomp (not tested). Captures: `NFSPU_CAR_ROOF=down` with `NFSPU_CAR_CAPTURE=993/6`
 writes `logs/car_993_s6_roofdown_*.png`.
+
+## Camera angles seen in the 2026-10-23 race footage (GT1, Cote d'Azur)
+Frames in `extracted/footage/race` (not in the repo). Seen: chase medium and far (car low in
+frame, road ahead), a high close chase looking down at the car from above and behind, and the
+cockpit (wheel with both hands near 10 and 2, forearms entering from the lower left and right,
+wiper visible). These match the four table entries in "The camera table"; position, FOV and lag
+were **not** measured from the footage and our hands/arms were **not** compared (not tested).
+Still to measure (footage local only): per-view camera position (car width in frame gives distance),
+FOV and lag (frames after a steer input until the view follows); cockpit hand pixel positions on
+the wheel and forearm angle against ours (`main.rs` arm skinning, `car_model.rs`). **Not measured.**

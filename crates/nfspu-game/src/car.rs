@@ -126,8 +126,9 @@ const SUSP_SPRING: f32 = 90.0;
 const SUSP_DAMP: f32 = 8.0;
 /// How much of the computed body lean is drawn. Retail's lean felt excessive in the playtest
 /// (the whole car used to roll, wheels included); the split now keeps the wheels planted, and this
-/// scales the body's roll/pitch down to a look-only value. A guess until the next playtest.
-const LEAN_LOOK: f32 = 0.6;
+/// scales the body's roll/pitch. 1.0 = the decoded lean: the 2026-10-23 356 footage shows 6-10 degrees
+/// of roll in hard corners, which the old 0.6 (about 4.5 at most) was too little for.
+const LEAN_LOOK: f32 = 1.0;
 
 impl Car {
     /// A car with the made-up [`Spec::generic`] and an automatic gearbox.
