@@ -38,7 +38,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Body lean closer to retail | Strong | **Claude `body-lean`, branch `claude/body-lean-2c2196`. Next step: `lean_check` shows the sim already hits the decoded numbers (roll 7.6 deg from 0.8 g up, pitch 3-5 deg braking); only `LEAN_LOOK` 0.6 (car.rs) and the guessed corner spring differ. Needs retail footage to pick a scale; no lean code changed, tests/race_drive not run** |
 | Playtest round: 2026-10-20 fixes, Options > Audio, race sound | User | Flare on Côte d'Azur, slider dragging and sound levels by ear are not tested |
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
-| Roof up/down drawing | Mid | Choice already reaches the race |
+| Roof up/down drawing | Mid | **Claude `roof-drawing`, branch `claude/exciting-heyrovsky-1fef36`, claimed 2026-10-23.** Choice already reaches the race |
 | Location screen 3D track room | Mid | |
 | Evolution career, Factory Driver | Strong | Big; split into pieces first |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
