@@ -190,6 +190,22 @@ and `GT1race.spl` (pitch scale 78, step scale 139).
 - Retail's level barely rises with speed; ours does (engine volume grows with speed, wind and road fade in). Not changed: the retail mixer rule for that is unknown and the camera view of the recording is not known.
 - **Not compared**: skids, wall hits, opponents, ambience and the countdown voice. The recording has no telemetry or event markers to line them up against, and our own audio cannot be captured live here (the machine has no loopback device). Their levels still come from the decoded rules above.
 
+### Raw footage numbers kept for the cloud (video not available there)
+
+Mono mix, 2 s windows. Times are video seconds. Race audio starts at 171.5 s; the clip's race ends near 345 s (silence 348 s), more driving 350-428 s.
+
+| Video time (s) | RMS dBFS | Bands <150 / 150-600 / 600-2k / 2-6k / >6k Hz (dB) | Note |
+|---|---|---|---|
+| 172-176 | -12.6, -10.3, -10.1 | -22/-28/-37/-40/-53 to -21/-24/-28/-31/-44 | countdown at idle, partials 62, 123, 152 Hz |
+| 178-182 | -8.6 to -11.5 | -18..-20 / -27 / -23..-36 / -33..-35 / -48 | launch, fundamental 62-67 Hz |
+| 184-200 | -9.7 to -13.0 | -22..-26 / -21..-25 / -24..-26 / -31..-33 / -43..-47 | in gear, partials 155, 311, 618 Hz; highest fundamental 173 Hz at 185 s |
+| 200-280 | -8.7 to -13.3 | -19..-26 / -20..-25 / -23..-29 / -30..-35 / -42..-51 | mostly 76-82 Hz and 150-160 Hz partials |
+| 280-345 | -9.8 to -15.3 | -24..-34 / -19..-27 / -24..-30 / -30..-37 / -42..-57 | partials near 300-334 Hz |
+| 364-428 | -9.6 to -17.2 | -25..-33 / -25..-31 / -23..-36 / -28..-38 / -46..-61 | idle-like 64 Hz and 129 Hz partials in long stretches |
+
+Whole-clip 5 s RMS: menu -19.5 to -20.8 dBFS (0-160 s), race -9.4 to -14.8 dBFS (175-330 s).
+Not measured: countdown voice and skid levels (no event markers; needs a listen with the video). The partial table for our render is in the previous section; run `sound_render` to regenerate.
+
 ## Not done / not verified
 
 - Only the engine, road and wind mix has been compared with a retail recording (see above; `MIX` = 0.6). Skids, hits, opponents, ambience and speech levels are not.
