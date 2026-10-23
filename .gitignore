@@ -16,6 +16,8 @@
 !.claude/settings.json
 !*.rs
 !*.md
+!scripts/
+!scripts/cloud_setup.sh
 
 # Always ignored, even though they match the allow rules above
 reference/

@@ -27,7 +27,12 @@ when Claude usage reaches 90%.
    - Environment variable `NFSPU_GAME_DIR` set to `/opt/nfs5`.
    - Setup script: paste the script below.
 
-## Setup script (paste into the cloud environment)
+## Setup script
+
+The script lives in `scripts/cloud_setup.sh` and runs by itself at the start of every session
+through the `SessionStart` hook in `.claude/settings.json`, whenever `GAMEDATA_TOKEN` is set (so
+it never runs on the local PC). The environment only needs the two variables; pasting the
+script into the environment's setup box as well is optional. A copy for reference:
 
 ```bash
 #!/bin/bash

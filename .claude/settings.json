@@ -1,5 +1,7 @@
 {
-  "enabledMcpjsonServers": ["ghidra"],
+  "enabledMcpjsonServers": [
+    "ghidra"
+  ],
   "permissions": {
     "deny": [
       "mcp__ghidra__rename_function",
@@ -10,6 +12,19 @@
       "mcp__ghidra__set_disassembly_comment",
       "mcp__ghidra__set_function_prototype",
       "mcp__ghidra__set_local_variable_type"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 900,
+            "command": "bash -c 'test -n \"${GAMEDATA_TOKEN:-}\" && test -f scripts/cloud_setup.sh && bash scripts/cloud_setup.sh; exit 0'"
+          }
+        ]
+      }
     ]
   }
 }
