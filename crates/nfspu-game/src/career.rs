@@ -825,4 +825,20 @@ car = 76,19").unwrap().cars[0], OwnedCar::stock(76, 19, 0), "first-slice files s
         assert_eq!((era_of_year(1950), era_of_year(1975), era_of_year(1989), era_of_year(2000)), (521, 522, 523, 523));
         assert_eq!((next_year(1950), next_year(1970), next_year(1989)), (1970, 1989, END_YEAR));
     }
+
+    #[test]
+    fn routes_follow_difficulty_and_the_fee_and_difficulty_are_read() {
+        let track = |id: i16, file: &str, locked: i16, difficulty: i16| crate::catalog::Track { id, file: file.into(), locked, difficulty, ..Default::default() };
+        let tracks = vec![track(8, "coastal", 0, 0), track(14, "farmland", 0, 0), track(10, "foothills", 0, 1), track(11, "alps", 3, 2), track(32, "skidpad", 0, 0)];
+        let mut data = record(1, 521, &[9, 16], 4000);
+        let mut r = record(4, 521, &[9], 3000);
+        r[0xe6] = 1;
+        r[0xdc..0xe0].copy_from_slice(&500u32.to_le_bytes());
+        data.extend(r);
+        let mut all = parse_tournaments(&data);
+        assign_routes(&mut all, &tracks);
+        assert_eq!(all[0].tracks, vec![14, 8], "beginner: Normandie then Cote d'Azur");
+        assert_eq!(all[1].tracks, vec![14, 10, 8]);
+        assert_eq!((all[0].entry_fee, all[1].entry_fee, all[1].difficulty), (0, 500, 1));
+    }
 }
