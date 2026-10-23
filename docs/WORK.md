@@ -26,6 +26,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Tier | Notes |
 |---|---|---|
+| Cloud: case-insensitive game file lookup on Linux | Mid | Cloud OK. First cloud session: run tests and race_drive with `NFSPU_GAME_DIR=/opt/nfs5` and fix missing files (`docs/CLOUD.md`) |
 | Last slab-allocator "Use-after-free" error (one per race) | Mid | Likely fix on master (sky meshes start non-empty); not reproduced here, needs playtest |
 | Audio sliders other than music have no effect | Mid | Menu sounds now follow the effects slider; in-race levels were already wired (031dcef) but not confirmed by ear |
 | Côte d'Azur sea water not visible | Mid | Fixed on master (510f236): translucent water now blends; needs playtest |
