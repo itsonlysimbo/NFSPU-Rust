@@ -31,6 +31,8 @@ pub struct ShopUi {
     /// The test-drive popup's location (an index into `test_tracks`) and the page showing.
     pub test_track: usize,
     pub page: String,
+    /// The pre-race screen's pick among the tournament's remaining tracks.
+    pub remaining: usize,
     paints: Mutex<HashMap<String, Vec<usize>>>,
 }
 
@@ -258,6 +260,7 @@ impl ShopUi {
             "DealerCar.Colour" => self.dealer_paint = index,
             "Track1.Track" if self.page.to_ascii_lowercase().starts_with("testdrive") => self.test_track = index,
             "UsedCar.Car" => self.used = index,
+            "Tournament.RemainingTracks" => self.remaining = index,
             "OwnedCar.ExtColour" => {
                 let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
                 if let Some(car) = c.cars.get(at).and_then(|o| cars.iter().find(|k| k.id == o.id)) {
@@ -392,9 +395,9 @@ mod tests {
         let ui = ShopUi::default();
         let c = Career::new("T");
         let v = ui.view(&c, &cars, &[], &[], &Locale::default(), 0, "garage");
-        assert_eq!(v.watch["OwnedCars.Car(PURCHASEPRICE)"], "$0");
-        assert_eq!(v.watch["OwnedCars.Car(CURRENTVALUE)"], "$10,890");
-        assert_eq!(v.watch["Tournament.Data(DEALERCARPRICE)"], "$11,000");
+        assert_eq!(v.watch["OwnedCars.Car(PURCHASEPRICE)"], "11,000");
+        assert_eq!(v.watch["OwnedCars.Car(CURRENTVALUE)"], "10,890");
+        assert_eq!(v.watch["Tournament.Data(DEALERCARPRICE)"], "11,000");
         assert_eq!(v.showcase, Some((0, 19)));
         assert!(v.hidden.contains(&"ID_REMOVEFMBUTTON".to_string()));
         assert_eq!(ui.view(&c, &cars, &[], &[], &Locale::default(), 0, "tournament").showcase, None);

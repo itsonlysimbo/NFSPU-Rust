@@ -180,6 +180,31 @@ impl FrontEnd {
         if let (true, Some(c)) = (self.career.on, &self.career.career) {
             self.session.choices.extend(c.choices(&self.career.data, &self.quick.cars, &self.quick.tracks, &self.locale, self.language));
             self.session.watch.extend(c.watches(&self.career.data, &self.quick.tracks, &self.locale, self.language));
+            // The pre-race screen follows the track picked among the remaining ones: its name, map
+            // and record time (a tournament race runs the career's laps, so the record is the lap
+            // record times the laps; the footage shows 02:44.00 for Cote d'Azur, twice 01:22).
+            let open = c.open_tournaments(&self.career.data);
+            let remaining: Vec<i16> = open
+                .get(c.chosen_tournament.min(open.len().saturating_sub(1)))
+                .map(|t| career::Career::race_tracks(t, &self.career.data).into_iter().skip(c.next_race(t)).collect())
+                .unwrap_or_default();
+            let pick = self.career.ui.remaining.min(remaining.len().saturating_sub(1));
+            if let Some(track) = remaining.get(pick).and_then(|id| self.quick.tracks.iter().find(|k| k.id == *id)) {
+                if let Some(at) = self.quick.track_list.iter().position(|&i| self.quick.tracks[i].id == track.id) {
+                    self.quick.track = at;
+                    self.session.track_art = self.quick.track_art();
+                }
+                let upper = self.locale.text(track.name_string + 60, self.language).map(|t| t.trim().to_string()).unwrap_or_default();
+                self.session.watch.insert("Tournament.Tournament(LOCATION)".into(), upper);
+                let record = self.quick.record_of(track.id).map(|t| nfspu_game::catalog::format_ticks(t * career::CAREER_LAPS as u32)).unwrap_or_else(|| "--:--.--".into());
+                self.session.watch.insert("Tournament.Tournament(RECORDTIME)".into(), record);
+                if let Some(choice) = self.session.choices.get_mut("Tournament.RemainingTracks") {
+                    choice.selected = pick;
+                    if let Some(menu::Row::Item { text, .. }) = choice.rows.get(pick) {
+                        choice.closed = text.clone();
+                    }
+                }
+            }
             let page = if self.career.page.is_empty() { self.page.name.clone() } else { self.career.page.clone() };
             let open_ids: Vec<i16> = c.open_tournaments(&self.career.data).iter().flat_map(|t| career::Career::race_tracks(t, &self.career.data)).collect();
             let view = self.career.ui.view(c, &self.quick.cars, &self.quick.tracks, &open_ids, &self.locale, self.language, &page);

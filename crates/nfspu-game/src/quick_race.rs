@@ -211,6 +211,11 @@ impl QuickRace {
         self.colour.checked_sub(self.paints.len()).and_then(|i| custom_palette().get(i).copied())
     }
 
+    /// The best time kept for a track (1/128 s ticks, one lap), from the save folder's `nfs5.trk`.
+    pub fn record_of(&self, track_id: i16) -> Option<u32> {
+        catalog::record_ticks(&self.records, track_id)
+    }
+
     pub fn chosen_track(&self) -> Option<&Track> {
         self.track_list.get(self.track).map(|i| &self.tracks[*i])
     }

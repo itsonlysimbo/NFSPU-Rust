@@ -18,6 +18,8 @@ pub const END_YEAR: i32 = 2000;
 /// The catalogue id of the car a new career starts with: `'50 356 1100 Cabriolet`, the one car in
 /// the sample profile's garage.
 pub const STARTER_CAR: u16 = 76;
+/// Its purchase price, as the footage's garage shows it (the car's catalogue price).
+pub const STARTER_PRICE: i64 = 11_000;
 /// The starter car's paint (`.clr` section 19, the orange the sample profile has).
 pub const STARTER_PAINT: usize = 19;
 /// Cash a new career starts with. **Guess**: the field was not found in the save.
@@ -125,7 +127,7 @@ pub fn era_of_year(year: i32) -> u32 {
     ERAS.iter().rev().find(|e| e.1 <= year).map_or(ERAS[0].0, |e| e.0)
 }
 
-/// Money as the account control shows it: `$5,000` (**guess** at the `$`; the control draws the
+/// Money as the screens show it: `5,000`, no currency sign (retail footage; the control draws the
 /// digits with commas).
 pub fn money(amount: i64) -> String {
     let digits = amount.unsigned_abs().to_string();
@@ -226,7 +228,7 @@ impl Career {
             player: player.to_string(),
             cash: START_CASH as i64,
             year: ERAS[0].1,
-            cars: vec![OwnedCar::stock(STARTER_CAR, STARTER_PAINT, 0)],
+            cars: vec![OwnedCar::stock(STARTER_CAR, STARTER_PAINT, STARTER_PRICE)],
             progress: BTreeMap::new(),
             chosen_tournament: 0,
             chosen_car: 0,
@@ -673,10 +675,10 @@ mod tests {
 
     #[test]
     fn money_has_commas() {
-        assert_eq!(money(0), "$0");
-        assert_eq!(money(5000), "$5,000");
-        assert_eq!(money(1234567), "$1,234,567");
-        assert_eq!(money(-250), "-$250");
+        assert_eq!(money(0), "0");
+        assert_eq!(money(5000), "5,000");
+        assert_eq!(money(1234567), "1,234,567");
+        assert_eq!(money(-250), "-250");
     }
 
     #[test]
@@ -697,7 +699,7 @@ mod tests {
         assert_eq!(c.year, 1950);
         let open: Vec<u32> = c.open_tournaments(&t).iter().map(|t| t.id).collect();
         assert_eq!(open, vec![1, 2]);
-        assert_eq!(c.cars, vec![OwnedCar::stock(STARTER_CAR, STARTER_PAINT, 0)]);
+        assert_eq!(c.cars, vec![OwnedCar::stock(STARTER_CAR, STARTER_PAINT, STARTER_PRICE)]);
     }
 
     #[test]
