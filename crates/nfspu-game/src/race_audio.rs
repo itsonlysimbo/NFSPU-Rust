@@ -12,7 +12,7 @@ use crate::flow::AppState;
 use bevy::audio::{AudioSinkPlayback, PlaybackMode, SpatialAudioSink, SpatialListener, Volume};
 use bevy::prelude::*;
 use nfspu_game::race::RaceStatus;
-use nfspu_game::race_sound::{self as rs, Ambient, Archive, EngineInput, EngineMix, Pcm, Wind};
+use nfspu_game::race_sound::{self as rs, Ambient, Archive, EngineInput, EngineMix, Pcm, TriggerLog, Wind};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -45,6 +45,11 @@ struct OpponentVoices {
     approach: Entity,
     away: Entity,
     ratio: (f32, f32),
+    /// The opponent's skid voices (squeal, scrub), spatial like its engine.
+    squeal: Option<Entity>,
+    scrub: Option<Entity>,
+    /// Distance to the listener last frame, for the Doppler shift.
+    last_distance: Option<f32>,
 }
 
 struct AmbientVoice {
@@ -65,6 +70,11 @@ struct RaceSound {
     coll: Option<Vec<u8>>,
     coll_cache: HashMap<usize, Option<(Handle<AudioSource>, Pcm)>>,
     road: Option<Entity>,
+    /// Road noise on a wet road (the next surface sound up).
+    road_wet: Option<Entity>,
+    /// The rain loop and its key's rate factor.
+    rain: Option<(Entity, f32)>,
+    triggers: TriggerLog,
     squeal: Option<Entity>,
     scrub: Option<Entity>,
     scrape: Option<Entity>,
@@ -72,6 +82,8 @@ struct RaceSound {
     wind_walk: Wind,
     speech: Option<Archive>,
     last_count: Option<u8>,
+    last_lap: u32,
+    was_finished: bool,
     was_held: bool,
     ambient: Vec<AmbientVoice>,
     track_sounds: Option<Archive>,
@@ -203,6 +215,10 @@ fn start_sound(
         Err(err) => sound_log(&format!("player engine: car '{player_spec}': {err}; no engine sound")),
     }
 
+    let coll = rs::find_file(&rs::sounds_dir(&dir), "SND_coll.bnk").and_then(|p| std::fs::read(p).ok());
+    let mut coll_cache = HashMap::new();
+    let skid_handles = [rs::coll::SQUEAL, rs::coll::SCRUB].map(|n| cached(&mut coll_cache, coll.as_deref(), n, &mut assets).map(|(h, _)| h.clone()));
+
     // opponents
     let opp_archive = rs::find_file(&rs::sounds_dir(&dir), "zzzwzzz.viv").and_then(|p| Archive::open(&p));
     let mut opponents = vec![None];
@@ -217,22 +233,28 @@ fn start_sound(
             approach: spawn_loop(&mut commands, add_pcm(&o.approach, &mut assets), true),
             away: spawn_loop(&mut commands, add_pcm(&o.away, &mut assets), true),
             ratio: (rs::key_ratio(o.approach.key, o.approach.fine), rs::key_ratio(o.away.key, o.away.fine)),
+            squeal: skid_handles[0].clone().map(|h| spawn_loop(&mut commands, h, true)),
+            scrub: skid_handles[1].clone().map(|h| spawn_loop(&mut commands, h, true)),
+            last_distance: None,
         }));
     }
 
-    // tyres, road, wind
-    let coll = rs::find_file(&rs::sounds_dir(&dir), "SND_coll.bnk").and_then(|p| std::fs::read(p).ok());
-    let mut coll_cache = HashMap::new();
+    // tyres, road, wind, rain
     let mut coll_loop = |n: usize, label: &str, commands: &mut Commands| {
         let c = cached(&mut coll_cache, coll.as_deref(), n, &mut assets);
         sound_log(&format!("SND_coll sound {n:#x} ({label}): {}", c.map_or("missing".to_string(), |(_, p)| format!("{} samples at {} Hz, loop {}", p.samples.len(), p.rate, p.looped))));
         c.map(|(h, _)| spawn_loop(commands, h.clone(), false))
     };
-    let road = coll_loop(rs::coll::ROAD, "road", &mut commands);
+    let road = coll_loop(rs::road_sound(false), "road", &mut commands);
+    let road_wet = coll_loop(rs::road_sound(true), "wet road", &mut commands);
     let squeal = coll_loop(rs::coll::SQUEAL, "skid squeal", &mut commands);
     let scrub = coll_loop(rs::coll::SCRUB, "skid scrub", &mut commands);
     let scrape = coll_loop(rs::coll::SCRAPE, "wall scrape", &mut commands);
     let wind = coll_loop(rs::coll::WIND, "wind", &mut commands);
+    let rain_pcm = opp_archive.as_ref().and_then(|a| a.get("rain.bnk")).and_then(|b| rs::decode(b, 0));
+    sound_log(&format!("rain.bnk: {}", rain_pcm.as_ref().map_or("missing".to_string(), |p| format!("{} samples at {} Hz, {} ch, loop {}", p.samples.len(), p.rate, p.channels, p.looped))));
+    // the bank is a 1.84 s one-shot; we loop it (how retail repeats it is not traced)
+    let rain = rain_pcm.map(|p| (spawn_loop(&mut commands, add_pcm(&p, &mut assets), false), rs::key_ratio(p.key, p.fine)));
 
     // countdown voice, track ambience
     let speech = rs::speech_archive(&dir);
@@ -267,6 +289,9 @@ fn start_sound(
         coll,
         coll_cache,
         road,
+        road_wet,
+        rain,
+        triggers: TriggerLog::default(),
         squeal,
         scrub,
         scrape,
@@ -274,6 +299,8 @@ fn start_sound(
         wind_walk: Wind::default(),
         speech,
         last_count: None,
+        last_lap: 1,
+        was_finished: false,
         was_held: true,
         ambient,
         track_sounds,
@@ -315,6 +342,7 @@ fn run_sound(
     mut spatial: Query<&mut SpatialAudioSink>,
     mut assets: ResMut<Assets<AudioSource>>,
     settings: Option<Res<Levels>>,
+    weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
 ) {
     let (Some(mut sound), Some(car)) = (sound, car) else { return };
     let s = &mut *sound;
@@ -333,6 +361,8 @@ fn run_sound(
         near,
         distance: if near { 0.0 } else { cam.translation.distance(c.pos) },
         speed: c.speed,
+        // the camera's direction from the car along the car's right (yaw 0 faces -z)
+        side: (cam.translation - c.pos).normalize_or_zero().dot(Vec3::new(c.yaw.cos(), 0.0, -c.yaw.sin())),
     };
 
     // the 64 Hz sound clock
@@ -360,16 +390,33 @@ fn run_sound(
     }
     s.was_shifting = shifting;
 
-    // tyres, road, wind, scrape
-    let slide = if c.on_ground { c.sim.wheels.iter().map(|w| if w.locked { 1.0 } else { w.slide }).fold(0.0f32, f32::max) } else { 0.0 };
-    let (squeal, scrub) = rs::skid_gains(if c.speed.abs() > 2.0 { slide } else { 0.0 });
+    // tyres, road, wind, scrape, rain
+    let slide = c.skid();
+    let wet = c.road_wet;
+    let (squeal, scrub) = rs::wet_skid(rs::skid_gains(if c.speed.abs() > 2.0 { slide } else { 0.0 }), wet);
     let fx = lv.sfx * MIX;
-    set_voice(s.squeal, squeal * fx, 1.0, &mut sinks, &mut spatial);
-    set_voice(s.scrub, scrub * fx, 1.0, &mut sinks, &mut spatial);
-    set_voice(s.road, if c.on_ground { rs::road_gain(c.speed) * fx } else { 0.0 }, 1.0, &mut sinks, &mut spatial);
-    set_voice(s.scrape, if c.hit_wall && c.speed.abs() > 2.0 { rs::EFFECT_LEVEL * (c.speed.abs() / 20.0).min(1.0) * fx } else { 0.0 }, 1.0, &mut sinks, &mut spatial);
+    let road = if c.on_ground { rs::road_gain(c.speed) } else { 0.0 };
+    let scrape = if c.hit_wall && c.speed.abs() > 2.0 { rs::EFFECT_LEVEL * (c.speed.abs() / 20.0).min(1.0) } else { 0.0 };
     let wind = s.wind_walk.gain(c.speed) * if near { 1.0 } else { 0.5 };
-    set_voice(s.wind, wind * fx, s.wind_walk.speed(), &mut sinks, &mut spatial);
+    // under cover: a wet track whose road is dry under the car right now (bridges, tunnels)
+    let rain_amount = weather.as_ref().map_or(0.0, |w| w.now.rain);
+    let covered = weather.as_ref().is_some_and(|w| w.track.wet) && c.on_ground && !wet;
+    let rain = rs::rain_gain(rain_amount, covered, near);
+    let mut channels = vec![
+        ("skid squeal", s.squeal, squeal, 1.0),
+        ("skid scrub", s.scrub, scrub, 1.0),
+        ("road", s.road, if wet { 0.0 } else { road }, 1.0),
+        ("wet road", s.road_wet, if wet { road } else { 0.0 }, 1.0),
+        ("wall scrape", s.scrape, scrape, 1.0),
+        ("wind", s.wind, wind, s.wind_walk.speed()),
+        ("rain", s.rain.map(|r| r.0), rain, s.rain.map_or(1.0, |r| r.1)),
+    ];
+    for (name, e, g, speed) in channels.drain(..) {
+        set_voice(e, g * fx, speed, &mut sinks, &mut spatial);
+        if let Some(line) = s.triggers.level(status.tick, name, g) {
+            sound_log(&line);
+        }
+    }
 
     // hits: walls (m/s into the wall) and cars (collide_cars units, 80 = a big hit)
     let mut hit = |n: usize, impact: f32, s: &mut RaceSound, commands: &mut Commands| {
@@ -398,7 +445,7 @@ fn run_sound(
 
     // opponents: kept one metre from the listener in their direction, volume by distance
     let listen = cam.translation;
-    for (i, o) in s.opponents.iter().enumerate() {
+    for (i, o) in s.opponents.iter_mut().enumerate() {
         let (Some(o), Some(p)) = (o, status.car_places.get(i)) else { continue };
         let pos = Vec3::new(p[0], c.pos.y, p[1]);
         let rel = pos - listen;
@@ -408,11 +455,34 @@ fn run_sound(
         let receding = if p[3].abs() > 0.5 { dir.dot(vel) / p[3].abs() } else { 0.0 };
         let rpm = status.car_rpm.get(i).copied().unwrap_or(0.2);
         let (front, back, pitch) = rs::opponent_engine(rpm, dist, receding);
-        for (e, g, r) in [(o.approach, front, o.ratio.0), (o.away, back, o.ratio.1)] {
+        // Doppler from how fast the distance changes (both cars' motion), smoothed over frames
+        let separating = o.last_distance.filter(|_| dt > 0.0).map_or(0.0, |d| (dist - d) / dt);
+        o.last_distance = Some(dist);
+        let shift = rs::doppler(separating);
+        let skid = status.car_skid.get(i).copied().unwrap_or(0.0);
+        let (sq, scrub) = rs::opponent_skid(if p[3].abs() > 2.0 { skid } else { 0.0 }, dist);
+        for (e, g, r) in [(Some(o.approach), front * lv.engine, pitch * o.ratio.0 * shift), (Some(o.away), back * lv.engine, pitch * o.ratio.1 * shift), (o.squeal, sq * lv.sfx, shift), (o.scrub, scrub * lv.sfx, shift)] {
+            let Some(e) = e else { continue };
             if let Ok(mut t) = transforms.get_mut(e) {
                 t.translation = listen + dir;
             }
-            set_voice(Some(e), g * lv.engine * MIX, pitch * r, &mut sinks, &mut spatial);
+            set_voice(Some(e), g * MIX, r, &mut sinks, &mut spatial);
+        }
+        for (name, g) in [("skid squeal", sq), ("engine", front.max(back))] {
+            if let Some(line) = s.triggers.level(status.tick, &format!("opponent {i} {name}"), g) {
+                sound_log(&format!("{line} at {dist:.0} m, doppler x{shift:.3}"));
+            }
+        }
+        // its wall hits, placed where it is
+        let impact = status.car_impact.get(i).copied().unwrap_or(0.0);
+        if impact > 1.0 {
+            s.rng = s.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let n = rs::coll::WALL_HIT + (s.rng >> 16) as usize % 3;
+            let g = rs::opponent_hit(impact, dist);
+            if let Some((h, _)) = cached(&mut s.coll_cache, s.coll.as_deref(), n, &mut assets) {
+                spawn_once(&mut commands, h.clone(), g * fx, shift, Some(listen + dir));
+                sound_log(&format!("tick {}: opponent {i} hit sound {n:#x}, impact {impact:.1}, {dist:.0} m, volume {g:.2}", status.tick));
+            }
         }
     }
 
@@ -430,6 +500,25 @@ fn run_sound(
                 sound_log(&format!("tick {}: countdown voice {entry} ({} samples at {} Hz)", status.tick, pcm.samples.len(), pcm.rate));
             }
             None => sound_log(&format!("tick {}: countdown voice {entry} not found", status.tick)),
+        }
+    }
+    // the commentator: a new lap, the final lap, the finishing place
+    let mut lines = Vec::new();
+    if status.current_lap > s.last_lap && !status.finished {
+        lines.extend(rs::lap_line(status.current_lap, status.total_laps));
+    }
+    s.last_lap = status.current_lap.max(1);
+    if status.finished && !s.was_finished {
+        lines.extend(rs::finish_line(status.position, status.cars));
+    }
+    s.was_finished = status.finished;
+    for entry in lines {
+        match s.speech.as_ref().and_then(|a| a.get(&entry)).and_then(|b| rs::decode(b, 0)) {
+            Some(pcm) => {
+                spawn_once(&mut commands, add_pcm(&pcm, &mut assets), rs::EFFECT_LEVEL * lv.speech * MIX, 1.0, None);
+                sound_log(&format!("tick {}: commentator {entry} ({:.2} s)", status.tick, pcm.seconds()));
+            }
+            None => sound_log(&format!("tick {}: commentator {entry} not found", status.tick)),
         }
     }
 
