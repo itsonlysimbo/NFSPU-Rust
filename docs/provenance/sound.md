@@ -206,6 +206,23 @@ Mono mix, 2 s windows. Times are video seconds. Race audio starts at 171.5 s; th
 Whole-clip 5 s RMS: menu -19.5 to -20.8 dBFS (0-160 s), race -9.4 to -14.8 dBFS (175-330 s).
 Not measured: countdown voice and skid levels (no event markers; needs a listen with the video). The partial table for our render is in the previous section; run `sound_render` to regenerate.
 
+### Check run in the cloud (2026-10-23)
+
+| Check | Before (MIX 0.7) | After (MIX 0.6) | Retail |
+|---|---|---|---|
+| Idle mix level | -12.2 dBFS | -13.5 dBFS | -10 to -14 (median -11.7) |
+| Top-speed mix level | -8.2 dBFS | -9.5 dBFS | -8 to -14 |
+| Idle pitch | 59 Hz | 59 Hz (unchanged) | 62 Hz |
+| In-gear partials | 152 / 305 Hz | unchanged | 155 / 311 Hz |
+
+- `cargo test --workspace`: all pass. `race_drive` (skidpad, GT1 = car id 170, `RACE_DRIVE_SOUND=1`): ALL OK.
+- Our side from `logs/race_sound.log`: engine `sd6b`, 16 layers. Countdown idle layers 0 and 4 at 0.65; at a steady 22.1 m/s
+  the two in-gear layer pairs cross-fade between 0.38-0.51 and 0.42-0.54. Road 0.13, wind 0.06-0.11.
+- The race_drive autopilot holds about 22 m/s on the skidpad and the log has no rpm or gear, so pitch per gear is
+  checked only with the offline `sound_render` table above, not in a race. Not tested: pitch per gear in a live race.
+- All channel levels are the Options levels (`AudioSettings`: engine, sfx, speech, ambient) times one master trim
+  `MIX` in `race_audio.rs`; no per-channel level sits outside `AudioSettings`.
+
 ## Not done / not verified
 
 - Only the engine, road and wind mix has been compared with a retail recording (see above; `MIX` = 0.6). Skids, hits, opponents, ambience and speech levels are not.
