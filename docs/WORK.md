@@ -39,7 +39,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Playtest round: 2026-10-20 fixes, Options > Audio, race sound | User | Flare on Côte d'Azur, slider dragging and sound levels by ear are not tested |
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
 | Roof up/down drawing | Mid | Choice already reaches the race |
-| Location screen 3D track room | Mid | **Claude `claude/agitated-williamson-1794af`, claimed 2026-10-23.** Retail: `Ctrack` + 4 `trackwall` copies, 12 three-faced panels show TrackArt pictures |
+| Location screen 3D track room | Mid | **Done on `claude/agitated-williamson-1794af` (ready to merge).** Room, walls, pictures, fly-in, panel and room turns built; 336+ tests and `race_drive` ALL OK. Next: playtest vs retail (see `docs/PLAYTEST.md`); header overlay (flags) not drawn |
 | Evolution career, Factory Driver | Strong | Big; split into pieces first |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
 
