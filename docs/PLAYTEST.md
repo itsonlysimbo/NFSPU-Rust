@@ -176,3 +176,6 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
   button and the pause panel to `logs/` and compare with the fe.md footage numbers. The footage
   suggests a smaller panel (about 1/3 screen width) and tighter button gaps than the decomp sizes
   we use (500x325, step 1.6); check which is right.
+
+- GT1 lean: expect about 2-3 degrees of body roll in medium bends and a stiff feel; the 356 rolls 6-8. (car-tune, 2026-10-23)
+- GT1 cockpit: hands/arm look wrong (right arm a big block at the screen edge) and the wheel sits lower than retail. Known gap.

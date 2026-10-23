@@ -579,3 +579,11 @@ the wheel and forearm angle against ours (`main.rs` arm skinning, `car_model.rs`
 - **Cockpit**: wiper at upper left, mirror/pillar at right, dash gauges centred.
 - FOV and lag are **not** measurable from single frames without a reference: **not measured**.
   The table in "The camera table" and `engine_vertical_fov` stay as the best evidence.
+
+### Our captures against the 2026-10-23 numbers (`NFSPU_CAR_CAPTURE=GT1`, `logs/car_GT1_s1_{chase,cockpit}.png`)
+- Chase: car width 0.22 of the window (measured 0.23), horizon about 0.47 (0.45): fine. Car centre
+  about 0.72 of the height against 0.80 measured (not changed: one still against a moving camera).
+- Cockpit: our wheel hub sits at about 0.86 of the height, 0.52 of the width, against 0.73 / 0.50 in
+  the footage, and our right arm/hand shows as a large block at the right edge instead of on the
+  rim at 3 o'clock. Not changed: no retail eye pitch or arm pose is traced, so this stays a
+  recorded gap (next step: lift the cockpit eye pitch/height and place the hands on the rim).

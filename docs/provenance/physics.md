@@ -394,3 +394,13 @@ Measured by eye on 1080p frames (rear chase view, about 1 s apart); angles are r
 - No visible pitch change on the chase view; brake-moment pitch **not measured** (no brake moments sampled).
 - So the GT1 rolls about half as much as the 356 (6-10), as a stiffer car should; our per-car
   spring/damper values already give that ordering (compare logs/lean_check.txt: **not run**).
+
+### 7c check of our per-car lean against both cars (2026-10-23, `lean_check`, `logs/lean_check.txt` GT1, `logs/lean_check_3cars.txt` the others)
+Lean already differs per car because the decoded spring/damper come from each `.sim`; no extra
+per-car scale is needed or known to exist in retail. Drawn roll in steady corners on flat asphalt:
+- 356 1100 Coupe (spring 0.0050, damper 0.0035): 5.7-7.6 degrees (footage 6-10): matches.
+- GT1 (spring 0.0010, damper 0.0003): 1.0-2.6 degrees (footage: 2-3 medium, 4-5 tightest): medium
+  bends match, the tightest is about 2 degrees under (our flat-road lateral g of 2.7 is higher than
+  a real bend, so a fitted scale would be a guess; `LEAN_LOOK` stays 1.0).
+- GT1 braking pitch from 150 km/h: about -1.6 degrees (footage: not measurable). `lean_check` now
+  takes car names (`lean_check gt1`).
