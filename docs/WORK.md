@@ -31,7 +31,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Car reflections: lamp glow and 'covered' glows | Mid | Sun highlight merged (845babe); lamp glow not seen by eye; trace the 'covered' flag (Monaco 3-5) and the sun direction |
 | Menu button outline light that travels around the border | Mid | Needs retail footage (user can supply) |
 | Race sound fine-tuning against retail | Strong | Needs a retail recording with game sound |
-| Body lean closer to retail | Strong | **Claimed: Claude `body-lean`, branch `claude/body-lean-2c2196` (2026-10-22)** |
+| Body lean closer to retail | Strong | **Claude `body-lean`, branch `claude/body-lean-2c2196`. Next step: `lean_check` shows the sim already hits the decoded numbers (roll 7.6 deg from 0.8 g up, pitch 3-5 deg braking); only `LEAN_LOOK` 0.6 (car.rs) and the guessed corner spring differ. Needs retail footage to pick a scale; no lean code changed, tests/race_drive not run** |
 | Playtest round: 2026-10-20 fixes, Options > Audio, race sound | User | Flare on Côte d'Azur, slider dragging and sound levels by ear are not tested |
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
 | Roof up/down drawing | Mid | Choice already reaches the race |
