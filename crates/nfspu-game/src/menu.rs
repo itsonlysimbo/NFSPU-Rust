@@ -517,15 +517,6 @@ pub fn load_screen_with(
             screen.help.push(help);
         }
     }
-    // A stand-in for the track room (`room=ID_TRACK`, a 3D scene in retail): the chosen track's
-    // picture from `FEData/TrackArt`, centred under the controls.
-    if screen.room.eq_ignore_ascii_case("ID_TRACK") {
-        if let Some(file) = &session.track_art {
-            if let Some((w, h)) = shape_size(Some(game_dir), file, 0) {
-                screen.draw.push(Draw::Picture { file: file.clone(), index: 0, pos: [((640.0 - w) / 2.0).round(), ((480.0 - h) / 2.0).round()], flip: 0, alpha: 1.0 });
-            }
-        }
-    }
     let top = std::mem::take(&mut screen.top);
     let lifted = top.len();
     screen.draw.splice(0..0, top);

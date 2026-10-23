@@ -117,3 +117,11 @@ Add a line per playtest: date, recording path, what was wrong.
   car page: the car in the room should be rebuilt with the top up or folded (no animation, not tested live).
 - Race and cockpit: roof down shows the folded top behind the seats; roof up the raised soft top.
 - Coupes should look the same either way. Captures in `logs/car_993_s6_*`.
+## Location screen 3D track room (2026-10-23)
+- Open quick race > location: the camera should fly in from outside the room to a framed picture
+  of the chosen track, on a hoarding in a round room.
+- Press the location arrows: the room should turn a quarter and the picture change with a
+  turn of the panels (0.5 s). Compare with retail: direction of the turn, how the panel flips.
+- Wait 4 s without touching: the picture should change by itself to another view of the track.
+- Check the seams between the 12 panels (thin lines are visible in our captures) and the room's
+  brightness against retail.

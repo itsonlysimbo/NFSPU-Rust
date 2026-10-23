@@ -40,6 +40,8 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
 | Roof up/down drawing | Mid | **Claude `roof-drawing`, branch `claude/exciting-heyrovsky-1fef36`, claimed 2026-10-23.** Code done (piece 41 type +1 for down); tests and race_drive ALL OK; garage live not tested (needs playtest) |
 | Location screen 3D track room | Mid | |
+| Roof up/down drawing | Mid | Choice already reaches the race |
+| Location screen 3D track room | Mid | **Done on `claude/agitated-williamson-1794af` (ready to merge).** Room, walls, pictures, fly-in, panel and room turns built; 336+ tests and `race_drive` ALL OK. Next: playtest vs retail (see `docs/PLAYTEST.md`); header overlay (flags) not drawn |
 | Evolution career, Factory Driver | Strong | Big; split into pieces first |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
 
