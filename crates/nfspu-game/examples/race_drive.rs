@@ -9,6 +9,10 @@
 //! `RACE_DRIVE_TRAFFIC=<0-3>` adds road traffic (none, light, medium, heavy; default 0).
 //! `RACE_DRIVE_CAR=<catalogue id>` drives that retail car (default: the made-up `Spec::generic`);
 //! opponents drive the 993's retail car.
+//! `RACE_DRIVE_SOUND=1` also runs the race-sound rules (`nfspu_game::race_sound`) with the
+//! listener on the player's car and writes every channel's triggers and volumes to
+//! `logs/race_sound.log` (it also wets the road where the track's weather says so, as the game
+//! does; `NFSPU_WEATHER=rain` forces rain).
 
 use nfspu_game::ai::{self, Opponent, Other, Rng, View};
 use nfspu_game::car::{Car, Input};
@@ -17,7 +21,99 @@ use nfspu_game::ground::Ground;
 use nfspu_game::race::{self, CarSample, Kind, Race, RaceEvent, RaceSetup};
 use nfspu_game::race_path::{self, crosses, grid_spot, Direction};
 use nfspu_game::track;
+use nfspu_game::race_sound as rs;
 use std::fmt::Write as _;
+
+/// The race-sound rules run alongside the scripted race (`RACE_DRIVE_SOUND=1`).
+struct SoundRun {
+    weather: nfspu_game::weather::TrackWeather,
+    engine: Option<rs::EngineMix>,
+    wind: rs::Wind,
+    rain_ratio: f32,
+    triggers: rs::TriggerLog,
+    last_distance: Vec<Option<f32>>,
+    hits: u32,
+    log: String,
+}
+
+impl SoundRun {
+    fn new(game: &std::path::Path, track: &str, car: &Car, opponents: usize) -> SoundRun {
+        let weather = nfspu_game::weather::TrackWeather::load(game, track, nfspu_game::weather::WeatherOverride::from_env(), nfspu_game::weather::TimeOverride::Track);
+        let mut log = String::new();
+        // the player's engine set by catalogue sound name, as the game picks it
+        let entry = nfspu_game::car_load::catalogue(game).into_iter().find(|c| nfspu_game::car_load::read_sim(game, &c.sim).is_ok_and(|(s, _)| s.name == car.sim.spec.name));
+        let engine = entry.as_ref().and_then(|c| rs::load_engine(game, &c.sound, &c.sim).ok());
+        let _ = writeln!(log, "race_drive sound run: track {track}, wet road {}, peak rain {:.2}, player engine {}", weather.wet, weather.sky.as_ref().map_or(0.0, |s| s.peaks().0), engine.as_ref().map_or("none (made-up car)".to_string(), |e| format!("{} ({} layers)", e.name, e.layers.len())));
+        let rain_ratio = rs::find_file(&rs::sounds_dir(game), "zzzwzzz.viv").and_then(|p| rs::Archive::open(&p)).and_then(|a| rs::decode(a.get("rain.bnk")?, 0)).map(|p| {
+            let _ = writeln!(log, "rain.bnk: {} samples at {} Hz, key {}", p.samples.len(), p.rate, p.key);
+            rs::key_ratio(p.key, p.fine)
+        });
+        SoundRun { weather, engine: engine.as_ref().map(rs::EngineMix::new), wind: rs::Wind::default(), rain_ratio: rain_ratio.unwrap_or(1.0), triggers: rs::TriggerLog::default(), last_distance: vec![None; opponents], hits: 0, log }
+    }
+
+    fn line(&mut self, l: String) {
+        let _ = writeln!(self.log, "{l}");
+    }
+
+    /// One 64 Hz tick: the listener rides with the player's car (an outside view 5 m behind).
+    fn tick(&mut self, tick: u32, car: &Car, others: &[&Car], slice: usize, slices: usize, dt: f32) {
+        let now = self.weather.at(slice, slices);
+        if let Some(m) = &mut self.engine {
+            m.tick(rs::EngineInput { rpm_frac: car.rpm() / car.sim.spec.redline.max(1.0), throttle: car.sim.throttle(), shifting: car.sim.drive.shift_left > 0, near: false, distance: 5.0, speed: car.speed, side: 0.0 });
+        }
+        self.wind.tick();
+        let input = rs::EffectInput { speed: car.speed, skid: car.skid(), on_ground: car.on_ground, road_wet: car.road_wet, hit_wall: car.hit_wall, rain: now.rain, covered: self.weather.wet && car.on_ground && !car.road_wet, near: false };
+        for (name, g, _) in rs::effect_channels(&input, &self.wind, self.rain_ratio) {
+            if let Some(l) = self.triggers.level(tick, name, g) {
+                self.line(l);
+            }
+        }
+        if car.impact > 1.0 {
+            self.hits += 1;
+            self.line(format!("tick {tick}: player wall hit, impact {:.1}, volume {:.2}", car.impact, rs::hit_gain(car.impact)));
+        }
+        for (i, o) in others.iter().enumerate() {
+            let rel = o.pos - car.pos;
+            let dist = rel.length();
+            let dir = rel.normalize_or(bevy::math::Vec3::NEG_Z);
+            let vel = bevy::math::Vec3::new(-o.yaw.sin(), 0.0, -o.yaw.cos()) * o.speed;
+            let receding = if o.speed.abs() > 0.5 { dir.dot(vel) / o.speed.abs() } else { 0.0 };
+            let separating = self.last_distance[i].map_or(0.0, |d| (dist - d) / dt);
+            self.last_distance[i] = Some(dist);
+            let m = rs::opponent_mix(o.rpm() / o.sim.spec.redline.max(1.0), dist, receding, separating, o.skid(), o.speed);
+            for (name, g) in [("engine", m.approach.max(m.away)), ("skid squeal", m.squeal)] {
+                if let Some(l) = self.triggers.level(tick, &format!("opponent {} {name}", i + 1), g) {
+                    self.line(format!("{l} at {dist:.0} m, closing {:.1} m/s, doppler x{:.3}", -separating, m.doppler));
+                }
+            }
+            if o.impact > 1.0 {
+                self.hits += 1;
+                self.line(format!("tick {tick}: opponent {} wall hit, impact {:.1}, {dist:.0} m, volume {:.2}", i + 1, o.impact, rs::opponent_hit(o.impact, dist)));
+            }
+            // a pass: the Doppler factor while the car is within 15 m and moving relative to us
+            if dist < 15.0 && separating.abs() > 3.0 && tick % 16 == 0 {
+                self.line(format!("tick {tick}: opponent {} passing at {dist:.1} m, separating {separating:.1} m/s, doppler x{:.3}, approach {:.2} away {:.2}", i + 1, m.doppler, m.approach, m.away));
+            }
+        }
+        if tick % (64 * 5) == 0 {
+            let layers = self.engine.as_ref().map_or(String::new(), |m| (0..m.layers()).map(|i| format!("{:.2}", m.gain(i))).collect::<Vec<_>>().join(" "));
+            let fx: Vec<String> = rs::effect_channels(&input, &self.wind, self.rain_ratio).iter().map(|(n, g, _)| format!("{n} {g:.2}")).collect();
+            self.line(format!("tick {tick}: speed {:.1} m/s, rain {:.2}{}, engine layers [{layers}], {}", car.speed, now.rain, if input.covered { " (covered)" } else { "" }, fx.join(", ")));
+        }
+    }
+
+    fn event(&mut self, e: &RaceEvent, tick: u32, total_laps: u32, cars: usize) {
+        let say = match *e {
+            RaceEvent::Countdown(n) => Some(rs::countdown_entry(n)),
+            RaceEvent::Lap { car: 0, lap, .. } => rs::lap_line(lap + 1, total_laps),
+            RaceEvent::Finished { car: 0, position, .. } => rs::finish_line(position, cars),
+            _ => None,
+        };
+        if let Some(entry) = say {
+            self.line(format!("tick {tick}: voice {entry}"));
+        }
+    }
+}
 
 fn wrap(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
@@ -78,6 +174,13 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let mut taken = std::collections::BTreeMap::<(usize, usize), u32>::new();
     let mut choice_lines = 0u32;
     let mut hits = 0u32;
+    let mut sound = std::env::var("RACE_DRIVE_SOUND").is_ok().then(|| SoundRun::new(&game, name, &car, opponents));
+    if let Some(snd) = &sound {
+        car.wet = snd.weather.wet;
+        for r in &mut racers {
+            r.0.wet = snd.weather.wet;
+        }
+    }
     let who = |c: usize, racers: &[(Car, Opponent, String)]| if c == 0 { "player".to_string() } else { racers[c - 1].2.clone() };
     if opponents > 0 {
         let _ = writeln!(out, "   {opponents} opponents, difficulty {difficulty}, seed {seed}, racing line {}", if lsp.as_ref().is_some_and(|l| l.len() == p.slices.len()) { "from .lsp" } else { "slice centres" });
@@ -234,6 +337,9 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         }
         samples[0] = CarSample { fraction: p.fraction(slice, dir), crossed_finish: crossed };
         for e in r.step(&samples) {
+            if let Some(snd) = &mut sound {
+                snd.event(&e, r.tick, r.setup.laps, cars);
+            }
             let line = match e {
                 RaceEvent::Countdown(n) => format!("   tick {:>5}: countdown {}", r.tick, if n == 0 { "GO".to_string() } else { n.to_string() }),
                 RaceEvent::Lap { car: c, lap, ticks } => format!("   tick {:>5}: {} lap {lap} in {}", r.tick, who(c, &racers), race::format_time(ticks)),
@@ -241,6 +347,10 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 RaceEvent::Finished { car: c, position, ticks } => format!("   tick {:>5}: {} FINISHED P{position} in {}, best lap {}", r.tick, who(c, &racers), race::format_time(ticks), r.best_lap(c).map_or("-".into(), race::format_time)),
             };
             let _ = writeln!(out, "{line}");
+        }
+        if let Some(snd) = &mut sound {
+            let others: Vec<&Car> = racers.iter().map(|x| &x.0).collect();
+            snd.tick(r.tick, &car, &others, slice, p.slices.len(), dt);
         }
         let prog = r.cars[0].progress;
         if prog > best_progress + 0.002 || r.held() { best_progress = best_progress.max(prog); last_gain = r.tick; }
@@ -265,6 +375,11 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     }
     if !fleet.cars.is_empty() {
         let _ = writeln!(out, "   traffic: {traffic_spawns} spawns, {traffic_removed} removals, up to {traffic_max} driving at once, {traffic_hits} hits of impact 20+, {traffic_honks} honks");
+    }
+    if let Some(snd) = sound.take() {
+        let path = log_file().with_file_name("race_sound.log");
+        let _ = writeln!(out, "   sound: {} hits logged, log {}", snd.hits, path.display());
+        let _ = std::fs::write(path, snd.log);
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });

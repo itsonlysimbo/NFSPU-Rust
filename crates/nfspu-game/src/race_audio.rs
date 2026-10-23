@@ -392,25 +392,20 @@ fn run_sound(
 
     // tyres, road, wind, scrape, rain
     let slide = c.skid();
-    let wet = c.road_wet;
-    let (squeal, scrub) = rs::wet_skid(rs::skid_gains(if c.speed.abs() > 2.0 { slide } else { 0.0 }), wet);
     let fx = lv.sfx * MIX;
-    let road = if c.on_ground { rs::road_gain(c.speed) } else { 0.0 };
-    let scrape = if c.hit_wall && c.speed.abs() > 2.0 { rs::EFFECT_LEVEL * (c.speed.abs() / 20.0).min(1.0) } else { 0.0 };
-    let wind = s.wind_walk.gain(c.speed) * if near { 1.0 } else { 0.5 };
     // under cover: a wet track whose road is dry under the car right now (bridges, tunnels)
-    let rain_amount = weather.as_ref().map_or(0.0, |w| w.now.rain);
-    let covered = weather.as_ref().is_some_and(|w| w.track.wet) && c.on_ground && !wet;
-    let rain = rs::rain_gain(rain_amount, covered, near);
-    let mut channels = vec![
-        ("skid squeal", s.squeal, squeal, 1.0),
-        ("skid scrub", s.scrub, scrub, 1.0),
-        ("road", s.road, if wet { 0.0 } else { road }, 1.0),
-        ("wet road", s.road_wet, if wet { road } else { 0.0 }, 1.0),
-        ("wall scrape", s.scrape, scrape, 1.0),
-        ("wind", s.wind, wind, s.wind_walk.speed()),
-        ("rain", s.rain.map(|r| r.0), rain, s.rain.map_or(1.0, |r| r.1)),
-    ];
+    let fx_in = rs::EffectInput {
+        speed: c.speed,
+        skid: slide,
+        on_ground: c.on_ground,
+        road_wet: c.road_wet,
+        hit_wall: c.hit_wall,
+        rain: weather.as_ref().map_or(0.0, |w| w.now.rain),
+        covered: weather.as_ref().is_some_and(|w| w.track.wet) && c.on_ground && !c.road_wet,
+        near,
+    };
+    let voices = [s.squeal, s.scrub, s.road, s.road_wet, s.scrape, s.wind, s.rain.map(|r| r.0)];
+    let mut channels: Vec<_> = rs::effect_channels(&fx_in, &s.wind_walk, s.rain.map_or(1.0, |r| r.1)).into_iter().zip(voices).map(|((n, g, sp), e)| (n, e, g, sp)).collect();
     for (name, e, g, speed) in channels.drain(..) {
         set_voice(e, g * fx, speed, &mut sinks, &mut spatial);
         if let Some(line) = s.triggers.level(status.tick, name, g) {
@@ -454,13 +449,11 @@ fn run_sound(
         let vel = Vec3::new(-p[2].sin(), 0.0, -p[2].cos()) * p[3];
         let receding = if p[3].abs() > 0.5 { dir.dot(vel) / p[3].abs() } else { 0.0 };
         let rpm = status.car_rpm.get(i).copied().unwrap_or(0.2);
-        let (front, back, pitch) = rs::opponent_engine(rpm, dist, receding);
-        // Doppler from how fast the distance changes (both cars' motion), smoothed over frames
+        // Doppler from how fast the distance changes (both cars' motion)
         let separating = o.last_distance.filter(|_| dt > 0.0).map_or(0.0, |d| (dist - d) / dt);
         o.last_distance = Some(dist);
-        let shift = rs::doppler(separating);
-        let skid = status.car_skid.get(i).copied().unwrap_or(0.0);
-        let (sq, scrub) = rs::opponent_skid(if p[3].abs() > 2.0 { skid } else { 0.0 }, dist);
+        let m = rs::opponent_mix(rpm, dist, receding, separating, status.car_skid.get(i).copied().unwrap_or(0.0), p[3]);
+        let (front, back, pitch, shift, sq, scrub) = (m.approach, m.away, m.pitch, m.doppler, m.squeal, m.scrub);
         for (e, g, r) in [(Some(o.approach), front * lv.engine, pitch * o.ratio.0 * shift), (Some(o.away), back * lv.engine, pitch * o.ratio.1 * shift), (o.squeal, sq * lv.sfx, shift), (o.scrub, scrub * lv.sfx, shift)] {
             let Some(e) = e else { continue };
             if let Ok(mut t) = transforms.get_mut(e) {

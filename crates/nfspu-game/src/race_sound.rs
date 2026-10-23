@@ -501,6 +501,63 @@ pub fn outside_balance(balance: u32, swing_left: u32, swing_right: u32, side: f3
     (b.round() as u32).min(128)
 }
 
+/// What the player's effect channels need each frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EffectInput {
+    /// Car speed (m/s).
+    pub speed: f32,
+    /// Strongest wheel slide, 0..1 (`Car::skid`).
+    pub skid: f32,
+    pub on_ground: bool,
+    /// The road under the car is wet now.
+    pub road_wet: bool,
+    /// Touching a wall.
+    pub hit_wall: bool,
+    /// The sky's rain amount at the camera, 0..1.
+    pub rain: f32,
+    /// Under cover from the rain.
+    pub covered: bool,
+    /// First-person view.
+    pub near: bool,
+}
+
+/// The player's looping effect channels: name, volume (0..1 before the effects level) and speed.
+pub fn effect_channels(i: &EffectInput, wind: &Wind, rain_ratio: f32) -> [(&'static str, f32, f32); 7] {
+    let (squeal, scrub) = wet_skid(skid_gains(if i.speed.abs() > 2.0 { i.skid } else { 0.0 }), i.road_wet);
+    let road = if i.on_ground { road_gain(i.speed) } else { 0.0 };
+    let scrape = if i.hit_wall && i.speed.abs() > 2.0 { EFFECT_LEVEL * (i.speed.abs() / 20.0).min(1.0) } else { 0.0 };
+    let wind_gain = wind.gain(i.speed) * if i.near { 1.0 } else { 0.5 };
+    [
+        ("skid squeal", squeal, 1.0),
+        ("skid scrub", scrub, 1.0),
+        ("road", if i.road_wet { 0.0 } else { road }, 1.0),
+        ("wet road", if i.road_wet { road } else { 0.0 }, 1.0),
+        ("wall scrape", scrape, 1.0),
+        ("wind", wind_gain, wind.speed()),
+        ("rain", rain_gain(i.rain, i.covered, i.near), rain_ratio),
+    ]
+}
+
+/// One opponent's sounds this frame (volumes 0..1 before the player's levels).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpponentMix {
+    pub approach: f32,
+    pub away: f32,
+    /// Engine pitch before each loop's key ratio and the Doppler factor.
+    pub pitch: f32,
+    pub doppler: f32,
+    pub squeal: f32,
+    pub scrub: f32,
+}
+
+/// An opponent at `distance` m whose heading points `receding` (-1..1) away from the listener and
+/// whose distance grows at `separating` m/s, sliding `skid` (0..1) at `speed` m/s.
+pub fn opponent_mix(rpm_frac: f32, distance: f32, receding: f32, separating: f32, skid: f32, speed: f32) -> OpponentMix {
+    let (approach, away, pitch) = opponent_engine(rpm_frac, distance, receding);
+    let (squeal, scrub) = opponent_skid(if speed.abs() > 2.0 { skid } else { 0.0 }, distance);
+    OpponentMix { approach, away, pitch, doppler: doppler(separating), squeal, scrub }
+}
+
 /// Writes when each looping channel becomes audible and when it falls silent again, with its
 /// loudest volume in between, so a log shows every channel's triggers without a line per frame.
 #[derive(Debug, Default, Clone)]
