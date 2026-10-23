@@ -27,6 +27,12 @@ when they can and notes results here or in a recording. Run the game with `.\run
 ## Results
 Add a line per playtest: date, recording path, what was wrong.
 
+### 2026-10-23 (user notes)
+- 356 body lean: feels and looks good. **Pass.**
+- Cockpit view: hands on the wheel still wrong. **Fail.**
+- Front wheels: steer, but should turn more smoothly. **Open.**
+- Track collision: floor and wall collision buggy or missing in some spots; the car gets stuck and the race has to be restarted from the beginning. **Fail (high priority).**
+
 ### 2026-10-22 (user notes)
 - Console: one "Use-after-free" error left per race (was thousands). **Open.**
 - Sun flare: hidden behind rocks and tunnels. **Pass.**
