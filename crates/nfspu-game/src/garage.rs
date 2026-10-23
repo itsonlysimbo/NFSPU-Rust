@@ -43,6 +43,28 @@ pub const GARAGE: RoomLook = RoomLook {
     light_dir: [-0.14, -0.98, 0.114],
 };
 
+/// The track room (`FETrackSelect3DRoom`): the room model `track` seen from outside the near wall
+/// at the start of the fly-in (`offset` is its start; the camera ends at [`TRACK_END`]). The room
+/// does not spin by itself: it turns a quarter each time the track changes (`menu_location.rs`).
+pub const TRACK: RoomLook = RoomLook {
+    model: "track",
+    offset: [0.0, -2.4, 6.2],
+    spin_seconds: 0.0,
+    view_angle: 25.0,
+    ambient: [55.0, 65.0, 76.0],
+    light: [115.0, 115.0, 115.0],
+    light_dir: [-0.29, -1.5, 0.29],
+};
+
+/// The track room's wall of picture panels, drawn four times around the room (same staging).
+pub const TRACK_WALL: RoomLook = RoomLook { model: "trackwall", ..TRACK };
+
+/// Where the track room settles after the fly-in, and its start and end tilt in whole turns.
+pub const TRACK_END: [f32; 3] = [0.0, -3.2, 1.9];
+pub const TRACK_TILT: [f32; 2] = [-0.04, 0.0];
+/// The fly-in takes 300 ticks of the 128 Hz clock.
+pub const TRACK_FLY_SECONDS: f32 = 300.0 / 128.0;
+
 /// Where the room moves to when the player climbs into the car (blend 1): the camera ends up in
 /// the cabin. Retail blends there and back over 64 ticks of its 128 Hz clock.
 pub const CABIN_OFFSET: [f32; 3] = [0.0, -0.8, 0.3];
@@ -55,6 +77,7 @@ pub const DOOR_OPEN_TURNS: f32 = 0.15;
 pub fn room_for(id: &str) -> Option<RoomLook> {
     match id.trim().to_ascii_uppercase().as_str() {
         "ID_GARAGE" => Some(GARAGE),
+        "ID_TRACK" => Some(TRACK),
         _ => None,
     }
 }

@@ -111,3 +111,12 @@ Add a line per playtest: date, recording path, what was wrong.
   under hard braking, before our 0.6 look scale (`LEAN_LOOK` in `car.rs`; drawn 4.6 / 3 degrees).
 - Look for: how far the body rolls in a hard corner and dips under braking compared with retail
   footage. If retail looks bigger, raise `LEAN_LOOK` toward 1.0; if smaller, lower it. Not tested by eye.
+
+## Location screen 3D track room (2026-10-23)
+- Open quick race > location: the camera should fly in from outside the room to a framed picture
+  of the chosen track, on a hoarding in a round room.
+- Press the location arrows: the room should turn a quarter and the picture change with a
+  turn of the panels (0.5 s). Compare with retail: direction of the turn, how the panel flips.
+- Wait 4 s without touching: the picture should change by itself to another view of the track.
+- Check the seams between the 12 panels (thin lines are visible in our captures) and the room's
+  brightness against retail.

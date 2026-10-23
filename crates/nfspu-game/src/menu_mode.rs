@@ -36,6 +36,8 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 #[path = "menu_garage.rs"]
 mod menu_garage;
+#[path = "menu_location.rs"]
+mod menu_location;
 
 /// The layout's own coordinate space: the retail front end is authored at 640x480.
 const SCREEN_WIDTH: f32 = 640.0;

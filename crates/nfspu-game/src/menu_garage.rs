@@ -52,7 +52,7 @@ impl Plugin for MenuGarage {
             .add_plugins(UiMaterialPlugin::<ScreenBlend>::default())
             .add_systems(OnEnter(AppState::Menu), spawn_camera.run_if(resource_exists::<FrontEnd>))
             .add_systems(OnExit(AppState::Menu), leave)
-            .add_systems(Update, (stage, inspect, animate, blend).chain().run_if(in_state(AppState::Menu)).run_if(resource_exists::<FrontEnd>));
+            .add_systems(Update, (stage, inspect, animate, super::menu_location::track_room, blend).chain().run_if(in_state(AppState::Menu)).run_if(resource_exists::<FrontEnd>));
     }
 }
 
@@ -75,17 +75,17 @@ fn leave(mut garage: ResMut<Garage>, mut images: ResMut<Assets<Image>>) {
 }
 
 #[derive(Resource)]
-struct Garage {
+pub(super) struct Garage {
     /// The room drawn now, and its spinning root (the room's origin, where the car stands).
-    look: Option<RoomLook>,
-    root: Option<Entity>,
+    pub(super) look: Option<RoomLook>,
+    pub(super) root: Option<Entity>,
     /// The car on show: (model, paint section, body style, custom colour) and its entity.
     car: Option<(String, usize, usize, Option<[u8; 3]>)>,
     car_root: Option<Entity>,
     /// The car's box on the page, in layout units.
     car_box: Option<[f32; 4]>,
     layout_for: String,
-    turntable: Turntable,
+    pub(super) turntable: Turntable,
     clock: f32,
     doors: [Fade; 2],
     front_lights: Fade,
@@ -126,11 +126,11 @@ impl Garage {
 
 /// The 3D view: drawn before the menu image, into the window's 640x480 area.
 #[derive(Component)]
-struct GarageCamera;
+pub(super) struct GarageCamera;
 
 /// A turning part of the room (a fan), by animation slot.
 #[derive(Component)]
-struct RoomFan(u8);
+pub(super) struct RoomFan(pub(super) u8);
 
 /// A door of the show car: car animation slot 6 (left) or 7 (right), hinged at the entity's origin.
 #[derive(Component)]
@@ -380,7 +380,7 @@ fn stage(
     }
 }
 
-fn spawn_room(look: &RoomLook, game_dir: &std::path::Path, commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) -> Entity {
+pub(super) fn spawn_room(look: &RoomLook, game_dir: &std::path::Path, commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) -> Entity {
     let o = look.offset;
     let root = commands.spawn((Transform::from_xyz(o[0] * nfspu_game::MIRROR_X, o[1], o[2]), Visibility::default(), DespawnOnExit(AppState::Menu))).id();
     let started = std::time::Instant::now();

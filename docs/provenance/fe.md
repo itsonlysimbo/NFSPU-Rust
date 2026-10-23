@@ -596,3 +596,29 @@ portion absorbs the click while the unrevealed portion still reaches that contro
 Build environment: the configured external sccache executable was denied; validation
 uses `cargo --config logs/build_without_cache.toml` with an empty rustc wrapper.
 This configuration lives only in ignored logs; system configuration is unchanged.
+
+
+## Location screen: the 3D track room (2026-10-23)
+Source: the retail track-room class (read-only reference, our own words), the shipped
+`FEData/Models/track.crp`/`trackwall.crp` and the `TrackArt` files. Captures:
+`logs/menu_location_coastal.png`, `_track3.png`, `_track8.png` (retail comparison: not tested).
+- **Scene** (from code): `track.crp` (Vent, Floor, Door) plus four `trackwall.crp` copies a quarter
+  turn apart. A wall is 10 wide, 6.4 high, with columns, a frame and 12 panels (slots 20-31).
+- **Panels** (from the model): each is a three-sided prism; its faces use the pages `img1`-`img3`
+  (256x192 pictures in 256x256 pages, marked persistent in `trackwall.tpg`, so the game rewrites
+  them). All 12 panels turn together about their long axis: rotation = (face + progress) / 3 turns.
+- **Pictures** (from code and data): the file is the track record's *second* art name (`...Sp`,
+  record offset 0x44; five 256x192 pictures plus two 28x16 flags). On a track change the next
+  picture is drawn onto the face about to come up and the prism turns to it in 64 ticks of the
+  128 Hz clock (0.5 s). Left alone it steps to the next picture every 512 ticks (4 s).
+- **Room turn**: each track change turns the room a quarter (0.0028571 turn per tick, 0.68 s);
+  the direction follows whether the arrows stepped on or back.
+- **Camera** (constructor values): view angle 25 (read like the garage's, half the horizontal
+  angle), ambient 55/65/76, light 115 each, light direction (-0.29, -1.5, 0.29). The camera flies in
+  over 300 ticks (2.3 s) from room offset (0, -2.4, 6.2), tilt -0.04 turn, to (0, -3.2, 1.9),
+  tilt 0.
+- **Guesses**: the picture order and which panel face comes first; the tilt sign; that the near wall's
+  back faces are culled (we cull them, else the fly-in starts behind a wall); the exact draw order
+  of the five room draws (read as room, then walls at 0, 0.25, 0.5, 0.75); the 0.5 light gain is the
+  garage's. Not done: the small overlay drawn from the fsh header (flags/caption) when a picture
+  starts; the room's tint.
