@@ -90,6 +90,10 @@ The coordinator checks the plan usage (`get_usage`) each time a session reports.
 - The dev profile keeps line tables only (`debug = "line-tables-only"`, none for dependencies).
 - sccache is installed (winget) and set as the rustc wrapper in the user's `~/.cargo/config.toml`, so all worktrees share one compile cache.
 - For quick edit-build-run loops use `cargo run -p nfspu-game --features dev -j 2`, which links Bevy as a DLL. Leave `dev` off for builds the `run_*.bat` launchers start (they need no DLL).
+- New worktrees seed `target/` from the main checkout's (`.claude/settings.json` SessionStart hook,
+  robocopy without `incremental/`), so a first build only recompiles our own crates. If the hook
+  didn't run, do it by hand before the first build:
+  `robocopy ..\..\..\target target /E /MT:8 /XD incremental`.
 - Disk: each worktree's `target/` grows to 5-40 GB (that was before the lighter debug info). Build inside your own worktree's `target/`, not in extra `target-*` folders. After merging a branch, the coordinator deletes that worktree's `target/` (build output only, regenerable). sccache caps its cache at 10 GB by default.
 - Long builds: run them in the background rather than under a short timeout. A killed link shows as `link.exe failed: exit code 143`.
 

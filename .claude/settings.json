@@ -22,6 +22,11 @@
             "type": "command",
             "timeout": 900,
             "command": "bash -c 'test -n \"${GAMEDATA_TOKEN:-}\" && test -f scripts/cloud_setup.sh && bash scripts/cloud_setup.sh; exit 0'"
+          },
+          {
+            "type": "command",
+            "timeout": 1200,
+            "command": "bash -c 'case \"$PWD\" in */.claude/worktrees/*) main=\"${PWD%/.claude/worktrees/*}\"; if [ ! -d target ] && [ -d \"$main/target\" ] && command -v robocopy.exe >/dev/null; then echo \"[seed] copying build output from $main/target\"; robocopy.exe \"$(cygpath -w \"$main/target\")\" target /E /MT:8 /XD incremental /NFL /NDL /NJH /NJS /NP >/dev/null; echo \"[seed] done\"; fi;; esac; exit 0'"
           }
         ]
       }
