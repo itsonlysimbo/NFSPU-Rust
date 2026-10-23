@@ -68,6 +68,9 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
   project folder, or a real design choice the evidence can't settle. Otherwise decide, write it
   down as a guess, and continue.
 - Keep the computer awake while work runs.
+- After each major milestone (user, 2026-10-23): update `docs/progress.md`, rerun the progress tool,
+  and refresh the "NFSPU rewrite progress" dashboard
+  (https://claude.ai/artifact/84fMsfSDpfdvNn4PCQapD1) from that table.
 - When Claude usage runs out, every task is left as a committed WIP with a Next step on the board
   so OpenCode can continue.
 
