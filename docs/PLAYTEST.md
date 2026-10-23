@@ -163,3 +163,6 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 ## Race sound level (footage-sound, 2026-10-23)
 - The whole race mix (`MIX`) went down from 0.7 to 0.6 to match your GT1 recording (about -10 to -14 dBFS). Listen for: engine, road and wind at top speed no longer louder than idle by a lot; nothing clipping when engine, wind and a skid overlap. If it now sounds too quiet next to retail, say so and it goes back up.
 - Engine pitch was measured to be within 5% of retail (idle about 60 Hz, in gear about 155/310 Hz), so no change there; tell me if the idle or redline note sounds off.
+## Body lean and cameras (branch claude/footage-car-7859f5)
+- `LEAN_LOOK` is now 1.0. Drive the 356 in chase view through hard corners: the tail should roll about 6-10 degrees, like retail.
+- Coordinator: take screen captures of the 356 and GT1 in chase and cockpit views at the corners in the 2026-10-23 videos (the cloud has no window). Compare hand positions (retail: 10 and 2) and camera distance and FOV.

@@ -72,3 +72,8 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 A light agent that finds the task needs judgement (a retail behaviour question, a design choice)
 writes what it found into the task's **Next step** and stops rather than guessing.
+
+## Active: BLOCKED: footage-car needs local video measurements (Claude, branch claude/footage-car-7859f5)
+- Done: `LEAN_LOOK` 0.6 -> 1.0 (356 footage 6-10 deg roll in hard corners). Notes in physics.md 7c, car.md.
+- BLOCKED: the GT1 lean, cockpit hand positions and camera position/FOV/lag were never measured (physics.md 7c and car.md say "not measured"), and the videos exist only on the user's PC. The cloud session (2026-10-23) changed no values because it had no numbers to work from. Rerun on this branch with NFSPU_GAME_DIR=/opt/nfs5: `cargo test --workspace` 364 passed, 0 failed; handling_check flat runs: 8 spins, 9 slides in 30 runs (tracks: 39 spins); `race_drive` ALL OK (P1, 02:08.35).
+- **Next step (local, needs the video):** from `C:\Users\CB\Videos\2026-10-23 11-00-02.mp4` measure GT1 roll/pitch (chase from ~2:20), cockpit hand pixels and forearm angle, and per-view car width in frame plus steer-to-follow lag. Then change `chase_cam.rs` and the `main.rs` arm skinning. Note: hands come from the model's own LeftHand/RightHand meshes (main.rs ~1235), so retail placement may already match.
