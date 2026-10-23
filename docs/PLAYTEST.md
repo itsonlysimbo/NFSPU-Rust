@@ -145,3 +145,7 @@ Quick race, 7 opponents, Traffic heavy. Check: opponents pull out to pass slow t
 for oncoming cars, they brake behind traffic when both halves are blocked instead of ramming it; oncoming traffic edges
 to its kerb as you come at it; traffic keeps clear of the centre line. Watch for opponents weaving or scraping walls on
 narrow Monaco streets while passing. Measured offline only (not seen in a window).
+
+## Lamp glow "covered" and location flags (glow-flags branch)
+- Night race on Monaco 3-5 (tunnels): the car paint should show lamp glows sliding over it under a roof; in the open, the usual sun highlight. Log lines `car glow: ... (covered|open)` and `covered slices on <track>`.
+- Location screen: watch the wall panels turn; the first picture of each track should carry a small flag. Backward/mirrored directions should move or swap it. Not seen on screen yet.

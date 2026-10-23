@@ -228,16 +228,25 @@ fn update_shine(
         let mut glow = None;
         if let (Some(state), false) = (track, off) {
             if let Some((slice, centre)) = state.slice_near(at.translation()) {
-                // the open-air picture of the top detail level ("covered" is not known yet)
+                // the picture of the top detail level, "covered" under a roof and "open" otherwise
+                let covered = state.is_covered(slice);
+                if covered {
+                    // retail lights the car straight down under cover
+                    s.sun_dir = Vec4::new(0.0, 1.0, 0.0, 0.0);
+                }
                 let section = section_for(&state.track.lighting.sections, slice as i32);
-                if let Some((sec, h)) = section.and_then(|sec| pictures.images.get(&sec.textures[2].0.to_ascii_uppercase()).map(|h| (sec, h.clone()))) {
+                let pick = |sec: &nfspu_formats::weather::ReflectionSection| {
+                    let t = &sec.textures[2];
+                    pictures.images.get(&(if covered { &t.1 } else { &t.0 }).to_ascii_uppercase()).cloned()
+                };
+                if let Some((sec, h)) = section.and_then(|sec| pick(sec).map(|h| (sec, h))) {
                     let size = sec.texture_size.max(0.1);
                     s.glow_centre = centre.extend(GLOW_NORMAL_PUSH);
                     s.glow_scale = Vec4::new(1.0 / size, sec.aspect / size, gain, 0.0);
                     glow = Some(h);
                     if pictures.logged != Some(slice) {
                         pictures.logged = Some(slice);
-                        crate::weather_fx::crate_log(&format!("car glow: slice {slice}, picture {} ({:.2} m, aspect {:.2})", sec.textures[2].0, sec.texture_size, sec.aspect));
+                        crate::weather_fx::crate_log(&format!("car glow: slice {slice}, picture {} ({}, {:.2} m, aspect {:.2})", if covered { &sec.textures[2].1 } else { &sec.textures[2].0 }, if covered { "covered" } else { "open" }, sec.texture_size, sec.aspect));
                     }
                 }
             }

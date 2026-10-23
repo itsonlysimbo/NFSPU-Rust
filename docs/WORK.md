@@ -16,7 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
-| (none) | | | | | | |
+| Car lamp glow + 'covered'; location header flags | Mid | Claude (glow-flags) | claude/glow-flags-e70b14 | done, awaiting merge | Glow on screen not seen (car starts on a slice with no glow section; needs a slice-jump hook). Flag overlay only unit-tested (2D map box hides the wall face). | merge |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.

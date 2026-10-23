@@ -37,6 +37,15 @@ pub(super) struct Panel;
 /// A picture that can be drawn onto a face page: RGBA8, width, height.
 type Picture = (usize, usize, Vec<u8>);
 
+/// A small overlay (the track's flag) drawn on the first picture: RGBA8 size and its position.
+struct Flag {
+    w: usize,
+    h: usize,
+    x: usize,
+    y: usize,
+    rgba: Vec<u8>,
+}
+
 #[derive(Default)]
 enum Build {
     #[default]
@@ -62,6 +71,9 @@ pub(super) struct TrackRoom {
     /// The track shown, its pictures and the next one to draw.
     track: Option<usize>,
     pictures: Vec<Picture>,
+    /// The two flags of the art file (forward, backward) and the direction shown.
+    flags: Vec<Flag>,
+    direction: usize,
     next_picture: usize,
     /// The room's turn in whole turns (clockwise positive) and where it is heading.
     turns: f32,
@@ -69,19 +81,32 @@ pub(super) struct TrackRoom {
 }
 
 /// Reads every picture of a track's art file (`FEData/TrackArt/<name>.fsh`).
-fn load_pictures(game_dir: &std::path::Path, file: &str) -> Vec<Picture> {
-    let Ok(data) = nfspu_game::menu::load_art(game_dir, file) else { return Vec::new() };
-    let Ok(archive) = nfspu_formats::shpi::parse(&data) else { return Vec::new() };
-    archive
+fn load_pictures(game_dir: &std::path::Path, file: &str) -> (Vec<Picture>, Vec<Flag>) {
+    let Ok(data) = nfspu_game::menu::load_art(game_dir, file) else { return (Vec::new(), Vec::new()) };
+    let Ok(archive) = nfspu_formats::shpi::parse(&data) else { return (Vec::new(), Vec::new()) };
+    let pictures = archive
         .entries
         .iter()
         .filter(|e| e.width as usize == PAGE && e.height as usize == PICTURE_HEIGHT)
         .filter_map(|e| nfspu_formats::shpi::decode_rgba8(&data, e).map(|rgba| (e.width as usize, e.height as usize, rgba)))
-        .collect()
+        .collect();
+    // the entries after the pictures are the flags; header offsets 8 and 10 hold where each sits
+    let flags = archive
+        .entries
+        .iter()
+        .filter(|e| (e.width as usize) < PAGE / 2)
+        .filter_map(|e| {
+            let rgba = nfspu_formats::shpi::decode_rgba8(&data, e)?;
+            let at = |o: usize| data.get(e.offset + o..e.offset + o + 2).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]).max(0) as usize);
+            Some(Flag { w: e.width as usize, h: e.height as usize, x: at(8), y: at(10), rgba })
+        })
+        .collect();
+    (pictures, flags)
 }
 
 /// Draws a picture at the top left of a face page, on black.
-fn draw_picture(images: &mut Assets<Image>, face: &Handle<Image>, picture: &Picture) {
+/// With `flag`, its overlay goes on top; `mirrored` flips the whole picture (retail mirrors both).
+fn draw_picture(images: &mut Assets<Image>, face: &Handle<Image>, picture: &Picture, flag: Option<&Flag>, mirrored: bool) {
     let Some(mut image) = images.get_mut(face) else { return };
     let size = image.texture_descriptor.size.width as usize;
     let Some(data) = image.data.as_mut() else { return };
@@ -94,6 +119,34 @@ fn draw_picture(images: &mut Assets<Image>, face: &Handle<Image>, picture: &Pict
             let s = (y * w + x) * 4;
             let d = (y * size + x) * 4;
             data[d..d + 3].copy_from_slice(&rgba[s..s + 3]);
+        }
+    }
+    if mirrored {
+        for y in 0..(*h).min(size) {
+            let row = &mut data[y * size * 4..(y * size + *w) * 4];
+            for x in 0..*w / 2 {
+                for k in 0..4 {
+                    row.swap(x * 4 + k, (*w - 1 - x) * 4 + k);
+                }
+            }
+        }
+    }
+    if let Some(f) = flag {
+        for y in 0..f.h {
+            for x in 0..f.w {
+                let s = (y * f.w + x) * 4;
+                let a = f.rgba[s + 3] as u32;
+                // a flag lands where the file says; mirrored, it sits the same distance from the other edge
+                let px = if mirrored { w.saturating_sub(f.x + f.w) + x } else { f.x + x };
+                let py = f.y + y;
+                if px >= *w || py >= *h || px >= size || py >= size {
+                    continue;
+                }
+                let d = (py * size + px) * 4;
+                for k in 0..3 {
+                    data[d + k] = ((f.rgba[s + k] as u32 * a + data[d + k] as u32 * (255 - a)) / 255) as u8;
+                }
+            }
         }
     }
 }
@@ -217,12 +270,13 @@ pub(super) fn track_room(
         if room.track != Some(index) {
             let first = room.track.is_none();
             let forward = room.track.is_none_or(|old| index >= old);
-            room.pictures = load_pictures(&state.game_dir, &format!("TrackArt/{art}.fsh"));
+            (room.pictures, room.flags) = load_pictures(&state.game_dir, &format!("TrackArt/{art}.fsh"));
             room.next_picture = 0;
-            nfspu_game_log(&format!("location: track {index} '{art}' {} picture(s) {:?}", room.pictures.len(), room.pictures.iter().map(|p| (p.0, p.1)).collect::<Vec<_>>()));
+            room.direction = state.quick.direction;
+            nfspu_game_log(&format!("location: track {index} '{art}' {} picture(s), {} flag(s) {:?}", room.pictures.len(), room.flags.len(), room.pictures.iter().map(|p| (p.0, p.1)).collect::<Vec<_>>()));
             if first {
                 if let (Some(face), Some(pic)) = (room.faces.first(), room.pictures.first()) {
-                    draw_picture(&mut images, face, pic);
+                    draw_picture(&mut images, face, pic, room.flags.get(usize::from(room.direction % 2 == 1)), room.direction >= 2);
                     room.next_picture = 1;
                 }
             } else {
@@ -287,7 +341,8 @@ fn begin_step(room: &mut TrackRoom, images: &mut Assets<Image>) {
     }
     let face = (room.step + 1) % room.faces.len();
     let pic = room.next_picture % room.pictures.len();
-    draw_picture(images, &room.faces[face], &room.pictures[pic]);
+    let flag = (pic == 0).then(|| room.flags.get(usize::from(room.direction % 2 == 1))).flatten();
+    draw_picture(images, &room.faces[face], &room.pictures[pic], flag, room.direction >= 2);
     room.next_picture = pic + 1;
     room.stepping = Some(0.0);
     room.idle = 0.0;
@@ -295,4 +350,33 @@ fn begin_step(room: &mut TrackRoom, images: &mut Assets<Image>) {
 
 fn nfspu_game_log(line: &str) {
     crate::log_line(line);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn face(images: &mut Assets<Image>) -> Handle<Image> {
+        images.add(Image::new_fill(bevy::render::render_resource::Extent3d { width: 256, height: 256, depth_or_array_layers: 1 }, bevy::render::render_resource::TextureDimension::D2, &[0, 0, 0, 255], bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default()))
+    }
+
+    fn pixel(images: &Assets<Image>, h: &Handle<Image>, x: usize, y: usize) -> [u8; 3] {
+        let d = images.get(h).unwrap().data.as_ref().unwrap();
+        let i = (y * 256 + x) * 4;
+        [d[i], d[i + 1], d[i + 2]]
+    }
+
+    #[test]
+    fn the_flag_lands_where_the_file_says_and_mirrors_to_the_other_side() {
+        let mut images = Assets::<Image>::default();
+        let h = face(&mut images);
+        let pic: Picture = (256, 192, vec![10; 256 * 192 * 4]);
+        let flag = Flag { w: 28, h: 16, x: 134, y: 65, rgba: [200, 100, 50, 255].repeat(28 * 16) };
+        draw_picture(&mut images, &h, &pic, Some(&flag), false);
+        assert_eq!(pixel(&images, &h, 140, 70), [200, 100, 50]);
+        assert_eq!(pixel(&images, &h, 100, 70), [10, 10, 10]);
+        draw_picture(&mut images, &h, &pic, Some(&flag), true);
+        assert_eq!(pixel(&images, &h, 140, 70), [10, 10, 10]);
+        assert_eq!(pixel(&images, &h, 100, 70), [200, 100, 50]);
+    }
 }

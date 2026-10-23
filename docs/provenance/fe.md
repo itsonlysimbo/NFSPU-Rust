@@ -619,5 +619,11 @@ Source: the retail track-room class (read-only reference, our own words), the sh
 - **Guesses**: the picture order and which panel face comes first; the tilt sign; that the near wall's
   back faces are culled (we cull them, else the fly-in starts behind a wall); the exact draw order
   of the five room draws (read as room, then walls at 0, 0.25, 0.5, 0.75); the 0.5 light gain is the
-  garage's. Not done: the small overlay drawn from the fsh header (flags/caption) when a picture
-  starts; the room's tint.
+  garage's. Not done: the room's tint.
+- **Flag overlay (2026-10-23)**: when the first picture (slot 0) is drawn onto a face, retail also
+  draws one of the file's two 28x16 flags (entries 5 and 6) on top, at the position held in the
+  flag's header (shorts at +8 and +10, e.g. 134,65 in `Monaco1Sp`). With the mirror option it flips
+  the picture and the flag's position (flag itself upright). Which flag is which (we use the second
+  for backward directions) and the mirror reading are **guesses**. Check: unit test in
+  `menu_location.rs`; the log line shows `2 flag(s)`. The 2D map box hides the wall's face in
+  captures, so it is **not seen on screen**.

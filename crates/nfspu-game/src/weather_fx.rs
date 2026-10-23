@@ -62,6 +62,8 @@ pub struct WeatherInput {
 pub struct WeatherState {
     pub track: TrackWeather,
     path: Option<RoadPath>,
+    /// Per slice: a roof is over the road there (retail's "covered" flag; see `track::covered_points`).
+    covered: Vec<bool>,
     slice: Option<usize>,
     /// Conditions at the camera's slice this frame.
     pub now: Conditions,
@@ -87,9 +89,19 @@ impl WeatherState {
         let game = PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
         let weather = TrackWeather::load(&game, track, WeatherOverride::from_env(), TimeOverride::from_env());
         let path = crate::race_path::load(track, crate::race_path::Direction::Forward).ok().map(|r| r.path);
+        let covered = match (&path, crate::track::load_ground(track)) {
+            (Some(p), Ok(g)) => {
+                let points: Vec<Vec3> = p.slices.iter().map(|s| s.pos).collect();
+                let c = crate::track::covered_points(&g.ceilings, &points);
+                crate_log(&format!("covered slices on {track}: {} of {}", c.iter().filter(|&&x| x).count(), c.len()));
+                c
+            }
+            _ => Vec::new(),
+        };
         Self {
             track: weather,
             path,
+            covered,
             slice: None,
             now: Conditions::default(),
             region_blend: 0.0,
@@ -123,6 +135,11 @@ impl WeatherState {
         let path = self.path.as_ref()?;
         let i = path.nearest(p);
         Some((i, path.slices.get(i)?.pos))
+    }
+
+    /// A roof is over the given slice.
+    pub fn is_covered(&self, slice: usize) -> bool {
+        self.covered.get(slice).copied().unwrap_or(false)
     }
 
     /// Night lighting is on for this track.
