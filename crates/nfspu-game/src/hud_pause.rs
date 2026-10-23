@@ -86,7 +86,9 @@ pub fn draw(out: &mut Vec<HudDraw>, settings: &HudSettings, view: &PauseView, sc
     out.push(HudDraw::Gradient { rect: panel, top: [0.95, 0.84, 0.45, 0.62], bottom: [0.66, 0.80, 0.80, 0.62] });
     let bar = 24.0 * s;
     out.push(HudDraw::Gradient { rect: [panel[0], panel[1], panel[2], bar], top: [0.0, 0.0, 0.0, 0.9], bottom: [0.0, 0.0, 0.0, 1.0] });
-    out.push(HudDraw::Gradient { rect: [panel[0], panel[1] + panel[3] - bar, panel[2], bar], top: [0.0, 0.0, 0.0, 1.0], bottom: [0.0, 0.0, 0.0, 0.9] });
+    // Footage: the bottom strip is thinner than the title bar (about 5% vs 8% of the panel).
+    let foot = 16.0 * s;
+    out.push(HudDraw::Gradient { rect: [panel[0], panel[1] + panel[3] - foot, panel[2], foot], top: [0.0, 0.0, 0.0, 1.0], bottom: [0.0, 0.0, 0.0, 0.9] });
 
     let font = if settings.layout.fonts[1].is_empty() { settings.layout.fonts[0].clone() } else { settings.layout.fonts[1].clone() };
     let pad = 12.0 * s;

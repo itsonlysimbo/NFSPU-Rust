@@ -43,10 +43,10 @@ pub enum Draw {
     /// shown only where the `stencil` pieces (rectangles and pictures) cover; an empty stencil
     /// shows the whole rectangle.
     Movie { rect: Rect, source: String, stencil: Vec<Draw> },
-    /// An animated icon (`NFS5.BOTTOMBARBUTTON`): frames of `file`, from `idle`, from `hover` while
-    /// the pointer is over `rect`, or from `down` while it is also pressed; otherwise as `Picture`.
     /// The bright light that runs once round a hovered button's outline (measured from retail footage).
     Glint { rect: Rect },
+    /// An animated icon (`NFS5.BOTTOMBARBUTTON`): frames of `file`, from `idle`, from `hover` while
+    /// the pointer is over `rect`, or from `down` while it is also pressed; otherwise as `Picture`.
     Anim { file: String, idle: Frames, hover: Frames, down: Frames, rect: Rect, pos: [f32; 2], flip: u8, alpha: f32 },
 }
 
