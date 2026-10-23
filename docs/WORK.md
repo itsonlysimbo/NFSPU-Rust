@@ -53,6 +53,8 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Merged as |
 |---|---|
+| Cloud: race sound channels (rain, wet road, opponent skids/hits, Doppler, commentator) | `1695259` |
+| Cloud: opponents and autopilot pass and brake for traffic | `8edda25` |
 | AI route choice at junctions (verified against `.jnc` on 7 tracks) | `8d39abc` |
 | Car paint sun highlight and lamp glow | `845babe` |
 | Côte d'Azur water, smooth cockpit wheel | `510f236` |
