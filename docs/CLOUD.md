@@ -77,6 +77,13 @@ settings allow. A session needs **both** `itsonlysimbo/NFSPU-Rust` and
 Verified: with both repos attached and `GAMEDATA_TOKEN` and `NFSPU_GAME_DIR` set in the
 `Default` environment, the start-up hook fills `/opt/nfs5`.
 
+## Reporting back
+Cloud sessions can't message the local coordinator. They report through GitHub: push the task
+branch (`claude/cloud-*`) after every step, and keep the task's row in `docs/WORK.md` on that
+branch starting with `WORKING`, `DONE` or `BLOCKED: <question>`. The local coordinator fetches
+every 30 minutes while the PC is awake, merges `DONE` branches, and passes `BLOCKED` questions to
+the user.
+
 ## Known risks (not tested yet)
 
 - **Letter case.** Windows ignores upper and lower case in file names; Linux doesn't. The code
