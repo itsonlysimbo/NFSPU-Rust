@@ -28,6 +28,9 @@ pub struct ShopUi {
     pub basket_sel: usize,
     /// Part ids picked for purchase.
     pub basket: Vec<u32>,
+    /// The test-drive popup's location (an index into `test_tracks`) and the page showing.
+    pub test_track: usize,
+    pub page: String,
     paints: Mutex<HashMap<String, Vec<usize>>>,
 }
 
@@ -58,6 +61,33 @@ fn kind_label(kind: u16) -> &'static str {
     }
 }
 
+/// Which car a test drive uses and where (the menu turns it into a race with no rivals).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestDrive {
+    /// Index into the catalogue and the paint section to drive it in.
+    pub car: usize,
+    pub paint: usize,
+    /// `nfs5.trk` id of the location.
+    pub track: i16,
+    /// The owned car's position, when the drive uses one of the player's own cars (its parts count).
+    pub owned: Option<usize>,
+}
+
+/// The locations a test drive offers: the tracks the front end never locks (`locked` 0, the skid
+/// pad left out: the footage lists Cote d'Azur, Pyrenees, Normandie and Monte Carlo 3), then any
+/// track of a tournament open now (**guess** for the later eras).
+pub fn test_tracks(tracks: &[catalog::Track], open_ids: &[i16]) -> Vec<usize> {
+    let mut out: Vec<usize> = (0..tracks.len()).filter(|&i| tracks[i].locked == 0 && tracks[i].file != "skidpad").collect();
+    for id in open_ids {
+        if let Some(i) = tracks.iter().position(|t| t.id == *id) {
+            if !out.contains(&i) {
+                out.push(i);
+            }
+        }
+    }
+    out
+}
+
 impl ShopUi {
     pub fn load(game_dir: &Path) -> ShopUi {
         let parts = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.prt")).map(|b| career_shop::parse_parts(&b)).unwrap_or_default();
@@ -86,7 +116,7 @@ impl ShopUi {
     }
 
     /// The screens' data for the career `c` while page `page` is showing.
-    pub fn view(&self, c: &Career, cars: &[Car], locale: &Locale, language: u8, page: &str) -> View {
+    pub fn view(&self, c: &Career, cars: &[Car], tracks: &[catalog::Track], open_ids: &[i16], locale: &Locale, language: u8, page: &str) -> View {
         let s = |id: u32| locale.text(id, language).map(|t| t.trim().to_string()).unwrap_or_default();
         let shop = Shop { cars, parts: &self.parts };
         let mut v = View::default();
@@ -174,9 +204,48 @@ impl ShopUi {
                 v.lists.insert("Parts.ShoppingList".into(), ListData { selected: (!basket.is_empty()).then(|| self.basket_sel.min(basket.len() - 1)), rows: basket });
             }
         }
+        // The test-drive popup's location list.
+        if page.to_ascii_lowercase().starts_with("testdrive") {
+            let list = test_tracks(tracks, open_ids);
+            let at = self.test_track.min(list.len().saturating_sub(1));
+            let rows: Vec<Row> = list.iter().map(|&i| Row::item(s(tracks[i].name_string))).collect();
+            let closed = list.get(at).map(|&i| s(tracks[i].name_string)).unwrap_or_default();
+            v.choices.insert("Track1.Track".into(), Choice { rows, selected: at, closed, closed_swatch: None });
+            // The popup names the car being driven.
+            let (name, _) = self.test_car(c, cars, page);
+            v.watch.insert("OwnedCars.Car".into(), name.clone());
+            v.watch.insert("DealerCar.Car".into(), name.clone());
+            v.watch.insert("UsedCar.Car".into(), name);
+        }
         // Selling and "don't sell" share a place in the layout; selling is immediate here.
         v.hidden.push("ID_REMOVEFMBUTTON".into());
         v
+    }
+
+    /// The car a test-drive popup opened from `page` drives: its shown name and the car.
+    fn test_car(&self, c: &Career, cars: &[Car], page: &str) -> (String, Option<(usize, usize, Option<usize>)>) {
+        let page = page.to_ascii_lowercase();
+        let found = if page == "testdriveoval" {
+            let list = career_shop::dealer_cars(cars, c.year);
+            list.get(self.dealer.min(list.len().saturating_sub(1))).map(|&ci| (ci, self.paint_sections(&cars[ci]).get(self.dealer_paint).copied().unwrap_or(0), None))
+        } else if page == "testdrivesquare" {
+            let lot = self.lot(c, cars);
+            lot.get(self.used.min(lot.len().saturating_sub(1))).and_then(|(_, u)| cars.iter().position(|k| k.id == u.car).map(|ci| (ci, u.paint, None)))
+        } else {
+            let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+            c.cars.get(at).and_then(|o| cars.iter().position(|k| k.id == o.id).map(|ci| (ci, o.paint, Some(at))))
+        };
+        (found.map(|(ci, _, _)| cars[ci].name.clone()).unwrap_or_default(), found)
+    }
+
+    /// The test drive a button asks for, with the location picked in the popup. `page` is the
+    /// screen or popup it was pressed on. Test driving costs nothing and changes nothing.
+    pub fn test_drive(&self, c: &Career, cars: &[Car], tracks: &[catalog::Track], open_ids: &[i16], page: &str) -> Option<TestDrive> {
+        let (_, found) = self.test_car(c, cars, page);
+        let (car, paint, owned) = found?;
+        let list = test_tracks(tracks, open_ids);
+        let track = tracks[*list.get(self.test_track.min(list.len().saturating_sub(1)))?].id;
+        Some(TestDrive { car, paint, track, owned })
     }
 
     /// A dropdown pick on a shop screen. True when the accessor is one of ours.
@@ -187,6 +256,7 @@ impl ShopUi {
                 self.dealer_paint = 0;
             }
             "DealerCar.Colour" => self.dealer_paint = index,
+            "Track1.Track" if self.page.to_ascii_lowercase().starts_with("testdrive") => self.test_track = index,
             "UsedCar.Car" => self.used = index,
             "OwnedCar.ExtColour" => {
                 let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
@@ -321,12 +391,32 @@ mod tests {
         let cars = cars();
         let ui = ShopUi::default();
         let c = Career::new("T");
-        let v = ui.view(&c, &cars, &Locale::default(), 0, "garage");
+        let v = ui.view(&c, &cars, &[], &[], &Locale::default(), 0, "garage");
         assert_eq!(v.watch["OwnedCars.Car(PURCHASEPRICE)"], "$0");
         assert_eq!(v.watch["OwnedCars.Car(CURRENTVALUE)"], "$10,890");
         assert_eq!(v.watch["Tournament.Data(DEALERCARPRICE)"], "$11,000");
         assert_eq!(v.showcase, Some((0, 19)));
         assert!(v.hidden.contains(&"ID_REMOVEFMBUTTON".to_string()));
-        assert_eq!(ui.view(&c, &cars, &Locale::default(), 0, "tournament").showcase, None);
+        assert_eq!(ui.view(&c, &cars, &[], &[], &Locale::default(), 0, "tournament").showcase, None);
+    }
+
+    #[test]
+    fn a_test_drive_lists_the_open_locations_and_drives_the_chosen_car() {
+        let track = |id: i16, file: &str, locked: i16| catalog::Track { id, file: file.into(), locked, ..Default::default() };
+        let tracks = vec![track(8, "coastal", 0), track(11, "alps", 3), track(32, "skidpad", 0), track(14, "farmland", 0)];
+        assert_eq!(test_tracks(&tracks, &[]), vec![0, 3]);
+        assert_eq!(test_tracks(&tracks, &[11, 8]), vec![0, 3, 1]);
+        let cars = cars();
+        let mut ui = ShopUi::default();
+        ui.test_track = 1;
+        let c = Career::new("T");
+        let drive = ui.test_drive(&c, &cars, &tracks, &[], "testdrivecarsetup").unwrap();
+        assert_eq!((drive.car, drive.paint, drive.track, drive.owned), (0, 19, 14, Some(0)));
+        let v = ui.view(&c, &cars, &tracks, &[], &Locale::default(), 0, "testdrivecarsetup");
+        assert_eq!(v.choices["Track1.Track"].rows.len(), 2);
+        ui.page = "testdrivecarsetup".into();
+        let mut c2 = c.clone();
+        assert!(ui.pick("Track1.Track", 0, &mut c2, &cars));
+        assert_eq!(ui.test_track, 0);
     }
 }

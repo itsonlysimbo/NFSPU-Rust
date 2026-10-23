@@ -84,3 +84,47 @@ our save file) and the career parts of `menu_mode.rs`. Nothing here is copied fr
    prize cars for the bonus tournaments, and the real payout timing.
 5. Club events (Factory Driver mode, eras 524-526) and the mission/licence tests.
 6. Reading a retail `.sav` profile into a career (the owned-car list is already readable).
+
+## Retail footage of the career (2026-10-23 11-33-02.mp4, 3:40, Greg's new career)
+
+Frames pulled to `extracted/footage/` (gitignored); contact sheets of three-second steps. **Seen**:
+nothing of the paint shop, parts or repair screens, and no event was raced; the recording ends
+with a test drive that bugged (no control of the car; treated as a retail bug, not copied).
+
+| Screen | What the footage shows |
+|---|---|
+| Main menu -> `evolution...` | Goes straight to `tournament` (no intro movie for this profile). Account bar shows `0` with an empty level bar: the new career starts with **$0** (confirms the slice-1 guess). Banner "CLASSIC ERA 1950" lit, Golden and Modern dim |
+| `tournament` | `car...` dropdown (closed text `356`), `garage...`, `event type` dropdown whose only entry is **"tournaments"** (string 470; ours showed the era name), `event` dropdown (closed `356`), `race info...`. Centre: entry fee 0, restrictions "356 models only", difficulty beginner, times completed 0, prize money 5,000, name "356 Challenge", description "A challenge for the new driver. A quick tournament showcasing Porsche's flagship sports car: the 356.", track list NORMANDIE / COTE D'AZUR (the next one in yellow) beside the track outline |
+| `prerace` ("race info") | Header `race info`; `info` dropdown (track), `practice run`, `garage...`, `repair`, `forfeit` (greyed, nothing to forfeit); map picture with left/right arrows; bottom right panel: track name, difficulty, record time. **Record times: Normandie 03:09.00, Cote d'Azur 02:44.00** (beginner) |
+| `garage` | Buttons car, new cars, used cars, sell, showcase, settings, repair, car setup, parts, paint shop; CONDITION bar (0 to 100, green); bottom panel `'50 356 1100 Cabriolet`, purchase price 11,000, current value **10,890** (matches our value rule). The car is the orange 356 on the lift; the rear view when entering, then it turns |
+| `dealership` ("porsche centre") | `car` dropdown (356), `color`, `interior`, `buy`, `test drive`, `showcase...`, `car compare...`; bottom panel name, car price 11,000, class "Classic 3". Two cars in 1950: Cabriolet and Coupe Ferdinand. Colour list: 14 or so swatches, scrolling. Doors open on the car |
+| `showcase` | Tabs `statistics` (general, chassis and drivetrain, performance data). 356: weight 790 Kg, length 3950, width 1660, height 1300, wheel base 2100 mm; layout rear-engine rear-drive, drum brakes, wheels 3.25 x 16, tyres 5.00 x 16, gears 3.09 / 1.765 / 1.227 / 0.96, final 4.428:1, reverse -3.6, 4-speed manual; 4 cylinder boxer 1086 cc, 40 bhp @ 4200, 51 lb-ft @ 2800, 5500 rpm, 7.0:1, 0-60 in 23.5 s |
+| `car compare` | Two cars with five bars: acceleration, top speed, braking, handling, overall. Cabriolet 30 / 40 / 56 / 30 / 41; Coupe Ferdinand 30 / 40 / 56 / 33 / 42 |
+| `car setup` | `test drive`, `save`, `load`, `default` buttons; sliders: ride height, stiffness, travel, toe-in, brake balance, downforce (50 / 50), tyre pressure (30 / 30); gear ratio bars; "part inventory" list (engine, brakes, transmission, suspension, shocks, tyres with "356 Standard ..." parts, all INSTALLED) and `uninstall part` / `parts description` |
+| test drive popup | Title `test drive`, the car name, a `LOCATION` list: **Cote d'Azur, Pyrenees, Normandie, Monte Carlo Circuit 3** (the four `locked` = 0 tracks of `nfs5.trk` without the skid pad), buttons `test drive` and `cancel`. Then the loading screen with the chosen track, then the drive |
+| test drive HUD | Damage car and 0 to 100 % bar top left, `record` 02:44.00 and a `time` counter (counts up) top right, rear mirror strip, two gauges, gear, the track map at the bottom left. No position or lap. The car did not move (retail bug) |
+
+### Differences found, and what was done
+- Event type list: "tournaments" (string 470), not the era name. **Fixed** (`career.rs`).
+- Test drive: the whole popup and drive were missing. **Built** (below).
+- The 3D showcase / car compare / car setup screens are drawn from their layouts by the generic
+  screen code; their data (car statistics, comparison bars, setup sliders, part inventory) is **not
+  fed** yet (see "Still open").
+
+### Test drive (built, slice 3)
+`TESTDRIVECHECK` (car setup) opens `testdrivecarsetup`; the dealership's `testdriveoval` and the used
+lot's `testdrivesquare` popups hold the same location list (`Track1.Track`) and their buttons
+(`TESTDRIVENEW`, `TESTDRIVEUSED`, `TESTDRIVECARSETUP`) start the drive. The pre-race `practice run`
+(`TESTDRIVE`) drives the next race's track. A drive is a race with no rivals, no traffic, 8 laps (so
+a point-to-point road ends after one run and the results close back to the screen the drive was
+started from), in the car and paint the screen showed (an owned car brings its fitted parts; a
+dealer or used car is stock). Nothing is paid and nothing is recorded. The retail HUD for a test drive
+(record + running time, no position) is not copied: ours shows the race HUD (**guess**).
+
+### Era change (built, slice 3)
+When the last regular tournament of an era completes, the year moves to the next era (slice 1 rule)
+and the `VictoryMessage` popup opens over the tournament screen: header "YOU HAVE PROGRESSED INTO
+GOLDEN ERA!" (string 19001; the other eras use the era name, **guess**) and the text of strings
+19005 + 19002 + 19003 + 19004 + 19006 + 19000: an offer to win the 1978 935 "Moby Dick" in a bonus
+race at Monaco, with a practice-run hint. The prize-car race (`VictoryRoom`, 3D `ID_VICTORY` room,
+`PrizeCars.Car`) is **not built**; the bonus tournament simply opens (slice 1 rule).

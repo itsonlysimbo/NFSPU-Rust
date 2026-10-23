@@ -532,8 +532,9 @@ impl Career {
         let chosen = self.chosen_tournament.min(open.len().saturating_sub(1));
         let rows = |f: &dyn Fn(&Tournament) -> u32| open.iter().map(|t| Row::item(s(f(t)))).collect::<Vec<_>>();
         let closed = |f: &dyn Fn(&Tournament) -> u32| open.get(chosen).map(|t| s(f(t))).unwrap_or_default();
-        // The event type list holds the current era's name (**guess**: its use was not traced).
-        let era = s(era_of_year(self.year));
+        // The event type list holds one entry, "tournaments" (string 470; retail footage). The
+        // era name is shown by the screen's era banner instead.
+        let era = s(470);
         out.insert("Tournament.EventType".into(), Choice { rows: vec![Row::item(era.clone())], selected: 0, closed: era, closed_swatch: None });
         out.insert("Tournament.Tournament".into(), Choice { rows: rows(&|t| t.name), selected: chosen, closed: closed(&|t| t.short), closed_swatch: None });
         let owned: Vec<String> = self.cars.iter().map(|c| cars.iter().find(|k| k.id == c.id).map(|k| k.name.clone()).unwrap_or_default()).collect();
@@ -557,6 +558,14 @@ impl Career {
         let s = |id: u32| locale.text(id, language).map(|t| t.trim().to_string()).unwrap_or_default();
         let mut out = BTreeMap::new();
         out.insert("Tournament.Data(ACCOUNT)".into(), money(self.cash));
+        // The era-change message (`VictoryMessage`): the retail strings 19000-19006 are the golden
+        // era's text (header, the prize car offer, the bonus race at Monaco); the other eras reuse
+        // them with their own name in the header (**guess**: only golden's strings exist).
+        let era = era_of_year(self.year);
+        let header = if era == 522 { s(19001) } else { format!("YOU HAVE PROGRESSED INTO {}!", s(era)) };
+        out.insert("Tournament.Data(ENDERAHEADER)".into(), header);
+        let text: Vec<String> = [19005, 19002, 19003, 19004, 19006, 19000].iter().map(|id| s(*id)).collect();
+        out.insert("Tournament.Data(ENDERADESCRIP)".into(), text.join(" "));
         let open = self.open_tournaments(all);
         let Some(t) = open.get(self.chosen_tournament.min(open.len().saturating_sub(1))) else { return out };
         out.insert("Tournament.Tournament".into(), s(t.name));

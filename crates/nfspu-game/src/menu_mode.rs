@@ -116,13 +116,15 @@ struct CareerMode {
     /// The shop screens' state (dealership, used cars, parts ...) and the page they are showing.
     ui: nfspu_game::career_ui::ShopUi,
     page: String,
+    /// A race just finished the era: the era-change message opens when the menu comes back.
+    era_message: bool,
 }
 
 impl CareerMode {
     fn load(game_dir: &std::path::Path) -> CareerMode {
         let data = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.trn")).map(|b| career::parse_tournaments(&b)).unwrap_or_default();
         let forced_place = std::env::var("NFSPU_CAREER_PLACE").ok().and_then(|v| v.trim().parse().ok());
-        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place, ui: nfspu_game::career_ui::ShopUi::load(game_dir), page: String::new() }
+        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place, ui: nfspu_game::career_ui::ShopUi::load(game_dir), page: String::new(), era_message: false }
     }
 }
 
@@ -175,7 +177,8 @@ impl FrontEnd {
             self.session.choices.extend(c.choices(&self.career.data, &self.quick.cars, &self.quick.tracks, &self.locale, self.language));
             self.session.watch.extend(c.watches(&self.career.data, &self.quick.tracks, &self.locale, self.language));
             let page = if self.career.page.is_empty() { self.page.name.clone() } else { self.career.page.clone() };
-            let view = self.career.ui.view(c, &self.quick.cars, &self.locale, self.language, &page);
+            let open_ids: Vec<i16> = c.open_tournaments(&self.career.data).iter().flat_map(|t| career::Career::race_tracks(t, &self.career.data)).collect();
+            let view = self.career.ui.view(c, &self.quick.cars, &self.quick.tracks, &open_ids, &self.locale, self.language, &page);
             self.session.choices.extend(view.choices);
             self.session.watch.extend(view.watch);
             self.session.lists = view.lists;
@@ -190,6 +193,7 @@ impl FrontEnd {
     /// Notes the page about to show (the shop screens pick their 3D car and logo by it).
     fn note_page(&mut self, name: &str) {
         self.career.page = name.to_string();
+        self.career.ui.page = name.to_string();
         self.sync_quick();
     }
 
@@ -266,6 +270,51 @@ impl FrontEnd {
         Some(setup)
     }
 
+    /// A test drive from the shop screens as a race setup: the car and paint the screen showed, the
+    /// chosen location, no rivals and no traffic, the longest lap count (retail's own test drive
+    /// could not be used: it gave no control of the car). Nothing is paid or recorded.
+    fn start_test_drive(&mut self, page: &str) -> Option<nfspu_game::race_setup::RaceSetup> {
+        let c = self.career.career.as_ref()?;
+        let open_ids: Vec<i16> = c.open_tournaments(&self.career.data).iter().flat_map(|t| career::Career::race_tracks(t, &self.career.data)).collect();
+        let drive = self.career.ui.test_drive(c, &self.quick.cars, &self.quick.tracks, &open_ids, page)?;
+        let track = self.quick.tracks.iter().find(|k| k.id == drive.track)?.clone();
+        let car = self.quick.cars.get(drive.car)?.clone();
+        let tuning = drive.owned.map(|at| c.tuning_of(at, &career::Shop { cars: &self.quick.cars, parts: &self.career.ui.parts }));
+        let mut setup = self.quick.setup(&self.locale, self.language);
+        setup.track = track.file.clone();
+        setup.track_id = track.id;
+        setup.track_name = self.locale.text(track.name_string, self.language).unwrap_or_default().trim().to_string();
+        setup.direction = nfspu_game::race_setup::Direction::Forward;
+        setup.laps = 8;
+        setup.opponents = 0;
+        setup.traffic = 0;
+        setup.car_id = car.id;
+        setup.car_model = car.model.clone();
+        setup.car_name = car.name.clone();
+        setup.car_style = car.style;
+        setup.owned_car = drive.owned.is_some();
+        setup.paint_section = drive.paint;
+        setup.custom_colour = None;
+        setup.difficulty = track.difficulty.clamp(0, 2) as u8;
+        setup.tuning = tuning.unwrap_or_default();
+        // Nothing is paid for a test drive.
+        self.career.pending = None;
+        // The popup that asked closes, so the screen comes back as it was left.
+        self.popup = None;
+        crate::log_line(&format!("career: test drive of '{}' on '{}' from {page}", car.name, track.file));
+        Some(setup)
+    }
+
+    /// Opens the era-change message (`VictoryMessage`) over the current page.
+    fn open_era_message(&mut self) {
+        self.sync_quick();
+        let Some(next) = self.load("VictoryMessage") else { return };
+        let snapshot = (self.page.clone(), self.popup.clone());
+        self.history.push(snapshot);
+        self.popup = Some(next);
+        crate::log_line("career: era change message opened");
+    }
+
     /// Back from a race: pays the place and moves the tournament on. `place` 0: not finished.
     fn settle_career_race(&mut self, place: usize) {
         let Some(id) = self.career.pending.take() else { return };
@@ -287,6 +336,7 @@ impl FrontEnd {
         }
         if payout.new_year.is_some() {
             c.chosen_tournament = 0;
+            self.career.era_message = true;
         }
         self.sync_quick();
     }
@@ -915,6 +965,21 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
             for step in script.split(';').map(str::trim).filter(|x| !x.is_empty()) {
                 let st = &mut state;
                 let Some(c) = st.career.career.as_mut() else { break };
+                if step == "ERA" {
+                    // Completes every regular tournament of the era (test hook for era progression).
+                    let data = st.career.data.clone();
+                    let era = career::era_of_year(c.year);
+                    for t in data.iter().filter(|t| t.era == era && !t.bonus) {
+                        for _ in 0..career::Career::race_tracks(t, &data).len() {
+                            let p = c.finish_race(t, &data, 1);
+                            if let Some(y) = p.new_year {
+                                crate::log_line(&format!("career: era advance to {y} (cash {})", career::money(c.cash)));
+                                st.career.era_message = true;
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if let Some((kind, rest)) = step.split_once(':') {
                     let Some((accessor, n)) = rest.split_once('=') else { continue };
                     let n = n.trim().parse().unwrap_or(0);
@@ -928,6 +993,9 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
             state.save_career();
         }
         state.reload();
+        if std::mem::take(&mut state.career.era_message) {
+            state.open_era_message();
+        }
     }
     state.reload();
     match popup_name.as_deref() {
@@ -985,6 +1053,10 @@ fn enter_menu(
     }
     // Screens are rebuilt (the page and popup as they were) and drawn afresh.
     state.reload();
+    // The era just ended: the era-change message comes up over the tournament screen.
+    if std::mem::take(&mut state.career.era_message) {
+        state.open_era_message();
+    }
     state.stack();
     // The screens come on as on any screen change (retail's menus start in their "coming on"
     // state).
@@ -1069,7 +1141,15 @@ fn flow_test_menu(
         state.stack();
     }
     crate::log_line(&format!("flow test: pressing RACE for race {}", test.done + 1));
-    let setup = if state.career.on { state.start_career_race() } else { None };
+    // `NFSPU_CAREER_TESTDRIVE=1` drives the chosen car on a test drive instead of racing.
+    let setup = if state.career.on && std::env::var("NFSPU_CAREER_TESTDRIVE").as_deref() == Ok("1") {
+        let page = state.career.page.clone();
+        state.start_test_drive(&page)
+    } else if state.career.on {
+        state.start_career_race()
+    } else {
+        None
+    };
     flow::start_race_from_menu(setup.unwrap_or_else(|| state.start_race()), &mut commands, &mut next);
 }
 
@@ -1440,6 +1520,41 @@ fn click(
                     state.history.push(snapshot);
                     state.page = next;
                     state.popup = None;
+                }
+                // The car-setup screen's test drive opens the location popup; its button, and the
+                // dealership's and used-car lot's (reached through their own popups), start the drive.
+                "TESTDRIVECHECK" => {
+                    let Some(next) = state.load("testdrivecarsetup") else { return };
+                    state.note_page("testdrivecarsetup");
+                    let snapshot = (state.page.clone(), state.popup.clone());
+                    state.history.push(snapshot);
+                    state.popup = Some(next);
+                }
+                "TESTDRIVECARSETUP" | "TESTDRIVENEW" | "TESTDRIVEUSED" | "TESTDRIVE" if state.career.on => {
+                    let page = state.popup.as_ref().unwrap_or(&state.page).name.clone();
+                    // The used-car lot's own button also opens the location popup (its destination).
+                    if name == "TESTDRIVE" && !page.eq_ignore_ascii_case("prerace") {
+                        return;
+                    }
+                    // A practice run from the pre-race screen goes to the next race's track.
+                    if name == "TESTDRIVE" {
+                        if let Some(first) = state.career.career.as_ref().and_then(|c| {
+                            let open = c.open_tournaments(&state.career.data);
+                            let t = open.get(c.chosen_tournament.min(open.len().saturating_sub(1)))?;
+                            career::Career::race_tracks(t, &state.career.data).get(c.next_race(t)).copied()
+                        }) {
+                            let open_ids = vec![first];
+                            if let Some(at) = nfspu_game::career_ui::test_tracks(&state.quick.tracks, &open_ids).iter().position(|&i| state.quick.tracks[i].id == first) {
+                                state.career.ui.test_track = at;
+                            }
+                        }
+                    }
+                    let Some(setup) = state.start_test_drive(&page) else {
+                        crate::log_line("career: test drive: no car or location");
+                        return;
+                    };
+                    flow::start_race_from_menu(setup, &mut commands, &mut next);
+                    return;
                 }
                 "TRACK1INC" | "LOOPEDINC" => state.quick.step_track(1),
                 "TRACK1DEC" | "LOOPEDDEC" => state.quick.step_track(-1),

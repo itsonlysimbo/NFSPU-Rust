@@ -723,7 +723,7 @@ fn append_control_with(
 
     let link = data.get("destination").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let back = link.is_none()
-        && data.get("callback").map(|c| c.trim().eq_ignore_ascii_case("GOBACK")).unwrap_or(false);
+        && data.get("callback").map(|c| ["GOBACK", "GOBACKMINUSONE"].iter().any(|b| c.trim().eq_ignore_ascii_case(b))).unwrap_or(false);
     let colour = data.get("maincolor").and_then(|c| eval_colour(c, &data));
     let hover = data.get("hovercolor").and_then(|c| eval_colour(c, &data));
 
