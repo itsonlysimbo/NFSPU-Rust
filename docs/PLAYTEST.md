@@ -125,3 +125,8 @@ Add a line per playtest: date, recording path, what was wrong.
 - Wait 4 s without touching: the picture should change by itself to another view of the track.
 - Check the seams between the 12 panels (thin lines are visible in our captures) and the room's
   brightness against retail.
+
+## Traffic (2026-10-23, `claude/traffic-4f929a`)
+Set Traffic to light/medium/heavy in the quick-race menu (`NFSPU_TRAFFIC=1..3` from the command line). Check: cars appear
+ahead without popping in view, both directions, lanes sensible, they slow for you, hits shove both cars and cause damage,
+nothing floats or sits across the road, the frame rate holds on heavy. Counts, lanes and speeds are guesses.

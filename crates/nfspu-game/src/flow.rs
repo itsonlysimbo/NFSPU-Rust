@@ -99,11 +99,12 @@ impl RaceConfig {
         let loading = format!("{},{}{}{}", setup.track, setup.car_model, if backward { ",reverse" } else { "" }, if mirrored { ",mirror" } else { "" });
         let rules = format!("{},{},{},{},{}", setup.track, setup.direction.word(), setup.laps, setup.opponents.min(7), setup.difficulty.min(2));
         let opponents: Vec<String> = opponent_cars(&setup).iter().map(|id| id.to_string()).collect();
-        log_line(&format!("flow: race loading={loading} rules={rules} opponents={} (traffic not simulated yet)", opponents.join(",")));
+        log_line(&format!("flow: race loading={loading} rules={rules} opponents={} traffic={}", opponents.join(","), setup.traffic));
         let mut race = RaceRequest::parse(&rules);
         if let Some(r) = &mut race {
             r.opponent_cars = opponents;
             r.damage = setup.damage;
+            r.traffic = setup.traffic.min(3) as u8;
         }
         let options = setup.car_options();
         RaceConfig {
