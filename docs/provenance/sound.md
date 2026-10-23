@@ -172,8 +172,26 @@ mono mix of that recording.
 
 No telemetry sits in the recording, so the engine pitch is compared as ratios and absolute frequency, not per gear.
 
+### Ours against the footage (GT1, outside view, `sound_render` example)
+
+`cargo run -p nfspu-game --example sound_render` (CAR=gt1) mixes the engine layers, road and wind offline at fixed
+engine speeds with the race's own rules and writes `extracted/footage/ours_*.wav`. The GT1 uses engine set `sd6b`
+and `GT1race.spl` (pitch scale 78, step scale 139).
+
+| Engine speed (of redline) | Our dominant partials (Hz) | Retail | Our mix, MIX 0.7 / 0.6 (dBFS) |
+|---|---|---|---|
+| 0.19 (idle) | 59, 120, 179 | 62, 123 | -12.2 / -13.5 |
+| 0.30 | 76, 152, 255 | 78, 155 (in gear) | -12.1 / -13.4 |
+| 0.80 | 152, 305 | 155, 311 | -8.2 / -9.5 |
+| 1.00 | 185, 366 | highest seen 173 | -8.2 / -9.5 |
+
+- **Pitch**: within 5% at idle (59 against 62 Hz) and 2% in gear (152/305 against 155/311). The pitch rule needs no change. The idle-to-top ratio is 3.1 in ours against 2.8 seen (the recording may never reach the redline).
+- **Level**: retail is flat at -10 to -14 dBFS (median -11.7) from idle to top speed; ours climbed from -12.2 to -8.2, up to 3.5 dB hot at speed. `MIX` in `race_audio.rs` went from 0.7 to 0.6 (-1.3 dB), putting idle at -13.5 and top speed at -9.5: within 2.5 dB of retail at both ends. Tolerance used: 3 dB on level, 5% on pitch.
+- Retail's level barely rises with speed; ours does (engine volume grows with speed, wind and road fade in). Not changed: the retail mixer rule for that is unknown and the camera view of the recording is not known.
+- **Not compared**: skids, wall hits, opponents, ambience and the countdown voice. The recording has no telemetry or event markers to line them up against, and our own audio cannot be captured live here (the machine has no loopback device). Their levels still come from the decoded rules above.
+
 ## Not done / not verified
 
-- None of the levels has been compared with a retail recording. The overall balance between engine, effects and speech is a guess (`MIX` = 0.7 on everything).
+- Only the engine, road and wind mix has been compared with a retail recording (see above; `MIX` = 0.6). Skids, hits, opponents, ambience and speech levels are not.
 - The `c` table set (its camera mode is not identified), road surfaces other than tarmac (dry/wet), opponents' car-against-car hits, and the commentator's position, record and gap lines are not modelled.
 - The rain, Doppler, opponent skid/hit, wet skid, sideways swing and commentator-timing rules above are guesses, to check against the decomp and a retail recording.

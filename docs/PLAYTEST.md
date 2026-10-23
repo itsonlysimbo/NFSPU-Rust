@@ -159,3 +159,7 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 - Check: does the payout size feel right? Does retail pay per race or at the end? Does the
   description text under the event name appear in retail (ours is missing)? Entry fee and start
   cash are guesses.
+
+## Race sound level (footage-sound, 2026-10-23)
+- The whole race mix (`MIX`) went down from 0.7 to 0.6 to match your GT1 recording (about -10 to -14 dBFS). Listen for: engine, road and wind at top speed no longer louder than idle by a lot; nothing clipping when engine, wind and a skid overlap. If it now sounds too quiet next to retail, say so and it goes back up.
+- Engine pitch was measured to be within 5% of retail (idle about 60 Hz, in gear about 155/310 Hz), so no change there; tell me if the idle or redline note sounds off.

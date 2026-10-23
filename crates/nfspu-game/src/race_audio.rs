@@ -20,9 +20,11 @@ use std::path::{Path, PathBuf};
 /// Sound levels, 0..1, from the player's Options > Audio settings (`audio_settings.rs`).
 use nfspu_game::audio_settings::AudioSettings as Levels;
 
-/// Overall scale on everything this module plays (a guess to leave headroom when several
-/// full-volume layers overlap).
-const MIX: f32 = 0.7;
+/// Overall scale on everything this module plays. Set from the retail GT1 recording
+/// (`docs/provenance/sound.md`): our engine+road+wind mix rendered offline (`sound_render`)
+/// sat 0 to 3.5 dB above retail's -10 to -14 dBFS at 0.7, and 0.6 puts idle and top speed
+/// both within 2.5 dB.
+const MIX: f32 = 0.6;
 
 pub struct RaceAudioPlugin;
 
