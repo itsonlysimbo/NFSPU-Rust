@@ -386,3 +386,11 @@ Measured by eye on 1080p frames (rear chase view, about 1 s apart); angles are r
 - 356 (11-10-04, chase from ~26 s to ~42 s, then cockpit around 22 s): see 7c. Tightest corner at ~39-40 s shows ~10 degrees roll plus the car yawing to the camera.
 - GT1 (race video, chase views from ~2:20 on): roll/pitch per corner and brake moment: **not measured**.
 - Then compare our `lean_check` output (logs/lean_check.txt) and a capture at the same corners.
+
+### 7c (measured 2026-10-23, GT1, chase, race video 222-238 s; angles by eye, +-2 degrees)
+- Straight and gentle bends: wing line level (0-1 degree).
+- Medium bends at about 200 km/h (wing tilt): 2-3 degrees of roll.
+- Tightest bend seen (about 235 s, car yawed to the camera): about 4-5 degrees, outward lean.
+- No visible pitch change on the chase view; brake-moment pitch **not measured** (no brake moments sampled).
+- So the GT1 rolls about half as much as the 356 (6-10), as a stiffer car should; our per-car
+  spring/damper values already give that ordering (compare logs/lean_check.txt: **not run**).
