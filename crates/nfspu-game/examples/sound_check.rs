@@ -50,6 +50,25 @@ fn main() {
         let found = a.iter().filter(|a| track.entries.iter().any(|e| rs::track_sound_number(&e.name) == Some(a.sound))).count();
         let _ = writeln!(out, "ambience {t}: {} sounds, {found} found in track.viv", a.len());
     }
+    // every SND_coll sound and the extra zzzwzzz banks (rain), for the channel tables in sound.md
+    if std::env::var("SOUND_CHECK_LIST").is_ok() {
+        let coll = rs::find_file(&rs::sounds_dir(&dir), "SND_coll.bnk").and_then(|p| std::fs::read(p).ok()).expect("SND_coll.bnk");
+        for (i, p) in nfspu_formats::bnk::parse(&coll).unwrap_or_default().iter().enumerate().skip(1) {
+            if let Some(p) = p {
+                let _ = writeln!(out, "SND_coll {:#04x}: {} ch {} Hz {:.2} s loop {} key {} fine {}", i - 1, p.channels, p.sample_rate, p.samples as f32 / p.sample_rate.max(1) as f32, p.looped(), p.key, p.fine);
+            }
+        }
+        for e in &opp.entries {
+            let n = e.name.to_ascii_lowercase();
+            if !n.ends_with("lden.bnk") && !n.ends_with("ldex.bnk") {
+                let pcm = opp.get(&e.name).and_then(|b| rs::decode(b, 0));
+                let _ = writeln!(out, "zzzwzzz {}: {:?}", e.name, pcm.map(|p| (p.channels, p.rate, p.seconds(), p.looped, p.key)));
+            }
+        }
+        for e in &speech.entries {
+            let _ = writeln!(out, "speech {} ({} bytes)", e.name, e.size);
+        }
+    }
     let _ = writeln!(out, "{} cars, {} engine sets, {fails} failures", cars.len(), seen.len());
     let _ = writeln!(out, "{}", if fails == 0 { "ALL OK" } else { "FAILED" });
     print!("{out}");

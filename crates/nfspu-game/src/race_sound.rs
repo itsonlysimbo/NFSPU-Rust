@@ -197,6 +197,9 @@ pub struct EngineInput {
     pub distance: f32,
     /// Car speed (m/s).
     pub speed: f32,
+    /// The camera's direction from the car along the car's right (-1 left .. 1 right; 0 from
+    /// straight behind or ahead), for the outside views' sideways balance swing.
+    pub side: f32,
 }
 
 /// The player's engine mixer: per-layer volumes (0..127) and the shared pitch, updated on the
@@ -261,7 +264,8 @@ impl EngineMix {
             v *= 0.6;
         }
         let p2 = (1686.0 * v / 16384.0).floor();
-        let (level, balance) = if input.near { (self.tuning.level_near, self.tuning.balance_near) } else { (self.tuning.level_far, self.tuning.balance_far) };
+        let t = &self.tuning;
+        let (level, balance) = if input.near { (t.level_near, t.balance_near) } else { (t.level_far, outside_balance(t.balance_far, t.swing_neg, t.swing_pos, input.side)) };
         let master = (level as f32 * p2 / 64.0).min(2047.0);
         let (bal_exhaust, bal_engine) = (fade(balance as f32), fade(128.0 - balance as f32));
         for (i, (curve, on_load, engine_side)) in self.curves.iter().enumerate() {
@@ -431,11 +435,197 @@ impl Wind {
     }
 }
 
+/// Speed of sound for the Doppler shift (m/s).
+pub const SOUND_SPEED: f32 = 343.0;
+
+/// Doppler pitch factor for a source whose distance to the listener grows at `separating` m/s
+/// (negative = closing): `c / (c + v)`, kept within half to double. Retail's own Doppler rule is
+/// **not traced**; this is the textbook one for a moving source and listener along the line
+/// between them.
+pub fn doppler(separating: f32) -> f32 {
+    (SOUND_SPEED / (SOUND_SPEED + separating.clamp(-SOUND_SPEED * 0.5, SOUND_SPEED))).clamp(0.5, 2.0)
+}
+
+/// An opponent's skid volumes (squeal, scrub; 0..1 before the effects level): the player's skid
+/// rule scaled by retail's distance volume, `2048 / (metres + 2)` capped at 127. That the
+/// opponents' skids use the same distance rule as their engines is our **guess**.
+pub fn opponent_skid(slide: f32, distance: f32) -> (f32, f32) {
+    let near = distance_volume(distance).min(127.0) / 127.0;
+    let (a, b) = skid_gains(slide);
+    (a * near, b * near)
+}
+
+/// An opponent's wall hit volume (0..1): the player's hit rule scaled by the distance volume
+/// (**guess**, as for the skids).
+pub fn opponent_hit(impact: f32, distance: f32) -> f32 {
+    hit_gain(impact) * distance_volume(distance).min(127.0) / 127.0
+}
+
+/// The rain on the car (`rain.bnk` in `zzzwzzz.viv`, one loop): louder with the sky's rain amount
+/// (0..1), muffled under cover, a little quieter heard from outside the car. Only the bank is
+/// from the install; the level rule is our **guess** (the retail channel is not traced).
+pub fn rain_gain(rain: f32, covered: bool, near: bool) -> f32 {
+    if covered {
+        return 0.0;
+    }
+    rain.clamp(0.0, 1.0) * EFFECT_LEVEL * if near { 1.0 } else { 0.7 }
+}
+
+/// The road-noise sound for a surface: retail's base 0x11 plus the surface's sound type. Dry
+/// tarmac is type 0 here; a wet road moves asphalt up one type (retail: type 5 to 6), so wet
+/// tarmac plays 0x12. The other surfaces are **not traced**.
+pub fn road_sound(wet: bool) -> usize {
+    coll::ROAD + wet as usize
+}
+
+/// Skid volumes on a wet road: retail switches the surface type, which picks another row of the
+/// skid table. Which row is not traced; ours keeps the scrub and quietens the tonal squeal to a
+/// third (**guess**: wet tyres hiss more than they squeal).
+pub fn wet_skid(gains: (f32, f32), wet: bool) -> (f32, f32) {
+    if wet {
+        (gains.0 / 3.0, gains.1)
+    } else {
+        gains
+    }
+}
+
+/// The engine balance for outside views with the sideways swing (`.spl` values 5 and 6): the
+/// usual outside balance (value 4) moves towards the engine side as the camera looks at the car
+/// from the side. `side` is the camera's direction from the car along the car's right
+/// (-1 left .. 1 right). How retail feeds this in is **not traced**; the swing values are 0x80
+/// on every shipped `.spl`, which here means a full side view halves the exhaust share.
+pub fn outside_balance(balance: u32, swing_left: u32, swing_right: u32, side: f32) -> u32 {
+    let side = side.clamp(-1.0, 1.0);
+    let swing = if side < 0.0 { swing_left } else { swing_right } as f32 / 128.0;
+    let b = balance as f32 * (1.0 - 0.5 * side.abs() * swing);
+    (b.round() as u32).min(128)
+}
+
+/// What the player's effect channels need each frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EffectInput {
+    /// Car speed (m/s).
+    pub speed: f32,
+    /// Strongest wheel slide, 0..1 (`Car::skid`).
+    pub skid: f32,
+    pub on_ground: bool,
+    /// The road under the car is wet now.
+    pub road_wet: bool,
+    /// Touching a wall.
+    pub hit_wall: bool,
+    /// The sky's rain amount at the camera, 0..1.
+    pub rain: f32,
+    /// Under cover from the rain.
+    pub covered: bool,
+    /// First-person view.
+    pub near: bool,
+}
+
+/// The player's looping effect channels: name, volume (0..1 before the effects level) and speed.
+pub fn effect_channels(i: &EffectInput, wind: &Wind, rain_ratio: f32) -> [(&'static str, f32, f32); 7] {
+    let (squeal, scrub) = wet_skid(skid_gains(if i.speed.abs() > 2.0 { i.skid } else { 0.0 }), i.road_wet);
+    let road = if i.on_ground { road_gain(i.speed) } else { 0.0 };
+    let scrape = if i.hit_wall && i.speed.abs() > 2.0 { EFFECT_LEVEL * (i.speed.abs() / 20.0).min(1.0) } else { 0.0 };
+    let wind_gain = wind.gain(i.speed) * if i.near { 1.0 } else { 0.5 };
+    [
+        ("skid squeal", squeal, 1.0),
+        ("skid scrub", scrub, 1.0),
+        ("road", if i.road_wet { 0.0 } else { road }, 1.0),
+        ("wet road", if i.road_wet { road } else { 0.0 }, 1.0),
+        ("wall scrape", scrape, 1.0),
+        ("wind", wind_gain, wind.speed()),
+        ("rain", rain_gain(i.rain, i.covered, i.near), rain_ratio),
+    ]
+}
+
+/// One opponent's sounds this frame (volumes 0..1 before the player's levels).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpponentMix {
+    pub approach: f32,
+    pub away: f32,
+    /// Engine pitch before each loop's key ratio and the Doppler factor.
+    pub pitch: f32,
+    pub doppler: f32,
+    pub squeal: f32,
+    pub scrub: f32,
+}
+
+/// An opponent at `distance` m whose heading points `receding` (-1..1) away from the listener and
+/// whose distance grows at `separating` m/s, sliding `skid` (0..1) at `speed` m/s.
+pub fn opponent_mix(rpm_frac: f32, distance: f32, receding: f32, separating: f32, skid: f32, speed: f32) -> OpponentMix {
+    let (approach, away, pitch) = opponent_engine(rpm_frac, distance, receding);
+    let (squeal, scrub) = opponent_skid(if speed.abs() > 2.0 { skid } else { 0.0 }, distance);
+    OpponentMix { approach, away, pitch, doppler: doppler(separating), squeal, scrub }
+}
+
+/// Writes when each looping channel becomes audible and when it falls silent again, with its
+/// loudest volume in between, so a log shows every channel's triggers without a line per frame.
+#[derive(Debug, Default, Clone)]
+pub struct TriggerLog {
+    /// Per channel: audible now, loudest volume since it started, tick it started.
+    channels: std::collections::BTreeMap<String, (bool, f32, u32)>,
+}
+
+impl TriggerLog {
+    /// Louder than this counts as audible; it must drop below half of it to count as silent again.
+    pub const AUDIBLE: f32 = 0.02;
+
+    /// Records a channel's volume (0..1, before the player's levels) at a tick; returns the line
+    /// to log when the channel starts or stops.
+    pub fn level(&mut self, tick: u32, name: &str, gain: f32) -> Option<String> {
+        let e = self.channels.entry(name.to_string()).or_insert((false, 0.0, 0));
+        if !e.0 && gain > Self::AUDIBLE {
+            *e = (true, gain, tick);
+            Some(format!("tick {tick}: {name} starts, volume {gain:.2}"))
+        } else if e.0 && gain < Self::AUDIBLE / 2.0 {
+            e.0 = false;
+            Some(format!("tick {tick}: {name} stops after {:.2} s, loudest {:.2}", (tick - e.2) as f32 / TICK_HZ, e.1))
+        } else {
+            e.1 = e.1.max(gain);
+            None
+        }
+    }
+
+    /// Whether a channel is audible now.
+    pub fn audible(&self, name: &str) -> bool {
+        self.channels.get(name).is_some_and(|e| e.0)
+    }
+}
+
 /// The countdown voice: `sor-a-3`, `-2`, `-1` and `-go` in `GameData/Speech/zzzx<lang>.viv`.
 pub fn countdown_entry(count: u8) -> String {
     match count {
         0 => "sor-a-go.bnk".to_string(),
         n => format!("sor-a-{n}.bnk"),
+    }
+}
+
+/// The commentator's line when the player starts lap `lap` of `total` (`oneshots.txt` groups
+/// `Phrase_kLap` and `Phrase_kFinalLap`): "final lap" on the last one, else the lap's number
+/// (`lap2`..`lap8`). Nothing for the first lap or a one-lap race. Retail picks among each group's
+/// variants by a rule we have not traced; ours always takes these ones.
+pub fn lap_line(lap: u32, total: u32) -> Option<String> {
+    if lap < 2 || lap > total {
+        None
+    } else if lap == total {
+        Some("lap-final.bnk".into())
+    } else if lap <= 8 {
+        Some(format!("lap{lap}.bnk"))
+    } else {
+        None
+    }
+}
+
+/// The commentator's line when the player finishes in `position` (1 = first) of `cars`
+/// (`Phrase_kRacePlacing`): "you won the race", "you placed Nth", or "you placed last" for the
+/// last of several cars.
+pub fn finish_line(position: usize, cars: usize) -> Option<String> {
+    const NTH: [&str; 8] = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
+    match position {
+        0 => None,
+        1 => Some("place-youwonrace.bnk".into()),
+        p if p == cars && cars > 2 => Some("place-youplacelast.bnk".into()),
+        p => NTH.get(p - 1).map(|n| format!("place-youplace{n}.bnk")),
     }
 }
 
@@ -555,7 +745,7 @@ mod tests {
     fn mixer_fades_coast_to_load_with_throttle() {
         let sound = EngineSound { name: "t".into(), layers: vec![layer(1, false, 127), layer(65, true, 127)], shift: None, tuning: Tuning::default(), tuned: false };
         let mut m = EngineMix::new(&sound);
-        let input = |throttle: f32| EngineInput { rpm_frac: 0.5, throttle, shifting: false, near: false, distance: 5.0, speed: 0.0 };
+        let input = |throttle: f32| EngineInput { rpm_frac: 0.5, throttle, shifting: false, near: false, distance: 5.0, speed: 0.0, side: 0.0 };
         for _ in 0..200 {
             m.tick(input(0.0));
         }
@@ -604,5 +794,72 @@ mod tests {
         assert_eq!(track_sound_number("95riverdistant1a_299.bnk"), Some(299));
         assert_eq!(countdown_entry(0), "sor-a-go.bnk");
         assert_eq!(countdown_entry(3), "sor-a-3.bnk");
+    }
+
+    #[test]
+    fn doppler_raises_closing_and_lowers_leaving() {
+        assert_eq!(doppler(0.0), 1.0);
+        // 50 m/s (180 km/h) straight at the listener: about 17% up; away: about 13% down
+        assert!((doppler(-50.0) - 1.171).abs() < 0.01, "{}", doppler(-50.0));
+        assert!((doppler(50.0) - 0.873).abs() < 0.01, "{}", doppler(50.0));
+        assert!(doppler(-1000.0) <= 2.0 && doppler(1000.0) >= 0.5);
+    }
+
+    #[test]
+    fn opponent_skid_and_hit_fall_with_distance() {
+        let (sq, scrub) = opponent_skid(1.0, 0.0);
+        assert!((sq - EFFECT_LEVEL).abs() < 1e-6 && (scrub - EFFECT_LEVEL).abs() < 1e-6);
+        let (sq_far, _) = opponent_skid(1.0, 100.0);
+        assert!((sq_far - EFFECT_LEVEL * 2048.0 / 102.0 / 127.0).abs() < 1e-4);
+        assert_eq!(opponent_skid(0.0, 1.0), (0.0, 0.0));
+        // a nearby car's hit (distance volume capped at 127) is as loud as the player's
+        assert_eq!(opponent_hit(10.0, 5.0), hit_gain(10.0));
+        assert!(opponent_hit(10.0, 200.0) < hit_gain(10.0) / 10.0);
+    }
+
+    #[test]
+    fn rain_road_and_wet_skids() {
+        assert_eq!(rain_gain(1.0, false, true), EFFECT_LEVEL);
+        assert_eq!(rain_gain(1.0, true, true), 0.0);
+        assert!((rain_gain(0.5, false, false) - 0.35 * EFFECT_LEVEL).abs() < 1e-6);
+        assert_eq!(rain_gain(0.0, false, true), 0.0);
+        assert_eq!(road_sound(false), 0x11);
+        assert_eq!(road_sound(true), 0x12);
+        assert_eq!(wet_skid((0.6, 0.3), true), (0.2, 0.3));
+        assert_eq!(wet_skid((0.6, 0.3), false), (0.6, 0.3));
+    }
+
+    #[test]
+    fn sideways_swing_moves_balance_to_the_engine() {
+        assert_eq!(outside_balance(64, 128, 128, 0.0), 64);
+        assert_eq!(outside_balance(64, 128, 128, 1.0), 32);
+        assert_eq!(outside_balance(64, 128, 128, -1.0), 32);
+        assert_eq!(outside_balance(64, 0, 128, -1.0), 64);
+        assert_eq!(outside_balance(64, 128, 64, 1.0), 48);
+    }
+
+    #[test]
+    fn trigger_log_reports_start_and_stop_once() {
+        let mut log = TriggerLog::default();
+        assert!(log.level(0, "rain", 0.0).is_none());
+        assert!(log.level(1, "rain", 0.5).unwrap().contains("starts"));
+        assert!(log.level(2, "rain", 0.6).is_none());
+        // between the two thresholds it stays on
+        assert!(log.level(3, "rain", 0.015).is_none());
+        let stop = log.level(65, "rain", 0.0).unwrap();
+        assert!(stop.contains("stops after 1.00 s, loudest 0.60"), "{stop}");
+        assert!(!log.audible("rain"));
+    }
+
+    #[test]
+    fn commentator_lines() {
+        assert_eq!(lap_line(1, 3), None);
+        assert_eq!(lap_line(2, 3).as_deref(), Some("lap2.bnk"));
+        assert_eq!(lap_line(3, 3).as_deref(), Some("lap-final.bnk"));
+        assert_eq!(lap_line(2, 1), None);
+        assert_eq!(finish_line(1, 8).as_deref(), Some("place-youwonrace.bnk"));
+        assert_eq!(finish_line(3, 8).as_deref(), Some("place-youplace3rd.bnk"));
+        assert_eq!(finish_line(8, 8).as_deref(), Some("place-youplacelast.bnk"));
+        assert_eq!(finish_line(2, 2).as_deref(), Some("place-youplace2nd.bnk"));
     }
 }

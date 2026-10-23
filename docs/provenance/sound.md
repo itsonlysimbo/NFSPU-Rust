@@ -131,7 +131,33 @@ What each skid kind and surface code means, and the input that drives the wind c
 
 `AUDIO_ELEMENT 4` entries with no orientation line: a position, then twelve numbers, then a name, e.g. `4 94 300.0 80.0 0 0 0 0 0 0 100 0` "Water Lapping". Read so far: mode, sound number (the `track.viv` entry ending `_94.bnk`), outer and inner radius, shortest and longest wait between plays (0 0 = a steady loop), and volume 0..100 (11th value). The executable preloads every sound whose outer radius reaches the start. Our fade (full inside the inner radius, nothing beyond the outer) and the meaning of the other numbers are **guesses**.
 
+## Channels added 2026-10-23 (cloud session, `claude/cloud-sound-channels`)
+
+No decomp access in that session (the Ghidra bridge was not running), so only the install's banks
+were read; every rule below that is not from the earlier notes is a **guess** and says so in
+`race_sound.rs`. Levels all go through the Options sliders (`AudioSettings`: rain, skids, hits and
+road on effects, opponent engines on engine, commentator on speech).
+
+| Channel | Sound | Rule (ours) | Evidence |
+|---|---|---|---|
+| Rain on the car | `rain.bnk` in `zzzwzzz.viv`: one mono sound, 8000 Hz, 1.84 s, **not looped**, key 57 | rain amount at the camera x effects level; x 0.7 from outside views; silent under cover (wet track, dry road under the car). We loop it and play it at its key ratio | bank listing (`SOUND_CHECK_LIST=1 sound_check`); rule a guess |
+| Wet road | `SND_coll` 0x12 (0x11-0x14 and 0x19 are the same 0.77 s loop, key 60 fine +50) | surface type moves up one when wet (weather.md: type 5 to 6), so 0x11 dry, 0x12 wet; same volume rule | weather.md + bank listing |
+| Skids on a wet road | 0x2a / 0x28 | squeal at a third, scrub unchanged | guess |
+| Opponent skids | 0x2a / 0x28, spatial | player's skid rule x distance volume (`2048/(m+2)` capped 127) | guess (same rule as their engines) |
+| Opponent wall hits | 0x40-0x42, spatial | player's hit rule x distance volume | guess |
+| Doppler | all opponent voices | pitch x `343 / (343 + v)`, v = how fast the distance grows, kept 0.5-2 | textbook rule, retail not traced |
+| Sideways balance swing | engine layers, outside views | balance x (1 - 0.5 x \|side\| x swing/128), swing = `.spl` value 5 (camera left) or 6 (right) | guess on the meaning of values 5/6 |
+| Commentator | speech archive | new lap: `lap2`..`lap8`, last lap `lap-final`; finish: `place-youwonrace`, `place-youplace<N>`, `place-youplacelast` (last of 3+) | phrase groups in `oneshots.txt`; which variant and when are guesses |
+
+`RACE_DRIVE_SOUND=1` makes `race_drive` run these rules with the listener on the player's car and
+write each channel's start/stop (with loudest volume), hits, passes with their Doppler factor and
+the voice lines to `logs/race_sound.log`. Autobahn, 3 opponents (2026-10-23): rain stops under the
+bridges and dry road takes over from wet road there; opponents' launch wheelspin triggers their
+skids; passes log Doppler x1.02 closing, x0.98 leaving at ~8 m/s; finish line `place-youplacelast`.
+Monaco1, 3 laps: `lap2` and `lap-final` at the line.
+
 ## Not done / not verified
 
 - None of the levels has been compared with a retail recording. The overall balance between engine, effects and speech is a guess (`MIX` = 0.7 on everything).
-- Doppler shift, the `c` table set, rain (`rain.bnk`), road surfaces other than tarmac, opponents' skids and hits, the commentator's other lines, and the sideways balance swing are not modelled.
+- The `c` table set (its camera mode is not identified), road surfaces other than tarmac (dry/wet), opponents' car-against-car hits, and the commentator's position, record and gap lines are not modelled.
+- The rain, Doppler, opponent skid/hit, wet skid, sideways swing and commentator-timing rules above are guesses, to check against the decomp and a retail recording.

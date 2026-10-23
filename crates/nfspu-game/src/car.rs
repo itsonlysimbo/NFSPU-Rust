@@ -41,6 +41,8 @@ pub struct Car {
     /// The road is wet (set by the race from the weather). Grip drops unless the car is under
     /// cover (retail: a surface more than 3.5 m above it).
     pub wet: bool,
+    /// The road under the car was wet during the last step (wet and not under cover).
+    pub road_wet: bool,
     /// The driving model.
     pub sim: CarSim,
     /// Collision box half sizes for car-against-car: length, width, height (m).
@@ -147,6 +149,7 @@ impl Car {
             impact: 0.0,
             landing: 0.0,
             wet: false,
+            road_wet: false,
             sim: CarSim::new(spec, aids),
             half: [2.2, 0.9, 0.65],
             pending: 0.0,
@@ -269,6 +272,15 @@ impl Car {
     }
 
     /// Engine speed for the rev counter.
+    /// The strongest wheel slide, 0..1 (a locked wheel counts as full), 0 in the air: what the
+    /// skid sounds follow.
+    pub fn skid(&self) -> f32 {
+        if !self.on_ground {
+            return 0.0;
+        }
+        self.sim.wheels.iter().map(|w| if w.locked { 1.0 } else { w.slide }).fold(0.0f32, f32::max)
+    }
+
     pub fn rpm(&self) -> f32 {
         self.sim.drive.rpm
     }
@@ -325,6 +337,7 @@ impl Car {
         };
         // on its side or roof the wheels are off the road: no grip, the body slides to a stop
         let wheels_down = self.on_ground && cp * cr > 0.5;
+        self.road_wet = wet;
         let contact = Contact { front_grounded: wheels_down, rear_grounded: wheels_down, forward_y: sp, right_y: sr, up_y: cp * cr, wet };
         self.sim.tick(self.yaw, ctl, contact);
         if self.on_ground && !wheels_down {

@@ -158,6 +158,10 @@ pub struct RaceStatus {
     pub car_places: Vec<[f32; 4]>,
     /// Each car's engine speed over its redline, by race index (for the engine sounds).
     pub car_rpm: Vec<f32>,
+    /// Each car's strongest wheel slide (0..1) and wall impact this frame (m/s), same order: the
+    /// opponents' skid and hit sounds.
+    pub car_skid: Vec<f32>,
+    pub car_impact: Vec<f32>,
     /// Each car's simulation name (`Spec::name`) by race index (for the engine sounds).
     pub car_specs: Vec<String>,
     /// Each car's catalogue name by race index (the results table's CAR column).

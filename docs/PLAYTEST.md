@@ -130,3 +130,13 @@ Add a line per playtest: date, recording path, what was wrong.
 Set Traffic to light/medium/heavy in the quick-race menu (`NFSPU_TRAFFIC=1..3` from the command line). Check: cars appear
 ahead without popping in view, both directions, lanes sensible, they slow for you, hits shove both cars and cause damage,
 nothing floats or sits across the road, the frame rate holds on heavy. Counts, lanes and speeds are guesses.
+
+## Race sound channels (2026-10-23, `claude/cloud-sound-channels`)
+Not tested by ear (made in a cloud session without speakers). Quick race on Autobahn with 3+ opponents:
+- Rain: a steady patter from the start; it should go quiet under the bridges and return after. Quieter from the chase view than the cockpit.
+- Wet road: tyre roll sounds the same loop as dry (the banks share it); skids should squeal less on the wet road than on Monaco.
+- Opponents: their tyres squeal when they slide near you (fainter far away); their wall hits sound from their direction.
+- Doppler: a car passing you should drop slightly in pitch as it goes by (about 2-5%). Compare with retail: stronger, weaker or absent?
+- Chase view: swinging the camera to the side of the car should bring out the engine-side layers a little.
+- Commentator: on a circuit, "lap 2" (etc.) at the line and "final lap" before the last; at the finish "you won the race" / "you placed Nth".
+
