@@ -462,9 +462,13 @@ Guesses, to check against retail:
   light, which we do not read yet. At night we scale the highlight by 0.35.
 - Glow blend: we add the picture's colour times its alpha. Two small offsets the engine adds to
   the picture coordinates (from distances computed with the slice) are left at 0.
-- "Covered" pictures are never used (we always take "open"). What sets the covered flag (a slice
-  flag, maybe tunnels) is not traced; Monaco 3-5 use glows only in the covered variant, so they
-  show none.
+- **Covered flag (traced 2026-10-23).** The car's per-frame lighting update asks the track for the
+  zone object above the car (a list of zone objects on the track, nearest one above, tag 1) and
+  reads a u16 at +10 of it; `covered` is that value `& 0xC000 != 0`. Covered picks the covered
+  picture of each level (index `level + 3` in the section record) and lights the car straight
+  down. Which file holds the zone objects is **not found**, so we stand in: a slice is covered when
+  a flat down-facing face (tunnel roof, bridge underside) lies 2-15 m above it
+  (`track::covered_points`; **guess**). Monaco 3-5 use glows only in the covered variant.
 - Only the paint shines; glass and trim get neither layer (not checked what retail does).
 - Per-pixel view direction instead of retail's one direction per car.
 

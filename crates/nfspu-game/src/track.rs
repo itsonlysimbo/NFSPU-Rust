@@ -20,6 +20,8 @@ pub struct GroundData {
     pub road_carriers: usize,
     /// Near-vertical faces (embankments, tunnel sides, buildings): not drivable, but solid.
     pub walls: Vec<Tri>,
+    /// Flat faces that face down (tunnel roofs, bridge and building undersides).
+    pub ceilings: Vec<Tri>,
     pub start_pos: Vec3,
     pub start_yaw: f32,
     /// Centres of the main road pieces in driving order (used by offline tests and later by AI).
@@ -154,6 +156,7 @@ pub fn load_ground(track: &str) -> Result<GroundData, String> {
 
     let mut tris: Vec<Tri> = Vec::new();
     let mut walls: Vec<Tri> = Vec::new();
+    let mut ceilings: Vec<Tri> = Vec::new();
     let (mut road, mut terrain) = (0usize, 0usize);
     // (piece number, centroid sum, vertex count) for the primary road pieces
     let mut pieces: Vec<(u32, [f32; 3], usize)> = Vec::new();
@@ -200,7 +203,8 @@ pub fn load_ground(track: &str) -> Result<GroundData, String> {
                         }
                     }
                     Face::Wall => walls.push(tri),
-                    Face::Flipped | Face::Skip => {}
+                    Face::Flipped => ceilings.push(tri),
+                    Face::Skip => {}
                 }
             }
         }
@@ -238,7 +242,7 @@ pub fn load_ground(track: &str) -> Result<GroundData, String> {
     };
 
     let centerline: Vec<Vec3> = pieces.iter().map(|p| centroid(p)).collect();
-    Ok(GroundData { tris, road_triangles: road, terrain_triangles: terrain, road_carriers: carriers, walls, start_pos, start_yaw, centerline, start_note })
+    Ok(GroundData { tris, road_triangles: road, terrain_triangles: terrain, road_carriers: carriers, walls, ceilings, start_pos, start_yaw, centerline, start_note })
 }
 
 #[cfg(test)]
@@ -277,4 +281,48 @@ mod tests {
         let overhang: Tri = [steep[0], steep[2], steep[1]];
         assert_eq!(classify(&overhang), Face::Wall);
     }
+}
+
+/// How high above a point a roof still counts as covering it (metres).
+pub const COVER_HEIGHT: f32 = 15.0;
+
+/// Which points have a roof over them: a down-facing flat face above the point (within
+/// `COVER_HEIGHT`) that holds it when seen from above. Retail's "covered" flag comes from zone
+/// objects above the car that we have not found in the data, so this stands in for it (**guess**).
+pub fn covered_points(ceilings: &[Tri], points: &[Vec3]) -> Vec<bool> {
+    const CELL: f32 = 32.0;
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, t) in ceilings.iter().enumerate() {
+        let (x0, x1) = (t.iter().map(|v| v[0]).fold(f32::MAX, f32::min), t.iter().map(|v| v[0]).fold(f32::MIN, f32::max));
+        let (z0, z1) = (t.iter().map(|v| v[2]).fold(f32::MAX, f32::min), t.iter().map(|v| v[2]).fold(f32::MIN, f32::max));
+        for cx in (x0 / CELL).floor() as i32..=(x1 / CELL).floor() as i32 {
+            for cz in (z0 / CELL).floor() as i32..=(z1 / CELL).floor() as i32 {
+                grid.entry((cx, cz)).or_default().push(i);
+            }
+        }
+    }
+    points
+        .iter()
+        .map(|p| {
+            let cell = ((p.x / CELL).floor() as i32, (p.z / CELL).floor() as i32);
+            grid.get(&cell).is_some_and(|list| {
+                list.iter().any(|&i| {
+                    let t = &ceilings[i];
+                    // barycentric test in the xz plane
+                    let d = (t[1][2] - t[2][2]) * (t[0][0] - t[2][0]) + (t[2][0] - t[1][0]) * (t[0][2] - t[2][2]);
+                    if d.abs() < 1e-9 {
+                        return false;
+                    }
+                    let a = ((t[1][2] - t[2][2]) * (p.x - t[2][0]) + (t[2][0] - t[1][0]) * (p.z - t[2][2])) / d;
+                    let b = ((t[2][2] - t[0][2]) * (p.x - t[2][0]) + (t[0][0] - t[2][0]) * (p.z - t[2][2])) / d;
+                    let c = 1.0 - a - b;
+                    if a < 0.0 || b < 0.0 || c < 0.0 {
+                        return false;
+                    }
+                    let y = a * t[0][1] + b * t[1][1] + c * t[2][1];
+                    y > p.y + 2.0 && y < p.y + COVER_HEIGHT
+                })
+            })
+        })
+        .collect()
 }
