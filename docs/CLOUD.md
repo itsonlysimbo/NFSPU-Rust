@@ -65,6 +65,18 @@ allowed: `api.github.com`, `github.com`, `objects.githubusercontent.com` and
 `release-assets.githubusercontent.com` (the release download is redirected to the last two). If
 there is a "Full" option, that works too.
 
+## Repo access (verified 2026-10-23)
+Cloud sessions reach only the GitHub repos attached to them, whatever the token or network
+settings allow. A session needs **both** `itsonlysimbo/NFSPU-Rust` and
+`itsonlysimbo/nfs5-gamedata`:
+- Sessions the user starts on claude.ai/code: pick both in the repository picker.
+- Sessions the coordinator starts (one repo only): the brief starts with *request access to
+  `itsonlysimbo/nfs5-gamedata` with add_repo, then run `bash scripts/cloud_setup.sh`*, and the
+  user approves the access prompt once.
+
+Verified: with both repos attached and `GAMEDATA_TOKEN` and `NFSPU_GAME_DIR` set in the
+`Default` environment, the start-up hook fills `/opt/nfs5`.
+
 ## Known risks (not tested yet)
 
 - **Letter case.** Windows ignores upper and lower case in file names; Linux doesn't. The code
