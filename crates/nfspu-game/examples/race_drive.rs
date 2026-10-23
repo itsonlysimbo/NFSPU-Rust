@@ -197,6 +197,8 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let mut moved_before_go = 0.0f32;
     // spin-outs: the slip angle (velocity against heading) passing 35 degrees above 10 m/s
     let (mut spins, mut spinning) = (0u32, false);
+    let mut watch = nfspu_game::stuck::Watch::default();
+    let mut lost_count = 0u32;
     let (mut wrong_ticks, mut stuck, mut backing, mut best_progress, mut last_gain) = (0u32, false, 0.0f32, 0.0f32, 0u32);
     while !r.all_finished() {
         let before = car.pos;
@@ -358,10 +360,19 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 r.tick, p.segment_of(slice), p.fraction(slice, dir), car.pos.x, car.pos.y, car.pos.z, car.yaw, car.speed);
         }
         slice = p.track(slice, car.pos);
-        if !r.held() && (car.pos.y < p.slices[slice].pos.y - 30.0 || car.wants_recover) {
-            // as in the game: a car that fell off the world or crashed is put back on the road
+        let lost = if r.held() { None } else { watch.tick(&car, p, slice, dir) };
+        if let Some(why) = lost {
+            // the game's rule (nfspu_game::stuck): this must not happen on a clean drive
+            lost_count += 1;
+            if lost_count <= 5 {
+                let _ = writeln!(out, "   tick {:>5}: PLAYER {} at slice {slice} pos ({:.0},{:.0},{:.0})", r.tick, why.text(), car.pos.x, car.pos.y, car.pos.z);
+            }
+        }
+        if !r.held() && (lost.is_some() || car.wants_recover) {
+            // as in the game: a car that fell off the world, got stuck or crashed is put back on the road
             let (pos, yaw) = ai::reset_pose(p, &line, slice, dir);
             car = car.recover(pos, yaw);
+            watch.reset();
             route = slice;
             route_target = p.slices[route].pos;
         }
@@ -418,7 +429,10 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });
-    !stuck && moved_before_go < 0.5 && r.all_finished()
+    if lost_count > 0 {
+        let _ = writeln!(out, "   FAILED: the player car was stuck, fell through or left the world {lost_count} time(s)");
+    }
+    !stuck && lost_count == 0 && moved_before_go < 0.5 && r.all_finished()
 }
 
 fn log_file() -> std::path::PathBuf {
