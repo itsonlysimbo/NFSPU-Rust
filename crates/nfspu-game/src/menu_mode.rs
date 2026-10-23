@@ -1049,7 +1049,13 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
     state.reload();
     match popup_name.as_deref() {
         Some(name) if name.eq_ignore_ascii_case("none") => {}
-        Some(name) => state.popup = state.load(name),
+        Some(name) => {
+            state.popup = state.load(name);
+            if state.career.on {
+                state.note_page(name);
+                state.reload();
+            }
+        }
         // Default: the main menu with the player picker over it, as retail shows at first launch
         // (per the author). Later start-ups open the main menu alone (retail recording); the
         // picker is also linked from "load game". `GameSetup+none` starts without it.

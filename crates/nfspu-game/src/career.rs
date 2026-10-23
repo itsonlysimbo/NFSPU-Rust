@@ -596,7 +596,7 @@ impl Career {
         let era = era_of_year(self.year);
         let header = if era == 522 { s(19001) } else { format!("YOU HAVE PROGRESSED INTO {}!", s(era)) };
         out.insert("Tournament.Data(ENDERAHEADER)".into(), header);
-        let text: Vec<String> = [19005, 19002, 19003, 19004, 19006, 19000].iter().map(|id| s(*id)).collect();
+        let text: Vec<String> = [19005, 19002, 19003, 19004, 19006, 19000].iter().map(|id| if *id == 19004 { format!("{}.", s(*id)) } else { s(*id) }).collect();
         out.insert("Tournament.Data(ENDERADESCRIP)".into(), text.join(" "));
         let open = self.open_tournaments(all);
         let Some(t) = open.get(self.chosen_tournament.min(open.len().saturating_sub(1))) else { return out };

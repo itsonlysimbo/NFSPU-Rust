@@ -228,3 +228,10 @@ averages, gain 0.5, tonemapping off, screen-space blend; `logs/garage_brightness
 Not tested: window resizing while a garage page is open (the room texture is resized; only the
 start-up size was seen), other cars than the 356, the `garage` page with an owned car's own
 colour, pages other than `QuickRace`, `garage` and `GameSetup`.
+
+## Dealership room (career, 2026-10-23)
+`ID_DEALER` (the "porsche centre") draws `dealer2a` (17 pieces, 393 triangles: stairs, pillars, the
+Porsche wall, the turntable), staged like the garage and spinning with it (**guess**: the retail
+footage shows the car side-on while the room turns, as in the garage; the dealer room's own offset,
+angle and speed were not read from the executable). Cars in the retail showroom have no stripes; ours
+still draw the stripe decal on the 356 (open, car model side).

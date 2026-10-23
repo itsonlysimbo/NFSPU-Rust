@@ -43,6 +43,11 @@ pub const GARAGE: RoomLook = RoomLook {
     light_dir: [-0.14, -0.98, 0.114],
 };
 
+/// The dealership showroom (`ID_DEALER`, model `dealer2a`): pillars, the Porsche wall and the
+/// turntable. Staged like the garage until measured (**guess**: the retail dealer room's own
+/// numbers were not read).
+pub const DEALER: RoomLook = RoomLook { model: "dealer2a", ..GARAGE };
+
 /// The track room (`FETrackSelect3DRoom`): the room model `track` seen from outside the near wall
 /// at the start of the fly-in (`offset` is its start; the camera ends at [`TRACK_END`]). The room
 /// does not spin by itself: it turns a quarter each time the track changes (`menu_location.rs`).
@@ -76,7 +81,8 @@ pub const DOOR_OPEN_TURNS: f32 = 0.15;
 /// The room a layout's `room=` id asks for (`None` for no room or one not drawn yet).
 pub fn room_for(id: &str) -> Option<RoomLook> {
     match id.trim().to_ascii_uppercase().as_str() {
-        "ID_GARAGE" | "ID_DEALER" => Some(GARAGE),
+        "ID_GARAGE" => Some(GARAGE),
+        "ID_DEALER" => Some(DEALER),
         "ID_TRACK" => Some(TRACK),
         _ => None,
     }

@@ -213,6 +213,9 @@ impl ShopUi {
             let rows: Vec<Row> = list.iter().map(|&i| Row::item(s(tracks[i].name_string))).collect();
             let closed = list.get(at).map(|&i| s(tracks[i].name_string)).unwrap_or_default();
             v.choices.insert("Track1.Track".into(), Choice { rows, selected: at, closed, closed_swatch: None });
+            // The popup draws it as a list box.
+            let names: Vec<[String; 3]> = list.iter().map(|&i| [s(tracks[i].name_string), String::new(), String::new()]).collect();
+            v.lists.insert("Track1.Track".into(), ListData { selected: (!names.is_empty()).then_some(at), rows: names });
             // The popup names the car being driven.
             let (name, _) = self.test_car(c, cars, page);
             v.watch.insert("OwnedCars.Car".into(), name.clone());
@@ -279,6 +282,7 @@ impl ShopUi {
     pub fn list_pick(&mut self, accessor: &str, index: usize) -> bool {
         match accessor {
             "Parts.AllParts" => self.all_sel = index,
+            "Track1.Track" => self.test_track = index,
             "Parts.ShoppingList" => self.basket_sel = index,
             _ => return false,
         }

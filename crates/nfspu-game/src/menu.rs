@@ -1200,8 +1200,17 @@ fn append_control_with(
                 let ry = y + (n - first) as f32 * LIST_ROW;
                 let rect = [x, ry, w, LIST_ROW];
                 let chosen = list.selected == Some(n);
-                let (idle, hover) = if chosen { ([0.74, 0.0, 0.0, 1.0], None) } else { ([0.0, 0.0, 0.0, 0.0], Some([0.3, 0.0, 0.0, 1.0])) };
-                let colour = if chosen { [1.0; 4] } else { [0.93, 0.72, 0.1, 1.0] };
+                // A list of names only (the test-drive locations) reads black on the pale panel and
+                // lights orange under the pointer, as in the footage.
+                let plain = list.rows.iter().all(|r| r[1].is_empty() && r[2].is_empty());
+                let (idle, hover) = if chosen {
+                    ([0.74, 0.0, 0.0, 1.0], None)
+                } else if plain {
+                    ([0.0, 0.0, 0.0, 0.0], Some([1.0, 0.65, 0.0, 1.0]))
+                } else {
+                    ([0.0, 0.0, 0.0, 0.0], Some([0.3, 0.0, 0.0, 1.0]))
+                };
+                let colour = if chosen { [1.0; 4] } else if plain { [0.0, 0.0, 0.0, 1.0] } else { [0.93, 0.72, 0.1, 1.0] };
                 let size = point_size(&font);
                 let pw = label_width(game_dir, &font, &row[2]);
                 // Painted from the end: the click target, then the texts, then the row's fill.
