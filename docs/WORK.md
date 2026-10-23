@@ -23,7 +23,12 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 
 | Task | Tier | Notes |
 |---|---|---|
-| Evolution career: profile, money, eras and car ownership (first slice) | Strong | Split the career into pieces; start with the save-profile data and the career rules |
+| Career 2: new-career intro flow (`careerfirst`, `firstlicense`, missions) and `endofera` | Mid | Findings in `docs/provenance/career.md`; the first slice goes straight to `tournament` |
+| Career 3: garage, dealership, used cars (buy and sell; prices from `nfs5.car`) | Strong | Needs the account (`career.rs` cash) and `OwnedCars`/`DealerCar` accessors |
+| Career 4: parts, car setup, paint shop, repairs (upgrades) | Strong | After career 3 |
+| Career 5: car-rule matching, tournament standings and points, prize cars, real payout timing | Strong | Rules are guesses in `career.rs`; check against the decomp / footage |
+| Career 6: club events (Factory Driver, eras 524-526) | Mid | `nfs5.trn` records 20-34 |
+| Career 7: read a retail `.sav` into a career (owned cars, year) | Light | Owned cars already readable in `quick_race.rs` |
 | Car reflections: lamp glow and 'covered' glows | Mid | Sun highlight merged (845babe); lamp glow not seen by eye; trace the 'covered' flag (Monaco 3-5) and the sun direction |
 | Location screen header overlay (flags) | Mid | Track room merged (673c0b3); the header overlay isn't drawn yet |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |

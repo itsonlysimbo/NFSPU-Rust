@@ -149,3 +149,13 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 ## Lamp glow "covered" and location flags (glow-flags branch)
 - Night race on Monaco 3-5 (tunnels): the car paint should show lamp glows sliding over it under a roof; in the open, the usual sun highlight. Log lines `car glow: ... (covered|open)` and `covered slices on <track>`.
 - Location screen: watch the wall panels turn; the first picture of each track should carry a small flag. Backward/mirrored directions should move or swap it. Not seen on screen yet.
+## Evolution career, first slice (branch `claude/career-1-9d081d`)
+- Main menu -> "evolution...": the tournament list opens, account shows `$0` bottom left, car is the
+  `'50 356` (orange). Event dropdown lists the six classic tournaments.
+- "race info..." shows the next track; RACE runs it with the 356 and seven rivals in 356s (rival
+  cars are a guess). Finish and close results: you should be paid `prize / races` for your place
+  (e.g. 1st in 356 Challenge = $1,250). Quit and come back: cash and race count are kept in
+  `settings/career/<name>.txt`.
+- Check: does the payout size feel right? Does retail pay per race or at the end? Does the
+  description text under the event name appear in retail (ours is missing)? Entry fee and start
+  cash are guesses.

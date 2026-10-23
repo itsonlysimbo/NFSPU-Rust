@@ -21,7 +21,7 @@ const DIRECTION: [u32; 4] = [410, 411, 412, 413];
 /// The closed direction control shows a short form: forward, bkw, fwd/mir, bkw/mir.
 const DIRECTION_SHORT: [u32; 4] = [410, 416, 417, 418];
 const LAPS_FIRST: u32 = 420;
-const DIFFICULTY_FIRST: u32 = 450;
+pub const DIFFICULTY_FIRST: u32 = 450;
 /// Opponent rules in list order, with the closed form of the fourth ("era/class").
 const OPPONENT_RULES: [u32; 5] = [640, 642, 643, 644, 641];
 const OPPONENT_RULES_SHORT: [u32; 5] = [640, 642, 643, 645, 641];

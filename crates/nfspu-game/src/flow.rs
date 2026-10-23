@@ -199,6 +199,18 @@ pub fn leave_race(back: &ReturnToMenu, next: &mut NextState<AppState>, exit: &mu
     }
 }
 
+/// How the player's last race ended, recorded as the race scene goes down: the finishing place
+/// (1-based) or 0 when the race was left unfinished. The Evolution career pays by it.
+#[derive(Resource, Default)]
+pub struct LastResult {
+    pub place: usize,
+}
+
+fn record_result(status: Res<nfspu_game::race::RaceStatus>, mut result: ResMut<LastResult>) {
+    result.place = if status.finished { status.position } else { 0 };
+    log_line(&format!("flow: race result, finished {}, place {}", status.finished, result.place));
+}
+
 /// The last race set up, for "race again" on the pause menu.
 #[derive(Resource)]
 pub struct LastRace(pub RaceConfig);
@@ -222,7 +234,8 @@ pub struct FlowPlugin;
 impl Plugin for FlowPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(FlowTest::from_env())
-            .add_systems(OnExit(AppState::Race), end_race)
+            .init_resource::<LastResult>()
+            .add_systems(OnExit(AppState::Race), (record_result, end_race).chain())
             .add_systems(OnEnter(AppState::Loading), restart_race.before(super::race_load::enter))
             .add_systems(OnEnter(AppState::Menu), note_menu_entry)
             .add_systems(Update, (log_state_changes, report_after_race, flow_test_race.run_if(in_state(AppState::Race))));

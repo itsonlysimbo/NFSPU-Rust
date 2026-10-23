@@ -31,6 +31,7 @@ use nfspu_formats::fe::{ControlTemplate, Locale};
 use nfspu_game::menu::{self, Draw, Hit, Screen};
 use crate::flow::{self, AppState};
 use nfspu_game::audio_settings::{self, AudioSettings};
+use nfspu_game::career;
 use nfspu_game::menu_canvas;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -95,6 +96,31 @@ struct FrontEnd {
     /// The frames the animated icons showed in the last picture, and the front-end clock (ms).
     anim_key: Vec<usize>,
     clock_ms: f64,
+    /// The Evolution career (`nfspu_game::career`), when the player entered it.
+    career: CareerMode,
+}
+
+/// Evolution career state of the front end.
+struct CareerMode {
+    /// The career screens are in use (game type 4): the account shows and RACE starts a career race.
+    on: bool,
+    /// The tournaments of `nfs5.trn` (eras 521..=523).
+    data: Vec<career::Tournament>,
+    /// The selected player's career, loaded from `career_dir` or newly made.
+    career: Option<career::Career>,
+    dir: PathBuf,
+    /// The tournament id of the race that was started, until its result is paid.
+    pending: Option<u32>,
+    /// `NFSPU_CAREER_PLACE=n`: pay this place when a race ends unfinished (for tests).
+    forced_place: Option<usize>,
+}
+
+impl CareerMode {
+    fn load(game_dir: &std::path::Path) -> CareerMode {
+        let data = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.trn")).map(|b| career::parse_tournaments(&b)).unwrap_or_default();
+        let forced_place = std::env::var("NFSPU_CAREER_PLACE").ok().and_then(|v| v.trim().parse().ok());
+        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place }
+    }
 }
 
 /// How long one half of a screen change takes: retail's menus run their 0..512 transition
@@ -141,6 +167,98 @@ impl FrontEnd {
             // Retail's `(PERCENT)` view of a 0..=127 level (rounding is a **guess**).
             self.session.watch.insert(format!("{a}(PERCENT)"), format!("{}%", (level * 100 + 63) / 127));
         }
+        self.session.career = self.career.on;
+        if let (true, Some(c)) = (self.career.on, &self.career.career) {
+            self.session.choices.extend(c.choices(&self.career.data, &self.quick.cars, &self.quick.tracks, &self.locale, self.language));
+            self.session.watch.extend(c.watches(&self.career.data, &self.quick.tracks, &self.locale, self.language));
+        }
+    }
+
+    /// Enters the Evolution career for the selected player: loads their career file from our own
+    /// folder, or starts a new one (written at once). The install and its saves are not touched.
+    fn enter_career(&mut self) {
+        let player = self.profiles.selected.and_then(|i| self.profiles.names.get(i)).map(|n| menu::display_name(n).to_string()).unwrap_or_else(|| "Player".to_string());
+        let dir = self.career.dir.clone();
+        let career = match career::Career::load_from(&dir, &player) {
+            Some(c) => {
+                crate::log_line(&format!("career: loaded '{player}': {} cash, year {}, {} car(s), {} tournament(s) started", career::money(c.cash), c.year, c.cars.len(), c.progress.len()));
+                c
+            }
+            None => {
+                let c = career::Career::new(&player);
+                match c.save_to(&dir) {
+                    Ok(()) => crate::log_line(&format!("career: new profile '{player}' saved to {}", career::Career::path_in(&dir, &player).display())),
+                    Err(e) => crate::log_line(&format!("career: could not save {}: {e}", dir.display())),
+                }
+                c
+            }
+        };
+        self.career.career = Some(career);
+        self.career.on = true;
+        self.career.pending = None;
+        self.sync_quick();
+    }
+
+    /// The chosen tournament's next race as a quick-race setup: the track, the chosen owned car,
+    /// seven opponents in the tournament's first car (**guess**), the career lap count.
+    fn start_career_race(&mut self) -> Option<nfspu_game::race_setup::RaceSetup> {
+        let c = self.career.career.as_ref()?;
+        let open = c.open_tournaments(&self.career.data);
+        let t = (*open.get(c.chosen_tournament.min(open.len().saturating_sub(1)))?).clone();
+        let tracks = career::Career::race_tracks(&t, &self.career.data);
+        let track_id = *tracks.get(c.next_race(&t))?;
+        let track = self.quick.tracks.iter().find(|k| k.id == track_id)?.clone();
+        let owned = c.cars.get(c.chosen_car.min(c.cars.len().saturating_sub(1)))?.clone();
+        let car = self.quick.cars.iter().find(|k| k.id == owned.id)?.clone();
+        let mut setup = self.quick.setup(&self.locale, self.language);
+        setup.track = track.file.clone();
+        setup.track_id = track.id;
+        setup.track_name = self.locale.text(track.name_string, self.language).unwrap_or_default().trim().to_string();
+        setup.direction = nfspu_game::race_setup::Direction::Forward;
+        setup.laps = career::CAREER_LAPS;
+        setup.opponents = 7;
+        setup.opponent_cars = t
+            .opponent_cars
+            .first()
+            .and_then(|id| self.quick.cars.iter().find(|k| k.id == *id))
+            .map(|k| nfspu_game::race_setup::OpponentCars::Car { id: k.id, model: k.model.clone() })
+            .unwrap_or_default();
+        setup.car_id = car.id;
+        setup.car_model = car.model.clone();
+        setup.car_name = car.name.clone();
+        setup.car_style = car.style;
+        setup.owned_car = true;
+        setup.paint_section = owned.paint;
+        setup.custom_colour = None;
+        setup.difficulty = track.difficulty.clamp(0, 2) as u8;
+        self.career.pending = Some(t.id);
+        crate::log_line(&format!("career: race {} of {} in tournament {} on '{}' in '{}'", c.next_race(&t) + 1, tracks.len(), t.id, track.file, car.name));
+        Some(setup)
+    }
+
+    /// Back from a race: pays the place and moves the tournament on. `place` 0: not finished.
+    fn settle_career_race(&mut self, place: usize) {
+        let Some(id) = self.career.pending.take() else { return };
+        let place = if place == 0 { self.career.forced_place.unwrap_or(0) } else { place };
+        let Some(t) = self.career.data.iter().find(|t| t.id == id).cloned() else { return };
+        let Some(c) = self.career.career.as_mut() else { return };
+        let payout = c.finish_race(&t, &self.career.data, place);
+        crate::log_line(&format!(
+            "career: race result place {} paid {} (tournament {} {}, year {}, cash {})",
+            payout.place,
+            career::money(payout.amount as i64),
+            id,
+            if payout.tournament_done { "complete" } else { "continues" },
+            c.year,
+            career::money(c.cash)
+        ));
+        if let Err(e) = c.save_to(&self.career.dir) {
+            crate::log_line(&format!("career: could not save: {e}"));
+        }
+        if payout.new_year.is_some() {
+            c.chosen_tournament = 0;
+        }
+        self.sync_quick();
     }
 
     /// Sets a level bar from the pointer's x and keeps it (our settings file, never the save).
@@ -723,7 +841,7 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
         layers: Vec::new(),
         interactive: Vec::new(),
         laid_out_for: Vec2::ZERO,
-        art: menu_canvas::ArtCache::new(game_dir),
+        art: menu_canvas::ArtCache::new(game_dir.clone()),
         hover_key: None,
         dirty: true,
         compose_ms: Vec::new(),
@@ -741,10 +859,15 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
         transition: None,
         anim_key: Vec::new(),
         clock_ms: 0.0,
+        career: CareerMode::load(&game_dir),
     };
     // Read the selected player's save first: screens built below show its settings, and the
     // start page (built before it) is rebuilt.
     state.update_progress();
+    // The career screens can be started directly (tests and captures): `NFSPU_MENU=tournament`.
+    if ["tournament", "prerace"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) {
+        state.enter_career();
+    }
     state.reload();
     match popup_name.as_deref() {
         Some(name) if name.eq_ignore_ascii_case("none") => {}
@@ -780,6 +903,7 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
 fn enter_menu(
     mut commands: Commands,
     mut state: ResMut<FrontEnd>,
+    mut result: ResMut<flow::LastResult>,
     mut clear: ResMut<ClearColor>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
@@ -793,6 +917,11 @@ fn enter_menu(
         window.title = TITLE.to_string();
     }
     commands.spawn((MenuVisual, node, ImageNode::default(), DespawnOnExit(AppState::Menu)));
+    // A career race that just ended is paid before the screens are rebuilt.
+    if state.career.pending.is_some() {
+        let place = std::mem::take(&mut result.place);
+        state.settle_career_race(place);
+    }
     // Screens are rebuilt (the page and popup as they were) and drawn afresh.
     state.reload();
     state.stack();
@@ -873,13 +1002,14 @@ fn flow_test_menu(
         exit.write(AppExit::error());
         return;
     }
-    if test.done > 0 {
+    if test.done > 0 && !state.career.on {
         state.quick.step_track(1);
         state.reload();
         state.stack();
     }
     crate::log_line(&format!("flow test: pressing RACE for race {}", test.done + 1));
-    flow::start_race_from_menu(state.start_race(), &mut commands, &mut next);
+    let setup = if state.career.on { state.start_career_race() } else { None };
+    flow::start_race_from_menu(setup.unwrap_or_else(|| state.start_race()), &mut commands, &mut next);
 }
 
 fn to_color(rgba: [f32; 4]) -> Color {
@@ -1084,6 +1214,9 @@ fn click(
             }
             // Choosing quick race puts the car list back at its first car (the game-type routine
             // behind `SETTYPEQUICKRACE` sets `zMergedList.Car` to 0).
+            if ["quickrace", "knockout", "quickknockout"].iter().any(|n| name.eq_ignore_ascii_case(n)) {
+                state.career.on = false;
+            }
             if name.eq_ignore_ascii_case("quickrace") && from.eq_ignore_ascii_case("singleplayer") {
                 state.quick.car = 0;
                 state.quick.pick(nfspu_game::quick_race::CAR, 0);
@@ -1136,7 +1269,23 @@ fn click(
             if accessor == nfspu_game::quick_race::DIFFICULTY {
                 state.session.difficulty = index;
             }
-            state.quick.pick(&accessor, index);
+            match (state.career.on, accessor.as_str()) {
+                (true, "Tournament.Tournament") | (true, "Tournament.EventType") => {
+                    if let Some(c) = state.career.career.as_mut() {
+                        c.chosen_tournament = index;
+                    }
+                    state.sync_quick();
+                }
+                (true, "OwnedCars.Car") => {
+                    if let Some(c) = state.career.career.as_mut() {
+                        c.chosen_car = index;
+                    }
+                    state.sync_quick();
+                }
+                _ => {
+                    state.quick.pick(&accessor, index);
+                }
+            }
             state.slide_combo(false);
             return;
         }
@@ -1167,8 +1316,32 @@ fn click(
             match name.as_str() {
                 "PLAYGAME" => {
                     crate::log_line("front end: leaving the menu for the race");
-                    flow::start_race_from_menu(state.start_race(), &mut commands, &mut next);
+                    let setup = if state.career.on { state.start_career_race() } else { None };
+                    flow::start_race_from_menu(setup.unwrap_or_else(|| state.start_race()), &mut commands, &mut next);
                     return;
+                }
+                // Evolution: load or start the player's career and open the tournament list (retail
+                // plays intro movies first for a new career; not built).
+                "SETTYPECAREERMODE" => {
+                    state.enter_career();
+                    let Some(next) = state.load("tournament") else { return };
+                    let snapshot = (state.page.clone(), state.popup.clone());
+                    state.history.push(snapshot);
+                    state.page = next;
+                    state.popup = None;
+                }
+                // Give up the tournament in progress: its races start again.
+                "FORFEITTOURNY" => {
+                    let state = &mut *state;
+                    if let Some(c) = state.career.career.as_mut() {
+                        let open = c.open_tournaments(&state.career.data);
+                        let id = open.get(c.chosen_tournament.min(open.len().saturating_sub(1))).map(|t| t.id);
+                        if let Some(id) = id {
+                            c.progress.entry(id).or_default().races_done = 0;
+                            let _ = c.save_to(&state.career.dir);
+                        }
+                    }
+                    state.sync_quick();
                 }
                 // The player popup's "continue": keep the highlighted player (already applied when
                 // the row was clicked; nothing is written to the install) and close the popup. At
