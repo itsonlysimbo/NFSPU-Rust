@@ -156,6 +156,22 @@ bridges and dry road takes over from wet road there; opponents' launch wheelspin
 skids; passes log Doppler x1.02 closing, x0.98 leaving at ~8 m/s; finish line `place-youplacelast`.
 Monaco1, 3 laps: `lap2` and `lap-final` at the line.
 
+## Retail recording, GT1 on Cote d'Azur (2026-10-23, `2026-10-23 11-00-02.mp4`)
+
+Audio pulled with ShareX's ffmpeg to `extracted/footage/race.wav` (48 kHz, stereo; not in the repo). The menu is
+0:00-2:43 at about -20 dBFS RMS, silence 2:43-2:51, and the race runs from 2:51.5. Numbers below are from the
+mono mix of that recording.
+
+| Measure | Retail |
+|---|---|
+| Race loudness, whole mix | -10 to -14 dBFS RMS in 2 s windows (steady; the loudest stretches are -8) |
+| Band energy (relative dB, summed per band) | under 150 Hz -25, 150-600 Hz -23, 600-2k -27, 2-6k -33, over 6k -47 |
+| Engine at idle in the countdown | fundamental 62 Hz with a strong 2nd harmonic at 123 Hz |
+| Engine in gear | partials at 155, 311, 618 Hz (octaves of about 78 Hz); the highest fundamental seen is 173 Hz |
+| Idle to top ratio | 173 / 62 = 2.8 (the in-game rule gives 3.1 at the redline from 19% of it) |
+
+No telemetry sits in the recording, so the engine pitch is compared as ratios and absolute frequency, not per gear.
+
 ## Not done / not verified
 
 - None of the levels has been compared with a retail recording. The overall balance between engine, effects and speech is a guess (`MIX` = 0.7 on everything).
