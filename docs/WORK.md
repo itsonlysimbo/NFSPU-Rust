@@ -17,6 +17,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
 | Car lamp glow + 'covered'; location header flags | Mid | Claude (glow-flags) | claude/glow-flags-e70b14 | done, awaiting merge | Glow on screen not seen (car starts on a slice with no glow section; needs a slice-jump hook). Flag overlay only unit-tested (2D map box hides the wall face). | merge |
+| Career 3+4 slice 2: buy/sell cars, used lot, parts, paint shop, era advance | Strong | Claude (career-2) | claude/dazzling-bun-be66c4 | started | Find price/part data in nfs5.car/PartsMarket; add economy to career.rs | player can earn, buy, upgrade, race |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
