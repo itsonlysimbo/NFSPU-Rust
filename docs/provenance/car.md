@@ -565,3 +565,17 @@ were **not** measured from the footage and our hands/arms were **not** compared 
 Still to measure (footage local only): per-view camera position (car width in frame gives distance),
 FOV and lag (frames after a steer input until the view follows); cockpit hand pixel positions on
 the wheel and forearm angle against ours (`main.rs` arm skinning, `car_model.rs`). **Not measured.**
+
+### Measured 2026-10-23 from the race video (GT1; fractions of the 1436x920 game window; by eye)
+- **Cockpit hands** (wheel centred, 180-210 s): left hand at about 8:30-9 o'clock on the rim, right
+  hand about 3-3:30, both palms over the rim, thumbs inward; forearms enter from the lower-left and
+  lower-right corners and run up to the hands. With the wheel turned right the right hand rides
+  to about 11-12 o'clock and the left to about 7: the hands stay on the rim and turn with it
+  (no hand-over-hand). Wheel centre sits at about 0.50 of the width and 0.73 of the height.
+- **Chase (near/medium)**: the GT1 shows about 0.23 of the window width, its centre about 0.80 of
+  the height, the horizon about 0.45; wing level with the camera slightly above it.
+- **Chase (high)**: camera above and behind looking down; the car fills about 0.3 of the width at
+  about 0.85 of the height; road ahead fills the frame.
+- **Cockpit**: wiper at upper left, mirror/pillar at right, dash gauges centred.
+- FOV and lag are **not** measurable from single frames without a reference: **not measured**.
+  The table in "The camera table" and `engine_vertical_fov` stay as the best evidence.
