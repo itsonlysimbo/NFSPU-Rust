@@ -1002,13 +1002,14 @@ fn flow_test_menu(
         exit.write(AppExit::error());
         return;
     }
-    if test.done > 0 {
+    if test.done > 0 && !state.career.on {
         state.quick.step_track(1);
         state.reload();
         state.stack();
     }
     crate::log_line(&format!("flow test: pressing RACE for race {}", test.done + 1));
-    flow::start_race_from_menu(state.start_race(), &mut commands, &mut next);
+    let setup = if state.career.on { state.start_career_race() } else { None };
+    flow::start_race_from_menu(setup.unwrap_or_else(|| state.start_race()), &mut commands, &mut next);
 }
 
 fn to_color(rgba: [f32; 4]) -> Color {
@@ -1331,9 +1332,11 @@ fn click(
                 }
                 // Give up the tournament in progress: its races start again.
                 "FORFEITTOURNY" => {
+                    let state = &mut *state;
                     if let Some(c) = state.career.career.as_mut() {
                         let open = c.open_tournaments(&state.career.data);
-                        if let Some(id) = open.get(c.chosen_tournament.min(open.len().saturating_sub(1))).map(|t| t.id) {
+                        let id = open.get(c.chosen_tournament.min(open.len().saturating_sub(1))).map(|t| t.id);
+                        if let Some(id) = id {
                             c.progress.entry(id).or_default().races_done = 0;
                             let _ = c.save_to(&state.career.dir);
                         }

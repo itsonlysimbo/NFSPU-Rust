@@ -145,3 +145,14 @@ Quick race, 7 opponents, Traffic heavy. Check: opponents pull out to pass slow t
 for oncoming cars, they brake behind traffic when both halves are blocked instead of ramming it; oncoming traffic edges
 to its kerb as you come at it; traffic keeps clear of the centre line. Watch for opponents weaving or scraping walls on
 narrow Monaco streets while passing. Measured offline only (not seen in a window).
+
+## Evolution career, first slice (branch `claude/career-1-9d081d`)
+- Main menu -> "evolution...": the tournament list opens, account shows `$0` bottom left, car is the
+  `'50 356` (orange). Event dropdown lists the six classic tournaments.
+- "race info..." shows the next track; RACE runs it with the 356 and seven rivals in 356s (rival
+  cars are a guess). Finish and close results: you should be paid `prize / races` for your place
+  (e.g. 1st in 356 Challenge = $1,250). Quit and come back: cash and race count are kept in
+  `settings/career/<name>.txt`.
+- Check: does the payout size feel right? Does retail pay per race or at the end? Does the
+  description text under the event name appear in retail (ours is missing)? Entry fee and start
+  cash are guesses.

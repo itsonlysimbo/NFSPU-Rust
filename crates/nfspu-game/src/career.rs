@@ -398,7 +398,7 @@ mod tests {
             r[12 + 2 * n..14 + 2 * n].copy_from_slice(&t.to_le_bytes());
         }
         for n in 0..PLACES {
-            r[0xec + 4 * n..0xf0 + 4 * n].copy_from_slice(&(first_prize - 500 * n as u32).to_le_bytes());
+            r[0xec + 4 * n..0xf0 + 4 * n].copy_from_slice(&(first_prize.saturating_sub(500 * n as u32)).to_le_bytes());
         }
         r[0x118 + 2..0x118 + 4].copy_from_slice(&76u16.to_le_bytes());
         r
