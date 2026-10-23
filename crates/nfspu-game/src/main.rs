@@ -141,7 +141,7 @@ Press Enter to close this console.");
         .add_systems(Update, (console::handle_input, console::apply).chain().run_if(flow::in_race_scene))
         .add_systems(
             Update,
-            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, paint_car_damage, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
+            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, skin_arms.after(animate_wheels), paint_car_damage, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
                 .chain()
                 .run_if(flow::in_race_scene),
         )
@@ -1200,13 +1200,6 @@ fn spawn_car_model(
             commands.entity(lean).add_child(e);
         }
     }
-    // The cockpit driver's arms: shown only in the cockpit view (the exterior driver is hidden
-    // there, and its head would sit on the camera).
-    for (page, part) in by_page(&m.driver_arms) {
-        let mat = looks.material(page, Look::Cut, materials);
-        let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), body_at(), CockpitPart)).id();
-        commands.entity(lean).add_child(e);
-    }
     // The steering wheel: a pivot node at the wheel's centre that turns around the wheel's column,
     // with the wheel mesh offset back so its authored (car-space) vertices are unchanged at rest.
     let steer_pivot = (!m.steering.positions.is_empty()).then(|| {
@@ -1222,6 +1215,34 @@ fn spawn_car_model(
         }
         (node, p)
     });
+    // The cockpit driver's arms: shown only in the cockpit view. Each arm's shoulder end stays put
+    // and its forearm end follows the hand round the wheel (`skin_arms` blends the two).
+    let hand_centre = |prefix: &str| {
+        let hands = &m.driver_hands;
+        let ks: Vec<usize> = (0..hands.positions.len()).filter(|&k| m.article_names[hands.articles[k] as usize].starts_with(prefix)).collect();
+        (!ks.is_empty()).then(|| ks.iter().map(|&k| Vec3::from(hands.positions[k])).sum::<Vec3>() / ks.len() as f32)
+    };
+    let hand_ends = [("LeftArm", hand_centre("LeftHand")), ("RightArm", hand_centre("RightHand"))];
+    for (page, part) in by_page(&m.driver_arms) {
+        let mat = looks.material(page, Look::Cut, materials);
+        let rest: Vec<Vec3> = part.positions.iter().map(|&p| Vec3::from(p)).collect();
+        let weights: Vec<f32> = (0..rest.len())
+            .map(|k| {
+                let name = &m.article_names[part.articles[k] as usize];
+                let Some(h) = hand_ends.iter().find(|(n, _)| name.starts_with(n)).and_then(|(_, h)| *h) else { return 0.0 };
+                // the shoulder is the arm's vertex farthest from the hand
+                let s = (0..rest.len()).filter(|&j| m.article_names[part.articles[j] as usize] == *name).map(|j| rest[j]).max_by(|a, b| a.distance(h).total_cmp(&b.distance(h))).unwrap_or(h);
+                let t = ((rest[k] - s).dot(h - s) / (h - s).length_squared().max(1e-6)).clamp(0.0, 1.0);
+                ((t - 0.35) / 0.5).clamp(0.0, 1.0)
+            })
+            .collect();
+        let handle = meshes.add(piece_mesh(&part, [1.0; 3], 1.0));
+        let e = commands.spawn((Mesh3d(handle.clone()), MeshMaterial3d(mat), body_at(), CockpitPart)).id();
+        if let Some((node, p)) = steer_pivot {
+            commands.entity(e).insert(ArmSkin { wheel: node, pivot: p, rest, weights, mesh: handle, last: None });
+        }
+        commands.entity(lean).add_child(e);
+    }
     // The hands ride on the wheel so they turn with it (without a wheel they sit on the body).
     let (hands_parent, hands_offset) = steer_pivot.map_or((lean, Vec3::new(0.0, -RIDE_HEIGHT, 0.0)), |(node, p)| (node, -p));
     for (page, part) in by_page(&m.driver_hands) {
@@ -1903,6 +1924,31 @@ struct DriverPart;
 /// detailed steering wheel that turns with the input).
 #[derive(Component)]
 struct CockpitPart;
+
+/// A driver arm that follows the steering wheel: vertices near the hand turn with the wheel node
+/// (about its pivot), those near the shoulder stay, blended by `weights`.
+#[derive(Component)]
+struct ArmSkin {
+    wheel: Entity,
+    pivot: Vec3,
+    rest: Vec<Vec3>,
+    weights: Vec<f32>,
+    mesh: Handle<Mesh>,
+    last: Option<Quat>,
+}
+
+fn skin_arms(mut arms: Query<&mut ArmSkin>, wheels: Query<&Transform, With<SteerWheel>>, mut meshes: ResMut<Assets<Mesh>>) {
+    for mut arm in &mut arms {
+        let Ok(t) = wheels.get(arm.wheel) else { continue };
+        if arm.last == Some(t.rotation) {
+            continue;
+        }
+        let Some(mut mesh) = meshes.get_mut(&arm.mesh) else { continue };
+        let moved: Vec<[f32; 3]> = arm.rest.iter().zip(&arm.weights).map(|(&v, &w)| (v + w * (arm.pivot + t.rotation * (v - arm.pivot) - v)).to_array()).collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, moved);
+        arm.last = Some(t.rotation);
+    }
+}
 
 /// The steering wheel's pivot node and the column axis it turns around (car space).
 #[derive(Component)]
