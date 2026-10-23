@@ -15,6 +15,7 @@ pub mod ground;
 pub mod catalog;
 pub mod chase_cam;
 pub mod hud;
+pub mod hud_pause;
 pub mod hud_plugin;
 pub mod hud_results;
 pub mod hud_render;

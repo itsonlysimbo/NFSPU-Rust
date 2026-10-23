@@ -61,7 +61,7 @@ impl Plugin for RaceLoad {
 }
 
 /// The loading screen for a race, or for the viewer the scene at once.
-fn enter(world: &mut World) {
+pub(super) fn enter(world: &mut World) {
     if world.contains_resource::<RaceSetup>() {
         if let Err(e) = world.run_system_once(begin) {
             super::log_line(&format!("loading screen: could not start: {e}"));

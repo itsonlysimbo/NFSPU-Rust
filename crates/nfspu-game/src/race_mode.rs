@@ -134,7 +134,8 @@ impl Plugin for RacePlugin {
                 .chain()
                 .after(crate::drive_car)
                 .run_if(crate::flow::in_race_scene)
-                .run_if(resource_exists::<RaceRequest>),
+                .run_if(resource_exists::<RaceRequest>)
+                .run_if(crate::pause::running),
         )
         .add_systems(OnExit(AppState::Race), end_race);
     }

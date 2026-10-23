@@ -47,3 +47,12 @@ Add a line per playtest: date, recording path, what was wrong.
 - Retail takes control away at the checkered line and the car rolls on; ours does not yet. Compare the panel with your 2026-10-22 recording (gold tint is a guess).
 
 - **Opponent routes at junctions** (castle, industrial, autobahn, canyon, farmland, alps): on beginner, about half the opponents take side roads; on expert they keep to the main road. Do they look like retail, and do they drive the side roads cleanly?
+## Pause menu (branch `claude/pause-menu-22e199`)
+- In a quick race press Esc (or P): the race stops and a "Pause Menu" panel shows continue /
+  race again / quit…. Engine, ambience and the race clock should all stop; compare the panel with
+  retail's (colours and button look are guesses).
+- Up/Down or the mouse pick a button; Enter, Space or a click press it. Esc goes back.
+- continue: the race carries on from where it stopped, sounds come back.
+- race again: the loading screen, then the same race from the grid.
+- quit…: "Are you sure you want to exit?" with exit to game menu / exit to windows / cancel.
+- Does retail's pause camera circle the car? Ours stays still.

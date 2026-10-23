@@ -31,6 +31,7 @@ mod car_probe;
 mod console;
 mod flow;
 mod menu_mode;
+mod pause;
 mod race_audio;
 mod race_load;
 mod race_mode;
@@ -123,6 +124,8 @@ Press Enter to close this console.");
         .add_plugins(menu_mode::MenuPlugin(menu_start.clone()))
         .add_plugins(race_mode::RacePlugin)
         .add_plugins(race_audio::RaceAudioPlugin)
+        // Esc in a race: retail's pause menu.
+        .add_plugins(pause::PausePlugin)
         // Runs `setup` directly, or behind the loading screen.
         .add_plugins(race_load::RaceLoad)
         // In-race HUD: always in a race from the menu, otherwise only with NFSPU_HUD=1.
@@ -142,7 +145,7 @@ Press Enter to close this console.");
         .add_systems(Update, (console::handle_input, console::apply).chain().run_if(flow::in_race_scene))
         .add_systems(
             Update,
-            (sky_dome, heartbeat, mouse_capture, toggle_mode, camera_input, switch_car, drive_car, update_lamps, animate_wheels, paint_car_damage, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
+            (sky_dome, heartbeat, mouse_capture.run_if(pause::running), toggle_mode.run_if(pause::running), camera_input.run_if(pause::running), switch_car.run_if(pause::running), drive_car.run_if(pause::running), update_lamps, animate_wheels, paint_car_damage, driver_visibility, chase_camera, retail_fov, fly_camera, sky_tint, fps_counter, window_title)
                 .chain()
                 .run_if(flow::in_race_scene),
         )
@@ -1800,6 +1803,7 @@ fn feed_hud(
                 .unwrap_or_default(),
             summary_since: finished_at.map_or(0.0, |t| now - t - race_mode::SUMMARY_DELAY),
             summary_laps: !race.point_to_point,
+            pause: None,
         };
         return;
     }
