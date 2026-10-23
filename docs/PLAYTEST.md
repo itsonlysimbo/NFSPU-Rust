@@ -185,3 +185,27 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 
 - GT1 lean: expect about 2-3 degrees of body roll in medium bends and a stiff feel; the 356 rolls 6-8. (car-tune, 2026-10-23)
 - GT1 cockpit: hands/arm look wrong (right arm a big block at the screen edge) and the wheel sits lower than retail. Known gap.
+
+## Career slice 3: footage fixes, test drive, era change (branch `claude/career-footage-0cff4a`)
+- Main menu -> evolution: the tournament screen now shows the era banner (CLASSIC ERA 1950 lit),
+  the event type "tournaments", entry fee 0, difficulty beginner, the description, the track outline
+  and the list NORMANDIE / COTE D'AZUR. Numbers have no `$` (retail shows `5,000`, `11,000`). Compare
+  with your recording: banner position, list position and the colour of the track outline (ours is
+  white where retail is yellow).
+- Race info: the info dropdown picks the track; the map, name and record time follow it (retail:
+  Normandie 03:09.00, Cote d'Azur 02:44.00 = twice the lap record). Track lists per tournament are a
+  **guess** (retail's list for the 356 Challenge is Normandie then Cote d'Azur; the file's own list is
+  the era's unlock list).
+- Garage: purchase price of the starter 356 is 11,000, value 10,890.
+- Porsche centre now shows the showroom room (stairs, pillars, Porsche wall). The retail room turns;
+  check the speed and the camera, ours is the garage's numbers.
+- Test drive: car setup -> test drive (and dealership/used lot test drive, race info practice run)
+  opens the LOCATION list (Cote d'Azur, Pyrenees, Normandie, Monte Carlo Circuit 3); pressing test
+  drive loads the track and you drive your car alone for as long as you like; Esc, quit, and you are
+  back on the screen you started from. Retail's own test drive bugged out; compare only the list.
+  Not copied: retail's test-drive HUD (record + time counter, no position) - ours is the race HUD.
+- Era change: finish every classic tournament (or use `NFSPU_CAREER_DO=ERA` with `NFSPU_CAREER=1`):
+  the 'YOU HAVE PROGRESSED INTO GOLDEN ERA!' message opens over the tournament screen and the banner
+  moves to GOLDEN ERA 1970. The bonus-car race (935 Moby Dick) is not built.
+- Not matching: stripe decal on the garage and dealership cars (retail shows plain paint).
+

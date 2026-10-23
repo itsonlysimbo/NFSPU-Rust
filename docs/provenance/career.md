@@ -128,3 +128,27 @@ GOLDEN ERA!" (string 19001; the other eras use the era name, **guess**) and the 
 19005 + 19002 + 19003 + 19004 + 19006 + 19000: an offer to win the 1978 935 "Moby Dick" in a bonus
 race at Monaco, with a practice-run hint. The prize-car race (`VictoryRoom`, 3D `ID_VICTORY` room,
 `PrizeCars.Car`) is **not built**; the bonus tournament simply opens (slice 1 rule).
+
+### Slice 3 additions and gaps (2026-10-23)
+- **Tournament screen**: era banner (code-drawn: the three era names across the top, the current one
+  lit with the year under it; part of the account control's bar), word-wrapped description (10 point
+  font, 1.5 line spacing, centred), `TrackSmall2dSpline` (the next race's `SpSm` picture and the name
+  list, next one lit). Money prints without `$`.
+- **Tournament record fields**: u16 at 0xe6 is the difficulty (0 for the 356 Challenge = beginner,
+  as the footage shows; Class 3 Trophy 2); u32 at 0xdc looks like the entry fee (0 for the 356
+  Challenge, 500 for 2000cc, 25,000 for Class 3 Trophy; **guess**, only the zero is confirmed by
+  footage). The fee is charged for the first race of a tournament and refunded if the race is not
+  finished. The u16 at 0xda (10, 12, 3 ...) is unexplained (races? route set?).
+- **Tournament routes**: the record's track list (identical on every tournament of an era, all
+  `locked` = 3) is the era's *unlock* list. The footage's 356 Challenge races Normandie then Cote
+  d'Azur (ids 14, 8; beginner, never locked). Slice 3 guesses a route = the never-locked tracks
+  (not the skid pad) no harder than the tournament, highest id first. The real source was not found.
+- **Record times** on race info: lap record from the save folder's `nfs5.trk` (0x1f8, 1/128 s) times
+  the career's two laps (Cote d'Azur 10496 ticks x 2 = 02:44.00; Normandie 12096 x 2 = 03:09.00,
+  both **verified** against the footage).
+- **Starter car**: purchase price 11,000 (verified), current value 10,890 (verified).
+- **Dealership room**: `dealer2a` drawn for `ID_DEALER` (see garage.md).
+- **Still open (seen in the footage, data not fed)**: `showcase` statistics (general, chassis and
+  drivetrain, performance data from the car record), `car compare` bars, `car setup` sliders and the
+  part inventory list, the garage CONDITION bar value, damage; retail's test-drive HUD; paint shop,
+  parts and repair screens were not on the recording (ours come from slice 2).

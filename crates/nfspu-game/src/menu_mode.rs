@@ -1185,7 +1185,8 @@ fn flow_test_menu(
         });
         return;
     }
-    if !state.can_race() {
+    let test_drive = state.career.on && std::env::var("NFSPU_CAREER_TESTDRIVE").as_deref() == Ok("1");
+    if !state.can_race() && !test_drive {
         crate::log_line(&format!("flow test: RACE is not offered on '{}', quitting", state.page.name));
         exit.write(AppExit::error());
         return;
