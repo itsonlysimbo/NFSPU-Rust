@@ -43,6 +43,8 @@ pub enum Draw {
     /// shown only where the `stencil` pieces (rectangles and pictures) cover; an empty stencil
     /// shows the whole rectangle.
     Movie { rect: Rect, source: String, stencil: Vec<Draw> },
+    /// The bright light that runs once round a hovered button's outline (measured from retail footage).
+    Glint { rect: Rect },
     /// An animated icon (`NFS5.BOTTOMBARBUTTON`): frames of `file`, from `idle`, from `hover` while
     /// the pointer is over `rect`, or from `down` while it is also pressed; otherwise as `Picture`.
     Anim { file: String, idle: Frames, hover: Frames, down: Frames, rect: Rect, pos: [f32; 2], flip: u8, alpha: f32 },
@@ -1045,6 +1047,9 @@ fn append_control_with(
             // Retail paints fill, label, drop shadow, then gloss (see `button_gloss`); this list is
             // topmost first, so the order is reversed here.
             // Hovered (live buttons only): the pressed-in bevel replaces gloss and shadow.
+            if template.id == "NFS5.GOTOBUTTON" && !disabled {
+                screen.draw.push(Draw::Glint { rect: [x, y, w, h] });
+            }
             if template.id == "NFS5.GOTOBUTTON" {
                 // `glintybox` other than -1 (template default 1; empty reads as 0): a black
                 // 1-unit outline the button's size, drawn last (on top) by the retail button.
@@ -1828,14 +1833,15 @@ mod tests {
         );
         let mut screen = Screen::default();
         assert!(append_control(&mut screen, &button_block(), &template, &locale, 0));
-        // Topmost first: stems (2), black outline (4), hover bevel (4), gloss (2 bands), drop shadow
-        // (4 quads), label, fill.
-        assert_eq!(screen.draw.len(), 18);
-        assert!(matches!(&screen.draw[1], Draw::Quad { rect, .. } if *rect == [243.0 + 152.0, 254.0, 1.0, 18.0]), "right stem just outside the button");
+        // Topmost first: glint, stems (2), black outline (4), hover bevel (4), gloss (2 bands), drop
+        // shadow (4 quads), label, fill.
+        assert_eq!(screen.draw.len(), 19);
+        assert!(matches!(&screen.draw[0], Draw::Glint { rect } if *rect == [243.0, 254.0, 152.0, 18.0]), "glint on top");
+        assert!(matches!(&screen.draw[2], Draw::Quad { rect, .. } if *rect == [243.0 + 152.0, 254.0, 1.0, 18.0]), "right stem just outside the button");
         let inner = [244.0, 255.0, 150.0, 16.0];
-        assert!(matches!(&screen.draw[2], Draw::Quad { colour, .. } if *colour == [0.0, 0.0, 0.0, 1.0]), "black outline on top");
-        assert!(matches!(&screen.draw[6], Draw::Gradient { when: Show::Hover(r), .. } if *r == inner), "bevel shows on hover");
-        match &screen.draw[10] {
+        assert!(matches!(&screen.draw[3], Draw::Quad { colour, .. } if *colour == [0.0, 0.0, 0.0, 1.0]), "black outline on top");
+        assert!(matches!(&screen.draw[7], Draw::Gradient { when: Show::Hover(r), .. } if *r == inner), "bevel shows on hover");
+        match &screen.draw[11] {
             Draw::Gradient { corners, colours, when } => {
                 assert_eq!(*when, Show::Idle(inner), "gloss hides on hover");
                 assert_eq!(corners[0], [244.0, 255.0], "gloss covers the inner rectangle");
@@ -1844,11 +1850,11 @@ mod tests {
             }
             other => panic!("expected the gloss, got {other:?}"),
         }
-        match &screen.draw[12] {
+        match &screen.draw[13] {
             Draw::Gradient { corners, .. } => assert_eq!(corners[0], [395.0, 258.0], "right shadow strip starts at the edge, 4 down"),
             other => panic!("expected the shadow, got {other:?}"),
         }
-        match &screen.draw[17] {
+        match &screen.draw[18] {
             Draw::Quad { rect, colour, hover, link, back } => {
                 assert_eq!(*rect, [244.0, 255.0, 150.0, 16.0], "the template insets the background by one unit");
                 assert_eq!(*colour, [0.7372549, 0.0, 0.0, 1.0]);
@@ -1858,7 +1864,7 @@ mod tests {
             }
             other => panic!("expected a quad, got {other:?}"),
         }
-        match &screen.draw[16] {
+        match &screen.draw[17] {
             Draw::Text { text, pos, .. } => {
                 assert_eq!(text, "quick race");
                 assert_eq!(*pos, [248.0, 256.0]);

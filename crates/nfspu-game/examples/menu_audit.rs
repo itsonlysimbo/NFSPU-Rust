@@ -66,6 +66,7 @@ fn main() {
                 Draw::Movie { rect, source, stencil } => say(format!("  movie [{:>5.1},{:>5.1} {:>5.1}x{:<5.1}] {source} ({} stencil pieces)", rect[0], rect[1], rect[2], rect[3], stencil.len())),
                 Draw::Shown { when, .. } => say(format!("  shown {when:?}")),
                 Draw::Clipped { draws, .. } => say(format!("  clipped group of {}", draws.len())),
+                Draw::Glint { rect } => say(format!("  glint [{:>5.1},{:>5.1} {:>5.1}x{:<5.1}]", rect[0], rect[1], rect[2], rect[3])),
                 Draw::Target { rect, hit } => say(format!("  hit   [{:>5.1},{:>5.1} {:>5.1}x{:<5.1}] {hit:?}", rect[0], rect[1], rect[2], rect[3])),
             }
         }

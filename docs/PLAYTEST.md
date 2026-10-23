@@ -166,3 +166,13 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 ## Body lean and cameras (branch claude/footage-car-7859f5)
 - `LEAN_LOOK` is now 1.0. Drive the 356 in chase view through hard corners: the tail should roll about 6-10 degrees, like retail.
 - Coordinator: take screen captures of the 356 and GT1 in chase and cockpit views at the corners in the 2026-10-23 videos (the cloud has no window). Compare hand positions (retail: 10 and 2) and camera distance and FOV.
+## Button outline light and pause panel (footage-menus)
+- Main menu: hover a red button (singleplayer, load game...). A white streak should run along its
+  top edge left to right as it turns yellow. Compare with retail: does the light continue round the
+  right, bottom and left sides? How long does it last, does it repeat while you stay on the button?
+- Race, press Esc/P: the panel should be pale yellow-to-teal with the world showing through, title
+  at the top right, red buttons. Retail also squashes the panel up on continue (ours just closes).
+- Captures not taken: the cloud session has no window. Coordinator: capture the hovered main-menu
+  button and the pause panel to `logs/` and compare with the fe.md footage numbers. The footage
+  suggests a smaller panel (about 1/3 screen width) and tighter button gaps than the decomp sizes
+  we use (500x325, step 1.6); check which is right.

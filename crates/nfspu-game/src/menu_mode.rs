@@ -1177,6 +1177,9 @@ fn present(
     let mut layers: Vec<(&Screen, bool)> = shown.iter().map(|(l, on)| (l, *on)).collect();
     layers.push((&tip_layer, false));
     let key = menu_canvas::hover_key(&layers, Some([p.x, p.y]));
+    if state.hover_key.as_ref() != Some(&key) {
+        menu_canvas::HOVER_START.store(state.art.ticks, std::sync::atomic::Ordering::Relaxed);
+    }
     let frames = menu_canvas::anim_frames(&layers, Some([p.x, p.y]), (state.art.ticks, state.art.pressed));
     if frames != state.anim_key {
         state.anim_key = frames;

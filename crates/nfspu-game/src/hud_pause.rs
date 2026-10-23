@@ -82,28 +82,36 @@ pub fn draw(out: &mut Vec<HudDraw>, settings: &HudSettings, view: &PauseView, sc
     let s = settings.scale;
     let (cx, cy) = (screen[0] as f32 / 2.0, screen[1] as f32 / 2.0);
     let panel: Rect = [cx - PANEL[0] * s / 2.0, cy - PANEL[1] * s / 2.0, PANEL[0] * s, PANEL[1] * s];
-    out.push(HudDraw::Fill { rect: panel, colour: [0.98, 0.76, 0.3, 0.6] });
+    // Footage (2026-10-23): a pale, see-through panel, yellow at the top fading to grey-teal.
+    out.push(HudDraw::Gradient { rect: panel, top: [0.95, 0.84, 0.45, 0.62], bottom: [0.66, 0.80, 0.80, 0.62] });
     let bar = 24.0 * s;
     out.push(HudDraw::Gradient { rect: [panel[0], panel[1], panel[2], bar], top: [0.0, 0.0, 0.0, 0.9], bottom: [0.0, 0.0, 0.0, 1.0] });
-    out.push(HudDraw::Gradient { rect: [panel[0], panel[1] + panel[3] - bar, panel[2], bar], top: [0.0, 0.0, 0.0, 1.0], bottom: [0.0, 0.0, 0.0, 0.9] });
+    // Footage: the bottom strip is thinner than the title bar (about 5% vs 8% of the panel).
+    let foot = 16.0 * s;
+    out.push(HudDraw::Gradient { rect: [panel[0], panel[1] + panel[3] - foot, panel[2], foot], top: [0.0, 0.0, 0.0, 1.0], bottom: [0.0, 0.0, 0.0, 0.9] });
 
     let font = if settings.layout.fonts[1].is_empty() { settings.layout.fonts[0].clone() } else { settings.layout.fonts[1].clone() };
-    let pad = 12.0 * s;
     let title = match view.page {
         PausePage::Main => word::PAUSE_MENU,
         PausePage::Quit => word::CONFIRMATION,
     };
-    out.push(HudDraw::Text { font: font.clone(), text: settings.word(title), pos: [panel[0] + pad, panel[1] + 5.0 * s], colour: WHITE, align: Align::Left, scale: s });
+    out.push(HudDraw::Text { font: font.clone(), text: settings.word(title), pos: [panel[0] + panel[2] - 4.0 * s, panel[1] + 5.0 * s], colour: WHITE, align: Align::Right, scale: s });
     let rects = buttons(screen, s);
     if view.page == PausePage::Quit {
         let prompt_y = rects[0][1] - 30.0 * s;
-        out.push(HudDraw::Text { font: font.clone(), text: settings.word(word::EXIT_PROMPT), pos: [cx, prompt_y], colour: [0.0, 0.0, 0.0, 1.0], align: Align::Centre, scale: s });
+        out.push(HudDraw::Text { font: font.clone(), text: settings.word(word::EXIT_PROMPT), pos: [cx, prompt_y], colour: WHITE, align: Align::Centre, scale: s });
     }
     for (i, (rect, action)) in rects.iter().zip(view.page.actions()).enumerate() {
         let on = i == view.selected;
-        let fill = if on { [AMBER[0], AMBER[1], AMBER[2], 1.0] } else { [0.0, 0.0, 0.0, 0.85] };
-        out.push(HudDraw::Fill { rect: *rect, colour: fill });
-        let text_colour = if on { [0.0, 0.0, 0.0, 1.0] } else { WHITE };
+        // Retail's red button: black outline, red fill, light gloss on top; yellow when hovered.
+        let fill = if on { [AMBER[0], AMBER[1], AMBER[2], 1.0] } else { [0.74, 0.0, 0.0, 1.0] };
+        out.push(HudDraw::Fill { rect: *rect, colour: [0.0, 0.0, 0.0, 1.0] });
+        let inner = [rect[0] + s, rect[1] + s, rect[2] - 2.0 * s, rect[3] - 2.0 * s];
+        out.push(HudDraw::Fill { rect: inner, colour: fill });
+        if !on {
+            out.push(HudDraw::Gradient { rect: [inner[0], inner[1], inner[2], inner[3] / 2.0], top: [1.0, 1.0, 1.0, 0.3], bottom: [1.0, 1.0, 1.0, 0.0] });
+        }
+        let text_colour = WHITE;
         out.push(HudDraw::Text { font: font.clone(), text: settings.word(label(action)), pos: [rect[0] + rect[2] / 2.0, rect[1] + 2.0 * s], colour: text_colour, align: Align::Centre, scale: s });
     }
 }
