@@ -1238,8 +1238,36 @@ fn spawn_car_model(
         (!ks.is_empty()).then(|| ks.iter().map(|&k| Vec3::from(hands.positions[k])).sum::<Vec3>() / ks.len() as f32)
     };
     let hand_ends = [("LeftArm", hand_centre("LeftHand")), ("RightArm", hand_centre("RightHand"))];
+    // The driver page is a white shirt over most of its area, but retail's cockpit shows plain navy
+    // sleeves: arms and hands use a copy of the page with its pale shirt texels turned
+    // navy. The glove and the blue strips stay as they are.
+    let mut sleeve_mats: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
+    let mut sleeve = |page: u8, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>| -> Handle<StandardMaterial> {
+        sleeve_mats
+            .entry(page)
+            .or_insert_with(|| {
+                let Some(Some(p)) = m.pages.get(page as usize) else { return materials.add(StandardMaterial { base_color: Color::srgb(0.05, 0.09, 0.28), unlit: true, ..default() }) };
+                let mut image = page_image(p);
+                if let Some(data) = image.data.as_mut() {
+                    for px in data.chunks_exact_mut(4) {
+                        let pale = px[0] > 140 && px[1] > 140 && px[2] > 140 && px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]) < 45;
+                        if pale {
+                            px[..3].copy_from_slice(&[14, 26, 88]);
+                        }
+                    }
+                }
+                materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    base_color_texture: Some(images.add(image)),
+                    unlit: true,
+                    cull_mode: Some(if MIRROR_X < 0.0 { Face::Back } else { Face::Front }),
+                    ..default()
+                })
+            })
+            .clone()
+    };
     for (page, part) in by_page(&m.driver_arms) {
-        let mat = looks.material(page, Look::Cut, materials);
+        let mat = sleeve(page, materials, images);
         let rest: Vec<Vec3> = part.positions.iter().map(|&p| Vec3::from(p)).collect();
         let weights: Vec<f32> = (0..rest.len())
             .map(|k| {
@@ -1261,7 +1289,7 @@ fn spawn_car_model(
     // The hands ride on the wheel so they turn with it (without a wheel they sit on the body).
     let (hands_parent, hands_offset) = steer_pivot.map_or((lean, Vec3::new(0.0, -RIDE_HEIGHT, 0.0)), |(node, p)| (node, -p));
     for (page, part) in by_page(&m.driver_hands) {
-        let mat = looks.material(page, Look::Cut, materials);
+        let mat = sleeve(page, materials, images);
         let e = commands.spawn((Mesh3d(meshes.add(piece_mesh(&part, [1.0; 3], 1.0))), MeshMaterial3d(mat), Transform::from_translation(hands_offset), CockpitPart)).id();
         commands.entity(hands_parent).add_child(e);
     }
@@ -1284,7 +1312,7 @@ fn spawn_car_model(
         Err(e) => log_line(&format!("no ground shadow: {e}")),
     }
     for w in &m.wheels {
-        let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0, rest: Vec3::from(w.offset) })).id();
+        let wheel = commands.spawn((Transform::from_translation(Vec3::from(w.offset)), Visibility::default(), WheelComp { front: w.front, spin: 0.0, steer: 0.0, rest: Vec3::from(w.offset) })).id();
         commands.entity(model).add_child(wheel);
         for (page, part) in by_page(&w.piece) {
             let mat = looks.material(page, Look::Cut, materials);
@@ -1610,6 +1638,8 @@ fn paint_car_damage(car: Option<Res<CarRes>>, mut looks: Query<(&mut DamageLook,
 struct WheelComp {
     front: bool,
     spin: f32,
+    /// The drawn steer angle (radians, positive left): it follows the sim's wheel angle at a limited rate.
+    steer: f32,
     /// Its place on the car; the suspension moves it up and down from here.
     rest: Vec3,
 }
@@ -1659,13 +1689,16 @@ fn animate_wheels(time: Res<Time>, car: Option<Res<CarRes>>, mut wheels: Query<(
     let Some(state) = car else { return };
     let dt = time.delta_secs().min(0.05);
     for (e, mut t, mut w) in &mut wheels {
-        let (speed, steer, heights) = opponent_of(e, &parents, &ai).map_or((state.car.speed, state.steer, state.car.wheel_heights()), |b| (b.speed, b.steer, b.wheel_y));
+        let (speed, steer, heights) = opponent_of(e, &parents, &ai).map_or((state.car.speed, (state.car.sim.wheels[0].angle + state.car.sim.wheels[1].angle) * 0.5, state.car.wheel_heights()), |b| (b.speed, b.steer * 0.45, b.wheel_y));
         // which corner: the model's +x side is taken as the right (not checked)
         let corner = if w.front { 0 } else { 2 } + usize::from(w.rest.x > 0.0);
         t.translation = w.rest + Vec3::Y * heights[corner];
         w.spin -= speed * dt / WHEEL_RADIUS; // rolling forward turns the top toward the front
-        let steer = if w.front { steer * 0.45 } else { 0.0 };
-        t.rotation = Quat::from_rotation_y(steer) * Quat::from_rotation_x(w.spin);
+        // ease towards the target so a key press sweeps the wheels round instead of snapping them
+        let step = WHEEL_STEER_RATE * dt;
+        let target = if w.front { steer } else { 0.0 };
+        w.steer += (target - w.steer).clamp(-step, step);
+        t.rotation = Quat::from_rotation_y(w.steer) * Quat::from_rotation_x(w.spin);
     }
     // the steering wheel turns with the input (its hands are part of the cockpit driver)
     let forced = forced_steer();
@@ -1683,6 +1716,9 @@ fn forced_steer() -> Option<f32> {
     static FORCED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
     *FORCED.get_or_init(|| std::env::var("NFSPU_STEER").ok().and_then(|v| v.trim().parse().ok()))
 }
+
+/// How fast the front wheels swing (radians per second); about full lock in 0.25 s. A guess.
+const WHEEL_STEER_RATE: f32 = 1.6;
 
 /// How far the steering wheel turns at full lock (radians): about 90 degrees, a sports-car rack.
 /// A guess; retail's exact wheel angle is not traced.

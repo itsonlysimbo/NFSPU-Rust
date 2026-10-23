@@ -185,3 +185,5 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 
 - GT1 lean: expect about 2-3 degrees of body roll in medium bends and a stiff feel; the 356 rolls 6-8. (car-tune, 2026-10-23)
 - GT1 cockpit: hands/arm look wrong (right arm a big block at the screen edge) and the wheel sits lower than retail. Known gap.
+
+| 2026-10-23 | Cockpit hands and front wheels | Cockpit (C): the driver's sleeves and hands are now navy like retail (they were white). Tap left/right outside: the front wheels now sweep round at a limited rate instead of snapping. The forearm slab still swings widely with the wheel and looks large (eye position differs from retail); say if it still looks wrong | `claude/hands-wheels-39fd02` |
