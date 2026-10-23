@@ -698,6 +698,27 @@ fn append_control_with(
     if matches!(block.get("name").map(str::trim), Some(ACCOUNT_LABEL) | Some(CASH_BACKDROP)) && !context.session.is_some_and(|s| s.career) {
         return true;
     }
+    // The career's era banner (the three era names across the top, the current one lit with the
+    // career year under it) is part of the same bar here: drawn with the account.
+    if block.get("name").map(str::trim) == Some(ACCOUNT_LABEL) {
+        if let Some(session) = context.session.filter(|s| s.career) {
+            let era: u32 = session.watch.get("Career.Era").and_then(|e| e.parse().ok()).unwrap_or(521);
+            let year = session.watch.get("Career.Year").cloned().unwrap_or_default();
+            let font = "Univers8b.ffn".to_string();
+            for (n, (code, centre)) in [(521u32, 211.0f32), (522, 319.0), (523, 424.0)].into_iter().enumerate() {
+                let lit = code == era;
+                let name = session.watch.get(&format!("Career.EraName{n}")).cloned().unwrap_or_default();
+                let colour = if lit { [1.0, 0.85, 0.45, 1.0] } else { [0.55, 0.6, 0.6, 0.8] };
+                let width = label_width(game_dir, &font, &name);
+                screen.draw.push(Draw::Text { text: name, pos: [centre - width / 2.0, 3.0], size: point_size(&font), colour, font: font.clone() });
+                if lit {
+                    let font = "Univers11b.ffn".to_string();
+                    let width = label_width(game_dir, &font, &year);
+                    screen.draw.push(Draw::Text { text: year.clone(), pos: [centre - width / 2.0, 14.0], size: point_size(&font), colour, font });
+                }
+            }
+        }
+    }
     // The cash backdrop (`NFS5.ACCOUNTTHING`, the account display control) draws the player's
     // money to the right of the "ACCOUNT" label. Its backdrop art is not drawn yet and the text
     // position is a **guess**.
@@ -1027,6 +1048,55 @@ fn append_control_with(
             let colour = data.get("foreColor").and_then(|c| eval_colour(c, &data)).unwrap_or([1.0; 4]);
             let shift = -label_width(game_dir, &font, &text) / 2.0 * number("align").unwrap_or(0.0);
             screen.draw.push(Draw::Text { text, pos: [x + shift, y], size: point_size(&font), colour, font });
+            true
+        }
+        // The tournament screen's track picture (the yellow outline of the next race's track) and
+        // the list of the tournament's locations beside it, the next one lit (measured from the
+        // retail footage: names in small caps at x 355, 16 units apart).
+        "NFS5.TrackSmall2dSpline" => {
+            if hidden(&data) {
+                return true;
+            }
+            let Some(session) = context.session else { return false };
+            if let Some(file) = session.watch.get("Career.Spline") {
+                screen.draw.push(Draw::Picture { file: file.clone(), index: 0, pos: [x, y], flip: 0, alpha: 1.0 });
+            }
+            let next: usize = session.watch.get("Career.TrackNext").and_then(|n| n.parse().ok()).unwrap_or(0);
+            let font = "Univers7b.ffn".to_string();
+            for (i, name) in session.watch.get("Career.TrackList").map(|l| l.split('|').collect::<Vec<_>>()).unwrap_or_default().into_iter().enumerate() {
+                let colour = if i == next { [1.0, 0.75, 0.1, 1.0] } else { [0.85, 0.9, 0.9, 1.0] };
+                screen.draw.push(Draw::Text { text: name.to_string(), pos: [x + 215.0, y + 3.0 + 15.0 * i as f32], size: point_size(&font), colour, font: font.clone() });
+            }
+            true
+        }
+        // The same text wrapped to the control's width (`WordWrapAccessorWatch.ctr`): the tournament
+        // description. Lines are centred when `align` is 1 and 1.5 times the point size apart
+        // (measured from the retail footage: 15 units for the 10 point font).
+        "NFS5.WORDWRAPACCESSORWATCH" => {
+            if hidden(&data) {
+                return true;
+            }
+            let accessor = data.get("accessor").map(|a| a.trim().to_string()).unwrap_or_default();
+            let Some(text) = context.session.and_then(|s| s.watch.get(&accessor)).cloned() else { return false };
+            let font = data.get("fontPathName").map(|s| s.trim().to_string()).unwrap_or_else(|| "univers8b.ffn".to_string());
+            let colour = data.get("foreColor").and_then(|c| eval_colour(c, &data)).unwrap_or([1.0; 4]);
+            let width = size.map_or(f32::MAX, |(w, _)| w);
+            let centred = number("align").unwrap_or(0.0) as i32 == 1;
+            let mut lines: Vec<String> = Vec::new();
+            for word in text.split_whitespace() {
+                match lines.last_mut() {
+                    Some(line) if label_width(game_dir, &font, &format!("{line} {word}")) <= width => {
+                        line.push(' ');
+                        line.push_str(word);
+                    }
+                    _ => lines.push(word.to_string()),
+                }
+            }
+            let step = point_size(&font) * 1.5;
+            for (i, line) in lines.into_iter().enumerate() {
+                let left = if centred { x + (width.min(1.0e4) - label_width(game_dir, &font, &line)) / 2.0 } else { x };
+                screen.draw.push(Draw::Text { text: line, pos: [left, y + step * i as f32], size: point_size(&font), colour, font: font.clone() });
+            }
             true
         }
         // A transition button is a coloured rectangle plus a label; its template draws the

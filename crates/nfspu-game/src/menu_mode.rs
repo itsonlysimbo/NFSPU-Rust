@@ -111,6 +111,8 @@ struct CareerMode {
     dir: PathBuf,
     /// The tournament id of the race that was started, until its result is paid.
     pending: Option<u32>,
+    /// The entry fee paid for the race being run (refunded when the race is not finished).
+    fee_paid: i64,
     /// `NFSPU_CAREER_PLACE=n`: pay this place when a race ends unfinished (for tests).
     forced_place: Option<usize>,
     /// The shop screens' state (dealership, used cars, parts ...) and the page they are showing.
@@ -122,9 +124,11 @@ struct CareerMode {
 
 impl CareerMode {
     fn load(game_dir: &std::path::Path) -> CareerMode {
-        let data = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.trn")).map(|b| career::parse_tournaments(&b)).unwrap_or_default();
+        let mut data = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.trn")).map(|b| career::parse_tournaments(&b)).unwrap_or_default();
+        let tracks = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.trk")).map(|b| nfspu_game::catalog::parse_tracks(&b)).unwrap_or_default();
+        career::assign_routes(&mut data, &tracks);
         let forced_place = std::env::var("NFSPU_CAREER_PLACE").ok().and_then(|v| v.trim().parse().ok());
-        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place, ui: nfspu_game::career_ui::ShopUi::load(game_dir), page: String::new(), era_message: false }
+        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place, ui: nfspu_game::career_ui::ShopUi::load(game_dir), page: String::new(), era_message: false, fee_paid: 0 }
     }
 }
 
@@ -239,6 +243,12 @@ impl FrontEnd {
         let t = (*open.get(c.chosen_tournament.min(open.len().saturating_sub(1)))?).clone();
         let tracks = career::Career::race_tracks(&t, &self.career.data);
         let track_id = *tracks.get(c.next_race(&t))?;
+        // The first race of a tournament costs its entry fee.
+        let fee = if c.next_race(&t) == 0 { t.entry_fee as i64 } else { 0 };
+        if c.cash < fee {
+            crate::log_line(&format!("career: not enough credits to enter tournament {} (fee {}, cash {})", t.id, career::money(fee), career::money(c.cash)));
+            return None;
+        }
         let track = self.quick.tracks.iter().find(|k| k.id == track_id)?.clone();
         let owned = c.cars.get(c.chosen_car.min(c.cars.len().saturating_sub(1)))?.clone();
         let car = self.quick.cars.iter().find(|k| k.id == owned.id)?.clone();
@@ -266,6 +276,14 @@ impl FrontEnd {
         let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
         setup.tuning = c.tuning_of(at, &career::Shop { cars: &self.quick.cars, parts: &self.career.ui.parts });
         self.career.pending = Some(t.id);
+        if fee > 0 {
+            if let Some(c) = self.career.career.as_mut() {
+                c.cash -= fee;
+            }
+            self.career.fee_paid = fee;
+            crate::log_line(&format!("career: entry fee {} paid", career::money(fee)));
+        }
+        let c = self.career.career.as_ref()?;
         crate::log_line(&format!("career: race {} of {} in tournament {} on '{}' in '{}'", c.next_race(&t) + 1, tracks.len(), t.id, track.file, car.name));
         Some(setup)
     }
@@ -321,6 +339,12 @@ impl FrontEnd {
         let place = if place == 0 { self.career.forced_place.unwrap_or(0) } else { place };
         let Some(t) = self.career.data.iter().find(|t| t.id == id).cloned() else { return };
         let Some(c) = self.career.career.as_mut() else { return };
+        // An unfinished race gives the entry fee back.
+        let fee = std::mem::take(&mut self.career.fee_paid);
+        if place == 0 && fee > 0 {
+            c.cash += fee;
+            crate::log_line(&format!("career: race not finished, entry fee {} refunded", career::money(fee)));
+        }
         let payout = c.finish_race(&t, &self.career.data, place);
         crate::log_line(&format!(
             "career: race result place {} paid {} (tournament {} {}, year {}, cash {})",
@@ -1471,7 +1495,17 @@ fn click(
             match name.as_str() {
                 "PLAYGAME" => {
                     crate::log_line("front end: leaving the menu for the race");
-                    let setup = if state.career.on { state.start_career_race() } else { None };
+                    let setup = if state.career.on {
+                        match state.start_career_race() {
+                            Some(setup) => Some(setup),
+                            None => {
+                                crate::log_line("career: no race started");
+                                return;
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     flow::start_race_from_menu(setup.unwrap_or_else(|| state.start_race()), &mut commands, &mut next);
                     return;
                 }

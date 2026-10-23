@@ -50,6 +50,13 @@ pub struct Tournament {
     pub opponent_cars: Vec<u16>,
     /// The bonus tournaments that win a prize car (550 A, 935, GT1): ids 31, 32 and 33.
     pub bonus: bool,
+    /// 0 beginner, 1 advanced, 2 expert (`u16` at 0xe6; 0 for the 356 Challenge, which the footage
+    /// shows as "beginner").
+    pub difficulty: u8,
+    /// The entry fee (`u32` at 0xdc, **guess**: 0 for the 356 Challenge as in the footage, 500 for
+    /// 2000cc, 25,000 for the Class 3 Trophy; the string "not enough credits to enter this
+    /// tournament" exists).
+    pub entry_fee: u32,
 }
 
 const RECORD: usize = crate::catalog::TOURNAMENT_RECORD;
@@ -86,9 +93,26 @@ pub fn parse_tournaments(data: &[u8]) -> Vec<Tournament> {
                 prizes,
                 opponent_cars,
                 bonus: (31..=33).contains(&id),
+                difficulty: u16_at(r, 0xe6).min(2) as u8,
+                entry_fee: u32_at(r, 0xdc),
             }
         })
         .collect()
+}
+
+/// Gives every career tournament its race list. The record's own track list (`u16` count at 10)
+/// is the era's *unlock* list (the same four or six tracks on every tournament of an era, all
+/// `locked` = 3 in `nfs5.trk`), not the races: the footage's 356 Challenge races Normandie then
+/// Cote d'Azur. **Guess** for the rule: the tracks the front end never locks (not the skid pad)
+/// that are no harder than the tournament, highest id first (Normandie 14, Cote d'Azur 8).
+pub fn assign_routes(all: &mut [Tournament], tracks: &[crate::catalog::Track]) {
+    for t in all.iter_mut() {
+        let mut ids: Vec<i16> = tracks.iter().filter(|k| k.locked == 0 && k.file != "skidpad" && k.difficulty <= t.difficulty as i16).map(|k| k.id).collect();
+        ids.sort_unstable_by(|a, b| b.cmp(a));
+        if !ids.is_empty() {
+            t.tracks = ids;
+        }
+    }
 }
 
 /// The year the era after `year` opens, or `END_YEAR` after the last.
@@ -112,7 +136,7 @@ pub fn money(amount: i64) -> String {
         }
         out.push(c);
     }
-    format!("{}${out}", if amount < 0 { "-" } else { "" })
+    format!("{}{out}", if amount < 0 { "-" } else { "" })
 }
 
 /// A car the player owns.
@@ -558,6 +582,12 @@ impl Career {
         let s = |id: u32| locale.text(id, language).map(|t| t.trim().to_string()).unwrap_or_default();
         let mut out = BTreeMap::new();
         out.insert("Tournament.Data(ACCOUNT)".into(), money(self.cash));
+        // The era banner at the top of every career screen: "CLASSIC ERA / 1950", the other two dim.
+        out.insert("Career.Era".into(), era_of_year(self.year).to_string());
+        out.insert("Career.Year".into(), self.year.to_string());
+        for (n, (code, _)) in ERAS.iter().enumerate() {
+            out.insert(format!("Career.EraName{n}"), s(*code));
+        }
         // The era-change message (`VictoryMessage`): the retail strings 19000-19006 are the golden
         // era's text (header, the prize car offer, the bonus race at Monaco); the other eras reuse
         // them with their own name in the header (**guess**: only golden's strings exist).
@@ -573,18 +603,30 @@ impl Career {
         out.insert("Tournament.Tournament(DESCRIPTION)".into(), s(t.description));
         out.insert("Tournament.Tournament(CARRESTRICTION)".into(), s(t.restriction));
         out.insert("Tournament.Tournament(PRIZEMONEY)".into(), money(t.prizes[0] as i64));
-        // The entry fee was not found in the record; no fee is charged (**guess**).
-        out.insert("Tournament.Tournament(ENTRYFEE)".into(), money(0));
+        out.insert("Tournament.Tournament(ENTRYFEE)".into(), money(t.entry_fee as i64));
         out.insert("Tournament.Tournament(TIMESCOMPLETED)".into(), self.progress(t.id).completed.to_string());
         let race_tracks = Self::race_tracks(t, all);
         let next = race_tracks.get(self.next_race(t)).and_then(|id| tracks.iter().find(|k| k.id == *id));
-        // Difficulty: the hardest track of the tournament (**guess**).
-        let hardest = race_tracks.iter().filter_map(|id| tracks.iter().find(|k| k.id == *id)).map(|k| k.difficulty).max().unwrap_or(0);
-        let difficulty = s(crate::quick_race::DIFFICULTY_FIRST + hardest.clamp(0, 2) as u32);
+        let difficulty = s(crate::quick_race::DIFFICULTY_FIRST + t.difficulty.min(2) as u32);
         out.insert("Tournament.Tournament(DIFFICULTY)".into(), difficulty);
         if let Some(k) = next {
             out.insert("Tournament.Tournament(LOCATION)".into(), s(k.name_string + 60));
+            // The tournament screen's small track picture and the list of its locations (the next
+            // one lit), drawn by the `TrackSmall2dSpline` control.
+            if !k.art[2].is_empty() {
+                out.insert("Career.Spline".into(), format!("TrackArt/{}.fsh", k.art[2]));
+            }
         }
+        let names: Vec<String> = race_tracks
+            .iter()
+            .filter_map(|id| tracks.iter().find(|k| k.id == *id))
+            .map(|k| {
+                let upper = s(k.name_string + 60);
+                if upper.is_empty() { s(k.name_string).to_uppercase() } else { upper }
+            })
+            .collect();
+        out.insert("Career.TrackList".into(), names.join("|"));
+        out.insert("Career.TrackNext".into(), self.next_race(t).to_string());
         out.insert("Tournament.Tournament(RECORDTIME)".into(), "--:--.--".into());
         out
     }
