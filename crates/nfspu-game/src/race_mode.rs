@@ -465,13 +465,14 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
     let held = run.race.held();
     let player_progress = run.race.cars[run.player].progress;
     let rate = ai::player_rate(player_progress - run.player_start, run.race.race_ticks());
-    let others: Vec<Other> = std::iter::once(Other { pos: player.pos, speed: player.speed }).chain(run.racers.iter().map(|r| Other { pos: r.car.pos, speed: r.car.speed })).collect();
+    let others: Vec<Other> = std::iter::once(Other::of(player)).chain(run.racers.iter().map(|r| Other::of(&r.car))).collect();
+    let traffic = run.traffic.as_ref().map(|t| t.fleet.others()).unwrap_or_default();
     for i in 0..run.racers.len() {
         let race_car = i + 1;
         let finished = run.race.cars[race_car].state == race::CarState::Finished;
         let lead = run.race.cars[race_car].progress - player_progress;
         let view = View { path: &run.track.path, routes: &run.track.routes, line: &run.line, dir, held, finished, difficulty: run.difficulty, lead, player_rate: rate };
-        let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != race_car).map(|(_, o)| *o).collect();
+        let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != race_car).map(|(_, o)| *o).chain(traffic.iter().copied()).collect();
         let r = &mut run.racers[i];
         let input = r.brain.think(&r.car, &view, &near, &mut run.rng);
         r.car.sim.held = held; // on the grid the brake is held on until GO (retail)

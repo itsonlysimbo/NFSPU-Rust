@@ -149,6 +149,11 @@ impl Fleet {
         Fleet { cars, rng: Rng::new(seed ^ 0x7aff_1c01), tick: 0 }
     }
 
+    /// The traffic cars on the road, for drivers that keep clear of them.
+    pub fn others(&self) -> Vec<crate::ai::Other> {
+        self.cars.iter().filter(|c| c.state == State::Driving).map(|c| crate::ai::Other::of(&c.car)).collect()
+    }
+
     pub fn driving(&self) -> usize {
         self.cars.iter().filter(|c| c.state == State::Driving).count()
     }

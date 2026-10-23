@@ -216,6 +216,77 @@ pub struct View<'a> {
 pub struct Other {
     pub pos: Vec3,
     pub speed: f32,
+    /// Which way the car points (flat), so oncoming traffic is told from traffic going our way.
+    pub heading: Vec3,
+}
+
+impl Other {
+    pub fn of(car: &Car) -> Self {
+        Other { pos: car.pos, speed: car.speed, heading: car.heading() }
+    }
+}
+
+/// Room a car needs to pass beside another: a car width plus a margin (m, guess).
+pub const PASS_ROOM: f32 = 3.2;
+/// How far ahead, in seconds of closing speed, a driver reacts to a car in its path (guess).
+pub const REACT_SECONDS: f32 = 2.2;
+
+/// Keeping clear of cars ahead, racers and traffic alike: returns a sideways shift for the aim
+/// point (overtake or change lane on the side of the road with more room) and a speed cap
+/// (follow behind, or brake for a car that can't be passed). `along_road` is the slice the car is
+/// on. Retail's opponents dodge traffic too, but its avoidance code was not read: the rules here
+/// are ours. A car going the other way closes at both speeds added, so it is seen sooner.
+pub fn avoid(car: &Car, slice: &crate::race_path::PathSlice, others: &[Other]) -> (Vec3, f32) {
+    let heading = car.heading();
+    let right = car_right(car);
+    let speed = car.speed;
+    // the road edges measured along our own right, from the slice centre
+    let flip = right.dot(slice.right) < 0.0;
+    let (left_edge, right_edge) = if flip { (-slice.right_width, slice.left_width) } else { (-slice.left_width, slice.right_width) };
+    let me = (car.pos - slice.pos).dot(right);
+    let mut shift = 0.0f32;
+    let mut cap = f32::INFINITY;
+    for o in others {
+        let rel = o.pos - car.pos;
+        let along = rel.dot(heading);
+        let side = rel.dot(right);
+        let their = o.speed * o.heading.dot(heading);
+        let closing = speed - their;
+        let reach = 11.0 + closing.max(0.0) * REACT_SECONDS;
+        if along <= 0.0 || along > reach || side.abs() > 2.4 + (closing > 15.0) as u8 as f32 * 0.6 {
+            continue;
+        }
+        if closing < 1.0 && along > 9.0 {
+            continue; // pulling away or matched speed: nothing to do yet
+        }
+        // room between the other car and each road edge (1 m kept from the edge)
+        let ob = me + side;
+        let room_left = ob - left_edge - 1.0;
+        let room_right = right_edge - ob - 1.0;
+        let go_left = if side.abs() > 0.6 && (if side > 0.0 { room_left } else { room_right }) >= PASS_ROOM {
+            side > 0.0 // already off to one side: keep going that way
+        } else {
+            room_left > room_right
+        };
+        let room = if go_left { room_left } else { room_right };
+        // urgency: 1 when about to touch, less further out
+        let urgency = (1.0 - along / reach).clamp(0.35, 1.0);
+        if room >= PASS_ROOM {
+            let want = if go_left { ob - PASS_ROOM } else { ob + PASS_ROOM } - me;
+            let push = want.clamp(-5.0, 5.0) * urgency;
+            if push.abs() > shift.abs() {
+                shift = push;
+            }
+            if along < 7.0 {
+                cap = cap.min(their.max(0.0) + 3.0); // +3: still able to pull away from the grid
+            }
+        } else {
+            // no gap: brake to arrive behind it at its speed (oncoming: as slow as we can)
+            let gap = (along - 7.0).max(0.0);
+            cap = cap.min((their.max(0.0) * their.max(0.0) + 2.0 * 6.0 * gap).sqrt().max(their.max(0.0)));
+        }
+    }
+    (right * shift, cap)
 }
 
 /// One opponent's driving state.
@@ -308,23 +379,10 @@ impl Opponent {
         }
         aim /= 4.0;
 
-        // keep clear of cars just ahead: aim past them, or slow to their speed when boxed in
-        for o in others {
-            let rel = o.pos - car.pos;
-            let along = rel.dot(heading);
-            let side = rel.dot(right);
-            let near = along > 0.0 && (along < 11.0 || (along < 20.0 && o.speed < speed - 3.0));
-            if near && side.abs() < 2.4 {
-                let s = &v.path.slices[self.slice];
-                let room_left = s.left_width + (car.pos - s.pos).dot(s.right);
-                let room_right = s.right_width - (car.pos - s.pos).dot(s.right);
-                let go_left = if side.abs() > 0.3 { side > 0.0 } else { room_left > room_right };
-                aim += right * if go_left { -4.0 } else { 4.0 };
-                if along < 7.0 {
-                    target_speed = target_speed.min(o.speed + 3.0); // +3: still able to pull away from the grid
-                }
-            }
-        }
+        // keep clear of cars ahead: racers and traffic
+        let (shift, cap) = avoid(car, &v.path.slices[self.slice], others);
+        aim += shift;
+        target_speed = target_speed.min(cap);
         self.target_speed = target_speed;
 
         let mut to = aim - car.pos;
@@ -634,5 +692,30 @@ mod tests {
         assert_eq!(ais_stem("GT1", &stems), "Gt1");
         assert_eq!(ais_stem("", &stems), "default", "traffic cars have no AI name");
         assert_eq!(ais_stem("550A", &stems), "default", "missing file");
+    }
+
+    fn straight(left: f32, right: f32) -> crate::race_path::PathSlice {
+        crate::race_path::PathSlice { pos: Vec3::ZERO, forward: Vec3::NEG_Z, right: Vec3::X, up: Vec3::Y, left_width: left, right_width: right }
+    }
+
+    #[test]
+    fn avoid_passes_on_the_open_side_and_brakes_when_boxed_in() {
+        let mut car = Car::new(Vec3::ZERO, 0.0);
+        car.set_speed(25.0);
+        let slow = Other { pos: Vec3::new(0.5, 0.0, -30.0), speed: 12.0, heading: Vec3::NEG_Z };
+        // wide road, more room on the left of the slow car: aim left, no hard braking
+        let (shift, cap) = avoid(&car, &straight(8.0, 3.0), &[slow]);
+        assert!(shift.x < -1.0, "shift {shift:?}");
+        assert!(cap > 20.0, "cap {cap}");
+        // narrow road: no gap, slow down towards its speed
+        let (_, cap) = avoid(&car, &straight(2.5, 2.5), &[slow]);
+        assert!(cap < 25.0, "cap {cap}");
+        // oncoming in our path is seen from further away (both speeds add up)
+        let oncoming = Other { pos: Vec3::new(0.0, 0.0, -70.0), speed: 15.0, heading: Vec3::Z };
+        let (shift, _) = avoid(&car, &straight(5.0, 5.0), &[oncoming]);
+        assert!(shift.length() > 0.5, "shift {shift:?}");
+        // a car behind or well to the side is ignored
+        let behind = Other { pos: Vec3::new(0.0, 0.0, 10.0), speed: 30.0, heading: Vec3::NEG_Z };
+        assert_eq!(avoid(&car, &straight(5.0, 5.0), &[behind]).0, Vec3::ZERO);
     }
 }

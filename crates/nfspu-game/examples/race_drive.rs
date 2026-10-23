@@ -88,6 +88,7 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let mut route = slice;
     let mut route_target = p.slices[route].pos;
     let debug = std::env::var("RACE_DRIVE_DEBUG").is_ok();
+    let avoid_on = std::env::var("RACE_DRIVE_AVOID").map_or(true, |v| v != "0");
     let mut moved_before_go = 0.0f32;
     // spin-outs: the slip angle (velocity against heading) passing 35 degrees above 10 m/s
     let (mut spins, mut spinning) = (0u32, false);
@@ -105,9 +106,16 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 route = next;
                 route_target = p.slices[route].pos;
             }
-            let to = route_target - car.pos;
+            // keep clear of traffic and opponents the way the opponents do (RACE_DRIVE_AVOID=0 turns it off)
+            let (shift, cap) = if avoid_on {
+                let near: Vec<Other> = racers.iter().map(|x| Other::of(&x.0)).chain(fleet.others()).collect();
+                ai::avoid(&car, &p.slices[slice], &near)
+            } else {
+                (bevy::math::Vec3::ZERO, f32::INFINITY)
+            };
+            let to = route_target + shift - car.pos;
             let diff = wrap((-to.x).atan2(-to.z) - car.yaw);
-            let want = if diff.abs() > 0.5 { 10.0 } else { 22.0 };
+            let want = (if diff.abs() > 0.5 { 10.0f32 } else { 22.0 }).min(cap);
             // with the retail model the driver damps its steering with the yaw rate and lifts
             // while sliding, or full lock plus full throttle spins a rear-drive car
             let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
@@ -139,11 +147,12 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         }
         let player_progress = r.cars[0].progress;
         let rate = ai::player_rate(player_progress - fractions[0], r.race_ticks());
-        let others: Vec<Other> = std::iter::once(Other { pos: car.pos, speed: car.speed }).chain(racers.iter().map(|x| Other { pos: x.0.pos, speed: x.0.speed })).collect();
+        let others: Vec<Other> = std::iter::once(Other::of(&car)).chain(racers.iter().map(|x| Other::of(&x.0))).collect();
+        let traffic_now = fleet.others();
         let mut samples = vec![CarSample::default(); cars];
         for i in 0..racers.len() {
             let view = View { path: p, routes: &t.routes, line: &line, dir, held: r.held(), finished: r.cars[i + 1].state == race::CarState::Finished, difficulty, lead: r.cars[i + 1].progress - player_progress, player_rate: rate };
-            let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != i + 1).map(|(_, o)| *o).collect();
+            let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != i + 1).map(|(_, o)| *o).chain(traffic_now.iter().copied()).collect();
             let (c, brain, rname) = &mut racers[i];
             let before_rec = brain.recoveries;
             let input = brain.think(c, &view, &near, &mut rng);

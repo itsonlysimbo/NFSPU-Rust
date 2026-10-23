@@ -29,6 +29,9 @@ narrower half-road (guess); braking for a car ahead in the lane, and a "honk" ev
 closing under 12 m ahead, are guesses. Traffic is full `Car` physics, so hits move both cars (`collide_cars`).
 A traffic car that is far, stuck for 6 s, fallen or crashed is taken off and reappears after the wait.
 
+## Avoiding traffic (ours)
+Retail opponents pass traffic, but the avoidance code was not read. Ours (`ai::avoid`, guesses): a car within 11 m plus 2.2 s of closing speed ahead and within 2.4 m sideways is passed on the side with more road (3.2 m needed beside it); with no gap the driver brakes to arrive behind it at its speed. Oncoming cars close at both speeds, so they are seen further out.
+
 ## Not done
 Horn sound, the speed ladder, decoded lane data, reaction to opponents beyond braking, police, traffic on junction
 route choice (cars take the first route).
