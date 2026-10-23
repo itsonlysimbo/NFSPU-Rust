@@ -418,6 +418,7 @@ impl QuickRace {
             damage: self.damage == 1,
             difficulty: self.difficulty as u8,
             player: self.player.clone(),
+            tuning: Default::default(),
         }
     }
 }

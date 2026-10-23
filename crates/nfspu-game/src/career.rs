@@ -5,6 +5,7 @@
 //! into the install or its `.sav` files. Field offsets and the rules below are described in
 //! `docs/provenance/career.md`, which also says which rules are guesses.
 
+use crate::career_shop::{self, Part, UsedCar};
 use crate::menu::{Choice, Row};
 use nfspu_formats::fe::Locale;
 use std::collections::BTreeMap;
@@ -121,6 +122,37 @@ pub struct OwnedCar {
     pub id: u16,
     /// Paint: the `.clr` section number.
     pub paint: usize,
+    /// Miles driven (a bought used car arrives with its own).
+    pub mileage: u32,
+    /// The used car's "extras" percentage (adds to its value).
+    pub extras: u32,
+    /// What the player paid.
+    pub bought_for: i64,
+    /// Installed part ids (`nfs5.prt`).
+    pub parts: Vec<u32>,
+}
+
+impl OwnedCar {
+    /// A car with nothing on it yet.
+    pub fn stock(id: u16, paint: usize, bought_for: i64) -> OwnedCar {
+        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new() }
+    }
+}
+
+/// The catalogues the money rules need.
+#[derive(Clone, Copy)]
+pub struct Shop<'a> {
+    pub cars: &'a [crate::catalog::Car],
+    pub parts: &'a [Part],
+}
+
+/// Why a purchase did not go through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShopError {
+    NotEnoughCash,
+    UnknownItem,
+    /// The last car cannot be sold.
+    LastCar,
 }
 
 /// How far the player got in one tournament.
@@ -157,6 +189,10 @@ pub struct Career {
     /// The tournament and owned car the menu has chosen (indices into the open list and `cars`).
     pub chosen_tournament: usize,
     pub chosen_car: usize,
+    /// The used-car lot's round (it is made again after each race) and the lot cars already bought
+    /// in this round.
+    pub market_round: u32,
+    pub taken: Vec<usize>,
 }
 
 impl Career {
@@ -166,10 +202,12 @@ impl Career {
             player: player.to_string(),
             cash: START_CASH as i64,
             year: ERAS[0].1,
-            cars: vec![OwnedCar { id: STARTER_CAR, paint: STARTER_PAINT }],
+            cars: vec![OwnedCar::stock(STARTER_CAR, STARTER_PAINT, 0)],
             progress: BTreeMap::new(),
             chosen_tournament: 0,
             chosen_car: 0,
+            market_round: 0,
+            taken: Vec::new(),
         }
     }
 
@@ -201,7 +239,12 @@ impl Career {
         let mut t = String::from("# NFSPU career profile (our own format)\nversion = 1\n");
         t += &format!("player = {}\ncash = {}\nyear = {}\n", self.player, self.cash, self.year);
         for c in &self.cars {
-            t += &format!("car = {},{}\n", c.id, c.paint);
+            let parts: Vec<String> = c.parts.iter().map(u32::to_string).collect();
+            t += &format!("car = {},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"));
+        }
+        t += &format!("market = {}\n", self.market_round);
+        if !self.taken.is_empty() {
+            t += &format!("taken = {}\n", self.taken.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
         }
         for (id, p) in &self.progress {
             t += &format!("progress = {id},{},{},{}\n", p.races_done, p.completed, p.best_place);
@@ -211,7 +254,7 @@ impl Career {
     }
 
     pub fn parse(text: &str) -> Option<Career> {
-        let mut career = Career { player: String::new(), cash: 0, year: ERAS[0].1, cars: Vec::new(), progress: BTreeMap::new(), chosen_tournament: 0, chosen_car: 0 };
+        let mut career = Career { player: String::new(), cash: 0, year: ERAS[0].1, cars: Vec::new(), progress: BTreeMap::new(), chosen_tournament: 0, chosen_car: 0, market_round: 0, taken: Vec::new() };
         let mut seen = false;
         for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
             let Some((key, value)) = line.split_once('=') else { continue };
@@ -223,11 +266,22 @@ impl Career {
                 "cash" => career.cash = value.parse().unwrap_or(0),
                 "year" => career.year = value.parse().unwrap_or(ERAS[0].1),
                 "car" => {
-                    let n = nums(value);
-                    if n.len() == 2 {
-                        career.cars.push(OwnedCar { id: n[0] as u16, paint: n[1] as usize });
+                    // id,paint[,mileage,extras,bought_for,part;part...] (the first slice wrote two numbers)
+                    let fields: Vec<&str> = value.split(',').collect();
+                    let n = nums(&fields[..fields.len().min(5)].join(","));
+                    if n.len() >= 2 {
+                        career.cars.push(OwnedCar {
+                            id: n[0] as u16,
+                            paint: n[1] as usize,
+                            mileage: n.get(2).copied().unwrap_or(0) as u32,
+                            extras: n.get(3).copied().unwrap_or(0) as u32,
+                            bought_for: n.get(4).copied().unwrap_or(0),
+                            parts: fields.get(5).map(|p| p.split(';').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default(),
+                        });
                     }
                 }
+                "market" => career.market_round = value.parse().unwrap_or(0),
+                "taken" => career.taken = value.split(',').filter_map(|x| x.trim().parse().ok()).collect(),
                 "progress" => {
                     let n = nums(value);
                     if n.len() == 4 {
@@ -299,6 +353,13 @@ impl Career {
         let races = Self::race_tracks(t, all).len();
         let amount = Self::race_prize(t, races, place);
         self.cash += amount as i64;
+        // The raced car gains miles and the used-car lot gets new stock.
+        let at = self.chosen_car.min(self.cars.len().saturating_sub(1));
+        if let Some(c) = self.cars.get_mut(at) {
+            c.mileage += career_shop::RACE_MILES;
+        }
+        self.market_round += 1;
+        self.taken.clear();
         let p = self.progress.entry(t.id).or_default();
         p.best_place = if p.best_place == 0 { place.min(255) as u8 } else { p.best_place.min(place.min(255) as u8) };
         p.races_done += 1;
@@ -321,6 +382,141 @@ impl Career {
     /// The race the player enters next in `t` (0-based into its tracks).
     pub fn next_race(&self, t: &Tournament) -> usize {
         self.progress(t.id).races_done as usize
+    }
+
+    // ---- the money rules --------------------------------------------------------------------
+
+    fn catalogue_car<'a>(&self, shop: &Shop<'a>, id: u16) -> Option<&'a crate::catalog::Car> {
+        shop.cars.iter().find(|c| c.id == id)
+    }
+
+    /// What an installed part is worth now (its list price grown by the years since its model year).
+    fn installed_value(&self, shop: &Shop, id: u32) -> i64 {
+        shop.parts.iter().find(|p| p.id == id).map_or(0, |p| career_shop::part_value(p.price, self.year - p.year))
+    }
+
+    /// What owned car `i` would sell for (retail's value rule, `career_shop::car_value`).
+    pub fn value_of(&self, i: usize, shop: &Shop) -> i64 {
+        let Some(car) = self.cars.get(i) else { return 0 };
+        let base = self.catalogue_car(shop, car.id).map_or(0, |c| c.price as i64);
+        let parts: i64 = car.parts.iter().map(|p| self.installed_value(shop, *p)).sum();
+        career_shop::car_value(base, car.mileage, car.extras, 0, parts)
+    }
+
+    /// The used-car lot for now: this round's cars that are still there.
+    pub fn market(&self, shop: &Shop, paints: &dyn Fn(&crate::catalog::Car) -> Vec<usize>) -> Vec<(usize, UsedCar)> {
+        let seed = (self.player.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64))) ^ ((self.market_round as u64) << 20);
+        career_shop::used_market(shop.cars, self.year, seed, paints).into_iter().enumerate().filter(|(i, _)| !self.taken.contains(i)).collect()
+    }
+
+    fn pay(&mut self, price: i64) -> Result<(), ShopError> {
+        if self.cash < price {
+            return Err(ShopError::NotEnoughCash);
+        }
+        self.cash -= price;
+        Ok(())
+    }
+
+    /// Buys a new car from the dealership at its list price; it becomes the chosen car.
+    pub fn buy_new(&mut self, car_id: u16, paint: usize, shop: &Shop) -> Result<i64, ShopError> {
+        let price = self.catalogue_car(shop, car_id).map(|c| c.price as i64).filter(|p| *p > 0).ok_or(ShopError::UnknownItem)?;
+        self.pay(price)?;
+        self.cars.push(OwnedCar::stock(car_id, paint, price));
+        self.chosen_car = self.cars.len() - 1;
+        Ok(price)
+    }
+
+    /// Buys lot car `lot_index` (its index in the round's lot) at its asking price.
+    pub fn buy_used(&mut self, lot_index: usize, lot: &[(usize, UsedCar)]) -> Result<i64, ShopError> {
+        let (_, used) = lot.iter().find(|(i, _)| *i == lot_index).ok_or(ShopError::UnknownItem)?;
+        self.pay(used.price)?;
+        let mut car = OwnedCar::stock(used.car, used.paint, used.price);
+        car.mileage = used.mileage;
+        car.extras = used.extras;
+        self.cars.push(car);
+        self.taken.push(lot_index);
+        self.chosen_car = self.cars.len() - 1;
+        Ok(used.price)
+    }
+
+    /// Sells owned car `i` for its value. The last car cannot be sold.
+    pub fn sell(&mut self, i: usize, shop: &Shop) -> Result<i64, ShopError> {
+        if self.cars.len() <= 1 {
+            return Err(ShopError::LastCar);
+        }
+        if i >= self.cars.len() {
+            return Err(ShopError::UnknownItem);
+        }
+        let value = self.value_of(i, shop);
+        self.cars.remove(i);
+        self.cash += value;
+        self.chosen_car = self.chosen_car.min(self.cars.len() - 1);
+        Ok(value)
+    }
+
+    /// The price of buying part `id` now.
+    pub fn part_price(&self, shop: &Shop, id: u32) -> i64 {
+        self.installed_value(shop, id)
+    }
+
+    /// Buys and fits parts on car `i`. A part replaces the one fitted in its kind and category (which
+    /// is sold back at its value). All or nothing: the total must be affordable.
+    pub fn fit_parts(&mut self, i: usize, ids: &[u32], shop: &Shop) -> Result<i64, ShopError> {
+        if i >= self.cars.len() {
+            return Err(ShopError::UnknownItem);
+        }
+        let slot = |id: u32| shop.parts.iter().find(|p| p.id == id).map(|p| (p.kind, p.category.clone()));
+        let mut refund = 0;
+        let mut total = 0;
+        let mut parts = self.cars[i].parts.clone();
+        for id in ids {
+            let Some(s) = slot(*id) else { return Err(ShopError::UnknownItem) };
+            if parts.contains(id) {
+                continue;
+            }
+            parts.retain(|old| {
+                let same = slot(*old).as_ref() == Some(&s);
+                if same {
+                    refund += self.installed_value(shop, *old);
+                }
+                !same
+            });
+            total += self.installed_value(shop, *id);
+            parts.push(*id);
+        }
+        if self.cash + refund < total {
+            return Err(ShopError::NotEnoughCash);
+        }
+        self.cash += refund - total;
+        self.cars[i].parts = parts;
+        Ok(total - refund)
+    }
+
+    /// Takes part `id` off car `i` and pays its value.
+    pub fn sell_part(&mut self, i: usize, id: u32, shop: &Shop) -> Result<i64, ShopError> {
+        let value = self.installed_value(shop, id);
+        let car = self.cars.get_mut(i).ok_or(ShopError::UnknownItem)?;
+        let before = car.parts.len();
+        car.parts.retain(|p| *p != id);
+        if car.parts.len() == before {
+            return Err(ShopError::UnknownItem);
+        }
+        self.cash += value;
+        Ok(value)
+    }
+
+    /// The handling changes of car `i`'s fitted parts.
+    pub fn tuning_of(&self, i: usize, shop: &Shop) -> crate::car_sim::Tuning {
+        let Some(owned) = self.cars.get(i) else { return Default::default() };
+        let Some(car) = self.catalogue_car(shop, owned.id) else { return Default::default() };
+        career_shop::tuning(&career_shop::parts_for(shop.parts, car, self.year), &owned.parts)
+    }
+
+    /// Paints owned car `i` (the paint shop; **guess**: free).
+    pub fn repaint(&mut self, i: usize, paint: usize) {
+        if let Some(c) = self.cars.get_mut(i) {
+            c.paint = paint;
+        }
     }
 
     // ---- what the screens show -------------------------------------------------------------
@@ -450,7 +646,7 @@ mod tests {
         assert_eq!(c.year, 1950);
         let open: Vec<u32> = c.open_tournaments(&t).iter().map(|t| t.id).collect();
         assert_eq!(open, vec![1, 2]);
-        assert_eq!(c.cars, vec![OwnedCar { id: STARTER_CAR, paint: STARTER_PAINT }]);
+        assert_eq!(c.cars, vec![OwnedCar::stock(STARTER_CAR, STARTER_PAINT, 0)]);
     }
 
     #[test]
@@ -490,6 +686,85 @@ mod tests {
         assert!(!c.open_tournaments(&t).iter().any(|t| t.bonus));
         c.progress.insert(2, Progress { completed: 1, ..Default::default() });
         assert!(c.open_tournaments(&t).iter().any(|t| t.bonus));
+    }
+
+    fn shop_data() -> (Vec<crate::catalog::Car>, Vec<Part>) {
+        let car = |id: u16, price: u32| crate::catalog::Car { id, price, year_from: 1950, year_to: 1960, ai_name: "356".into(), ..Default::default() };
+        let part = |id: u32, kind: u16, price: i64| Part { id, group: "356".into(), kind, category: "Turbo".into(), year: 1950, price, ..Default::default() };
+        (vec![car(76, 11_000), car(100, 12_700)], vec![part(1, 1, 500), part(2, 1, 900), part(3, 2, 300)])
+    }
+
+    #[test]
+    fn buying_selling_and_the_last_car() {
+        let (cars, parts) = shop_data();
+        let shop = Shop { cars: &cars, parts: &parts };
+        let mut c = Career::new("A");
+        assert_eq!(c.buy_new(100, 5, &shop), Err(ShopError::NotEnoughCash));
+        c.cash = 20_000;
+        assert_eq!(c.buy_new(100, 5, &shop), Ok(12_700));
+        assert_eq!((c.cash, c.cars.len(), c.chosen_car), (7_300, 2, 1));
+        assert_eq!(c.buy_new(9, 1, &shop), Err(ShopError::UnknownItem));
+        // the starter car (11,000, no miles) sells for the price less the first damage step
+        assert_eq!(c.sell(0, &shop), Ok(10_890));
+        assert_eq!((c.cash, c.cars.len(), c.chosen_car), (18_190, 1, 0));
+        assert_eq!(c.sell(0, &shop), Err(ShopError::LastCar));
+    }
+
+    #[test]
+    fn used_cars_keep_their_miles_and_leave_the_lot() {
+        let (cars, parts) = shop_data();
+        let shop = Shop { cars: &cars, parts: &parts };
+        let mut c = Career::new("A");
+        c.year = 1975;
+        c.cash = 1_000_000;
+        let paints = |_: &crate::catalog::Car| vec![2usize];
+        let lot = c.market(&shop, &paints);
+        assert!(!lot.is_empty());
+        let (index, used) = lot[0].clone();
+        assert_eq!(c.buy_used(index, &lot), Ok(used.price));
+        assert_eq!(c.cars.last().unwrap().mileage, used.mileage);
+        assert!(!c.market(&shop, &paints).iter().any(|(i, _)| *i == index), "bought cars leave the lot");
+        assert_eq!(c.buy_used(index, &c.market(&shop, &paints)), Err(ShopError::UnknownItem));
+    }
+
+    #[test]
+    fn parts_replace_each_other_and_change_the_value_and_handling() {
+        let (cars, parts) = shop_data();
+        let shop = Shop { cars: &cars, parts: &parts };
+        let mut c = Career::new("A");
+        c.cash = 2_000;
+        let stock_value = c.value_of(0, &shop);
+        assert_eq!(c.fit_parts(0, &[1, 3], &shop), Ok(800));
+        assert_eq!(c.value_of(0, &shop), stock_value + 800);
+        let low = c.tuning_of(0, &shop);
+        assert!(low.power > 1.0 && low.brake > 1.0);
+        // the dearer turbo replaces the cheaper one, which is sold back
+        assert_eq!(c.fit_parts(0, &[2], &shop), Ok(400));
+        assert_eq!(c.cars[0].parts.len(), 2);
+        assert!(c.tuning_of(0, &shop).power > low.power);
+        assert_eq!(c.cash, 2_000 - 800 - 400);
+        assert_eq!(c.fit_parts(0, &[2], &shop), Ok(0), "already fitted");
+        c.cash = 0;
+        assert_eq!(c.sell_part(0, 3, &shop), Ok(300));
+        assert_eq!(c.cash, 300);
+        assert_eq!(c.fit_parts(0, &[1], &shop), Ok(-400), "swapping back to the cheaper part pays the difference");
+    }
+
+    #[test]
+    fn racing_adds_miles_and_refreshes_the_lot() {
+        let t = table();
+        let mut c = Career::new("A");
+        c.taken = vec![1];
+        c.finish_race(&t[0], &t, 1);
+        assert_eq!(c.cars[0].mileage, career_shop::RACE_MILES);
+        assert_eq!((c.market_round, c.taken.len()), (1, 0));
+        let mut d = Career::new("B");
+        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8] });
+        d.taken = vec![0, 3];
+        assert_eq!(Career::parse(&d.to_text()).unwrap(), d);
+        assert_eq!(Career::parse("version = 1
+player = x
+car = 76,19").unwrap().cars[0], OwnedCar::stock(76, 19, 0), "first-slice files still load");
     }
 
     #[test]

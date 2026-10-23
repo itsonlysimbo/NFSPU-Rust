@@ -110,6 +110,8 @@ pub struct RaceSetup {
     pub difficulty: u8,
     /// The save the choices came from (`3Greg`), empty without one.
     pub player: String,
+    /// Career part effects on the car's handling (stock when missing).
+    pub tuning: crate::car_sim::Tuning,
 }
 
 impl RaceSetup {
@@ -158,6 +160,7 @@ impl RaceSetup {
         line("damage", self.damage.to_string());
         line("difficulty", self.difficulty.to_string());
         line("player", self.player.clone());
+        line("tuning", format!("{},{},{},{}", self.tuning.power, self.tuning.grip, self.tuning.brake, self.tuning.mass));
         s
     }
 
@@ -224,6 +227,11 @@ impl RaceSetup {
             damage: flag("damage")?,
             difficulty: num("difficulty", get("difficulty")?)?,
             player: map.get("player").copied().unwrap_or("").to_string(),
+            tuning: map
+                .get("tuning")
+                .map(|v| v.split(',').filter_map(|n| n.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+                .filter(|t| t.len() == 4)
+                .map_or_else(Default::default, |t| crate::car_sim::Tuning { power: t[0], grip: t[1], brake: t[2], mass: t[3] }),
         })
     }
 }
@@ -257,6 +265,7 @@ mod tests {
             damage: false,
             difficulty: 1,
             player: "3Greg".into(),
+            tuning: crate::car_sim::Tuning { power: 1.1, grip: 1.05, brake: 1.0, mass: 0.98 },
         }
     }
 
