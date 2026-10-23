@@ -38,6 +38,9 @@ them may stop mid-task (usage limits). Leave every task so the next agent can pi
 - **Claim:** put your agent name and branch in the task's row in `docs/WORK.md` before starting.
   Don't take a task someone else holds unless its last update is over a day old and its branch is
   committed.
+- **Main checkout stays on `master`:** never run `git checkout`/`switch` in
+  `C:\Users\CB\Desktop\NFSPU-Rust` itself (2026-10-23 a session switched it to its branch and a
+  merge landed there). Work only in your own worktree.
 - **Branch:** one task, one branch. Committing to your own task branch is always allowed; committing
   to `master` still needs the user's OK (rule 3) or a coordinator merge.
 - **Checkpoint:** commit at each working step (`WIP: ...` is fine) and update the task's **Next step**
