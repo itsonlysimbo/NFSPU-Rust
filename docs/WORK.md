@@ -30,6 +30,9 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Côte d'Azur sea water not visible | Mid | Fixed on master (510f236): translucent water now blends; needs playtest |
 | Cockpit hands on the wheel | Mid | Claude `cockpit-hands` session (wheel now turns smoothly, 510f236) |
 | Car reflections: lamp glow and 'covered' glows | Mid | Sun highlight merged (845babe); lamp glow not seen by eye; trace the 'covered' flag (Monaco 3-5) and the sun direction |
+| Côte d'Azur sea water not visible | Mid | **Claude `claude/water-cockpit-213623`, claimed 2026-10-22.** OpenCode's water planes (3efc9be) draw nothing in the user's playtest |
+| Cockpit: hand position on the wheel and hand animation | Mid | **Claude `claude/cockpit-hands-afa0a8`, claimed 2026-10-22.** Wheel smoothing done (merged) |
+| Car reflections (paint and chrome environment map) | Strong | User's next ask for cars |
 | Menu button outline light that travels around the border | Mid | Needs retail footage (user can supply) |
 | Race sound fine-tuning against retail | Strong | Needs a retail recording with game sound |
 | Body lean closer to retail | Strong | After damage/suspension merges |

@@ -525,6 +525,7 @@ From the 993's article list (`car_articles`) and the loaded model (`car_part_inf
   normals from the geometry: on the 993 about `(0, 0.28, 0.96)` in car space (mostly +Z, the wheel
   facing the driver and tilted up). The wheel turns about 90 degrees at full lock (**guess**, not
   traced). The drawn wheel follows the input at a limited rate (full lock in about 0.6 s) because keyboard input is 0/1 and used to snap it to 90 degrees. Hands ride the rim, arms stay static (guess). `NFSPU_STEER=-1..1` forces the input for captures.
+- Arms (2026-10-22): each arm article is a shoulder block (about 8 triangles) and a forearm block near its hand, joined by a few middle triangles. Static arms detach from hands that turn with the wheel, so the cockpit blends each arm vertex between fixed and wheel-rotated by its position along the shoulder-to-hand line (fixed below 0.35, fully turned above 0.85). Retail's real arm animation is not traced (the Ghidra strings have no arm or hand names), so this is a guess. Captures: `logs/hands_steer_{-1,0,1}.png`.
 - The exterior view still draws the `LODDriver` and the level-3 cabin's own static wheel; the
   detailed arms and the turning wheel show only in the cockpit view. **Not playtested.**
 
