@@ -374,6 +374,110 @@ pub fn hit_gain(impact: f32) -> f32 {
     (64.0 + (impact * 63.0 / 10.0).clamp(0.0, 63.0)) / 127.0
 }
 
+/// Speed of sound (m/s) for the Doppler shift.
+pub const SOUND_SPEED: f32 = 343.0;
+
+/// Doppler pitch factor for a source closing on the listener at `closing` m/s (negative while it
+/// moves away): `c / (c - v)`, with the closing speed held to +-60 m/s so a glitching car can't
+/// send the pitch wild (0.85..1.21). The rule is textbook physics; whether retail shifts the pitch
+/// at all, or by how much, is **not traced** (the Ghidra bridge was down for this step).
+pub fn doppler(closing: f32) -> f32 {
+    let v = closing.clamp(-60.0, 60.0);
+    SOUND_SPEED / (SOUND_SPEED - v)
+}
+
+/// Closing speed (m/s, positive = coming closer) of a source at `rel` (source minus listener)
+/// moving at `src_vel`, heard by a listener moving at `ear_vel`. Only the ground plane counts.
+pub fn closing_speed(rel: [f32; 2], src_vel: [f32; 2], ear_vel: [f32; 2]) -> f32 {
+    let len = (rel[0] * rel[0] + rel[1] * rel[1]).sqrt();
+    if len < 1e-3 {
+        return 0.0;
+    }
+    let dir = [rel[0] / len, rel[1] / len];
+    // the gap shrinks when the listener moves along `dir` or the source moves against it
+    (ear_vel[0] - src_vel[0]) * dir[0] + (ear_vel[1] - src_vel[1]) * dir[1]
+}
+
+/// Rain on the car (`rain.bnk` in `zzzwzzz.viv`, one loop): the weather's rain amount (0..1)
+/// times the effects channel, at full level in the cockpit and 0.6 outside (the drumming is on
+/// the roof you sit under). The scaling by view is our guess; the retail rain channel's inputs
+/// are not traced.
+pub fn rain_gain(amount: f32, near: bool) -> f32 {
+    amount.clamp(0.0, 1.0) * if near { 1.0 } else { 0.6 } * EFFECT_LEVEL
+}
+
+/// An opponent's tyre squeal: the player's skid rule for its slide, times retail's distance
+/// volume (`2048 / (m + 2)` capped at 127) like its engine.
+pub fn opponent_skid_gain(slide: f32, distance: f32) -> f32 {
+    skid_gains(slide).0 * distance_volume(distance).min(127.0) / 127.0
+}
+
+/// One car as the sound trace sees it: ground position (x, z), ground velocity (m/s), strongest
+/// wheel slide (0..1) and engine speed over its redline.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TraceCar {
+    pub pos: [f32; 2],
+    pub vel: [f32; 2],
+    pub slide: f32,
+    pub rpm_frac: f32,
+}
+
+/// Logs when the event-like channels change: rain starting and stopping, each car's skid
+/// starting and stopping (car 0 is the player), and opponents passing the player (closing turns
+/// to opening within 40 m) with the Doppler factor and engine volumes either side. Used by the
+/// game (`race_audio.rs`) and the headless `race_drive` so both write the same lines to
+/// `logs/race_sound.log`. Volumes are before the Options > Audio levels.
+#[derive(Debug, Clone, Default)]
+pub struct SoundTrace {
+    raining: bool,
+    skidding: Vec<bool>,
+    closing: Vec<bool>,
+}
+
+impl SoundTrace {
+    /// Volume below which a channel counts as silent.
+    pub const AUDIBLE: f32 = 0.02;
+
+    pub fn observe(&mut self, tick: u32, rain_amount: f32, near: bool, cars: &[TraceCar]) -> Vec<String> {
+        let mut out = Vec::new();
+        let rain = rain_gain(rain_amount, near);
+        if (rain > Self::AUDIBLE) != self.raining {
+            self.raining = !self.raining;
+            out.push(format!("tick {tick}: rain {} (amount {rain_amount:.2}, volume {rain:.2})", if self.raining { "starts" } else { "stops" }));
+        }
+        self.skidding.resize(cars.len(), false);
+        self.closing.resize(cars.len(), false);
+        let Some(me) = cars.first() else { return out };
+        for (i, c) in cars.iter().enumerate() {
+            let speed = (c.vel[0] * c.vel[0] + c.vel[1] * c.vel[1]).sqrt();
+            let rel = [c.pos[0] - me.pos[0], c.pos[1] - me.pos[1]];
+            let dist = (rel[0] * rel[0] + rel[1] * rel[1]).sqrt();
+            let slide = if speed > 2.0 { c.slide } else { 0.0 };
+            let skid = if i == 0 { skid_gains(slide).0 } else { opponent_skid_gain(slide, dist) };
+            if (skid > Self::AUDIBLE) != self.skidding[i] {
+                self.skidding[i] = !self.skidding[i];
+                out.push(format!("tick {tick}: car {i} skid {} (slide {:.2}, {dist:.1} m, volume {skid:.2})", if self.skidding[i] { "starts" } else { "stops" }, c.slide));
+            }
+            if i == 0 {
+                continue;
+            }
+            let closing = closing_speed(rel, c.vel, me.vel);
+            if dist < 40.0 && closing.abs() > 3.0 && (closing > 0.0) != self.closing[i] {
+                self.closing[i] = closing > 0.0;
+                let receding = if speed > 0.5 && dist > 1e-3 { (rel[0] * c.vel[0] + rel[1] * c.vel[1]) / dist / speed } else { 0.0 };
+                let (front, back, pitch) = opponent_engine(c.rpm_frac, dist, receding);
+                out.push(format!(
+                    "tick {tick}: car {i} {} at {dist:.1} m, closing {closing:+.1} m/s, Doppler x{:.3}, engine pitch {:.3}, volumes approach {front:.2} away {back:.2}",
+                    if self.closing[i] { "approaching" } else { "passes, moving away" },
+                    doppler(closing),
+                    pitch * doppler(closing)
+                ));
+            }
+        }
+        out
+    }
+}
+
 /// The wind's wandering level and pitch (retail's random walk: level 40..127 in steps of 1..8,
 /// pitch 0.977..1.023 of normal in steps of 10..90 / 65536).
 #[derive(Debug, Clone)]
@@ -604,5 +708,61 @@ mod tests {
         assert_eq!(track_sound_number("95riverdistant1a_299.bnk"), Some(299));
         assert_eq!(countdown_entry(0), "sor-a-go.bnk");
         assert_eq!(countdown_entry(3), "sor-a-3.bnk");
+    }
+
+    #[test]
+    fn doppler_raises_pitch_coming_and_lowers_going() {
+        assert!((doppler(0.0) - 1.0).abs() < 1e-6);
+        assert!(doppler(30.0) > 1.09 && doppler(30.0) < 1.1);
+        assert!(doppler(-30.0) < 0.92 && doppler(-30.0) > 0.91);
+        assert_eq!(doppler(500.0), doppler(60.0));
+        assert!(doppler(60.0) < 1.22 && doppler(-60.0) > 0.85);
+        // a car ahead driving at us, listener still: closing
+        assert!((closing_speed([0.0, 10.0], [0.0, -20.0], [0.0, 0.0]) - 20.0).abs() < 1e-4);
+        // the listener drives past a parked car: closing before, opening after
+        assert!(closing_speed([0.0, 10.0], [0.0, 0.0], [0.0, 25.0]) > 0.0);
+        assert!(closing_speed([0.0, -10.0], [0.0, 0.0], [0.0, 25.0]) < 0.0);
+        // side by side at the same speed: no shift
+        assert_eq!(closing_speed([3.0, 0.0], [0.0, 30.0], [0.0, 30.0]), 0.0);
+        assert_eq!(closing_speed([0.0, 0.0], [5.0, 0.0], [0.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn rain_and_opponent_skid_levels() {
+        assert_eq!(rain_gain(0.0, true), 0.0);
+        assert!((rain_gain(1.0, true) - EFFECT_LEVEL).abs() < 1e-6);
+        assert!((rain_gain(1.0, false) - 0.6 * EFFECT_LEVEL).abs() < 1e-6);
+        assert_eq!(rain_gain(2.0, true), rain_gain(1.0, true));
+        assert_eq!(opponent_skid_gain(0.0, 5.0), 0.0);
+        // close by it is as loud as the player's own squeal; far off it fades as 1/distance
+        assert_eq!(opponent_skid_gain(1.0, 1.0), skid_gains(1.0).0);
+        let (a, b) = (opponent_skid_gain(1.0, 30.0), opponent_skid_gain(1.0, 62.0));
+        assert!((a / b - 2.0).abs() < 0.01, "{a} {b}");
+    }
+
+    #[test]
+    fn trace_logs_rain_skids_and_passes() {
+        let mut t = SoundTrace::default();
+        let me = |z: f32| TraceCar { pos: [0.0, z], vel: [0.0, 30.0], slide: 0.0, rpm_frac: 0.7 };
+        let other = |z: f32, slide: f32| TraceCar { pos: [3.0, z], vel: [0.0, 20.0], slide, rpm_frac: 0.6 };
+        // the player catches a slower car 30 m ahead, overtakes it while it skids, in rain
+        let mut log = Vec::new();
+        for tick in 0..200u32 {
+            let z = tick as f32 * 30.0 / 64.0;
+            let oz = 30.0 + tick as f32 * 20.0 / 64.0;
+            let rain = if (50..150).contains(&tick) { 0.8 } else { 0.0 };
+            let slide = if (60..90).contains(&tick) { 0.9 } else { 0.0 };
+            log.extend(t.observe(tick, rain, true, &[me(z), other(oz, slide)]));
+        }
+        let has = |s: &str| log.iter().any(|l| l.contains(s));
+        assert!(has("tick 50: rain starts"), "{log:#?}");
+        assert!(has("tick 150: rain stops"), "{log:#?}");
+        assert!(has("tick 60: car 1 skid starts"), "{log:#?}");
+        assert!(has("tick 90: car 1 skid stops"), "{log:#?}");
+        assert!(has("car 1 approaching") && has("car 1 passes, moving away"), "{log:#?}");
+        let pass = log.iter().position(|l| l.contains("passes")).unwrap();
+        assert!(log[pass].contains("Doppler x0.9"), "{}", log[pass]);
+        assert!(log.iter().position(|l| l.contains("approaching")).unwrap() < pass);
+        assert!(!has("car 0 skid"));
     }
 }

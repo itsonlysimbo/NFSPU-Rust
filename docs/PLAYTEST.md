@@ -130,3 +130,14 @@ Add a line per playtest: date, recording path, what was wrong.
 Set Traffic to light/medium/heavy in the quick-race menu (`NFSPU_TRAFFIC=1..3` from the command line). Check: cars appear
 ahead without popping in view, both directions, lanes sensible, they slow for you, hits shove both cars and cause damage,
 nothing floats or sits across the road, the frame rate holds on heavy. Counts, lanes and speeds are guesses.
+
+## Race sound channels (2026-10-23, `claude/cloud-sound-channels`)
+Built on a cloud machine without the install or speakers: **not tested** by ear or against game files.
+- **Rain**: on a rainy track (`NFSPU_WEATHER=rain`), a steady drumming loop should start with the rain
+  streaks; louder in the cockpit view than outside. Compare level with retail.
+- **Opponent skids**: when an AI car slides near you, its own tyre squeal should come from its side and
+  fade with distance.
+- **Doppler**: when you pass, or are passed by, an opponent the engine pitch should drop as it goes
+  by (about 3% at a 20 km/h speed difference). Retail may not do this at all; say if it sounds wrong.
+- Options > Audio: rain and skids follow the effects level, opponent engines the engine level.
+- `logs/race_sound.log` lists rain starts/stops, skid starts/stops and passes with the volumes.

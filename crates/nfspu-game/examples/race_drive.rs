@@ -15,12 +15,23 @@ use nfspu_game::car::{Car, Input};
 use nfspu_game::collision::WallSet;
 use nfspu_game::ground::Ground;
 use nfspu_game::race::{self, CarSample, Kind, Race, RaceEvent, RaceSetup};
+use nfspu_game::race_sound as rs;
 use nfspu_game::race_path::{self, crosses, grid_spot, Direction};
 use nfspu_game::track;
 use std::fmt::Write as _;
 
 fn wrap(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// A car as the sound trace sees it.
+fn trace_car(c: &Car) -> rs::TraceCar {
+    let slide = if c.on_ground { c.sim.wheels.iter().map(|w| if w.locked { 1.0 } else { w.slide }).fold(0.0f32, f32::max) } else { 0.0 };
+    rs::TraceCar { pos: [c.pos.x, c.pos.z], vel: [-c.yaw.sin() * c.speed, -c.yaw.cos() * c.speed], slide, rpm_frac: c.rpm() / c.sim.spec.redline.max(1.0) }
+}
+
+fn sound_log_file() -> std::path::PathBuf {
+    log_file().with_file_name("race_sound.log")
 }
 
 fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8, out: &mut String) -> bool {
@@ -75,6 +86,11 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         let _ = writeln!(out, "   traffic density {density}: {} cars", fleet.cars.len());
     }
     let mut resets = vec![0u32; opponents];
+    // race sounds' event channels (rain, skids, passes), logged as the game logs them
+    let weather = nfspu_game::weather::TrackWeather::load(&game, name, nfspu_game::weather::WeatherOverride::from_env(), nfspu_game::weather::TimeOverride::from_env());
+    let mut trace = rs::SoundTrace::default();
+    let mut sound = format!("race_drive {name} {dir:?}, {opponents} opponents (headless: channel triggers and volumes before the Options levels)\n");
+    let mut sound_counts = [0u32; 4];
     let mut taken = std::collections::BTreeMap::<(usize, usize), u32>::new();
     let mut choice_lines = 0u32;
     let mut hits = 0u32;
@@ -242,6 +258,14 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             };
             let _ = writeln!(out, "{line}");
         }
+        let cars: Vec<rs::TraceCar> = std::iter::once(trace_car(&car)).chain(racers.iter().map(|x| trace_car(&x.0))).collect();
+        for l in trace.observe(r.tick, weather.at(slice, p.slices.len()).rain, false, &cars) {
+            for (k, key) in ["rain starts", "skid starts", "approaching", "passes"].iter().enumerate() {
+                sound_counts[k] += l.contains(key) as u32;
+            }
+            sound.push_str(&l);
+            sound.push('\n');
+        }
         let prog = r.cars[0].progress;
         if prog > best_progress + 0.002 || r.held() { best_progress = best_progress.max(prog); last_gain = r.tick; }
         if !r.held() && r.tick - last_gain > 64 * 10 && backing <= 0.0 { backing = 3.0; last_gain = r.tick; }
@@ -266,6 +290,11 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     if !fleet.cars.is_empty() {
         let _ = writeln!(out, "   traffic: {traffic_spawns} spawns, {traffic_removed} removals, up to {traffic_max} driving at once, {traffic_hits} hits of impact 20+, {traffic_honks} honks");
     }
+    let _ = writeln!(out, "   sound events: {} rain starts, {} skid starts, {} approaches, {} passes (logs/race_sound.log)", sound_counts[0], sound_counts[1], sound_counts[2], sound_counts[3]);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(sound_log_file()) {
+        use std::io::Write as _;
+        let _ = f.write_all(sound.as_bytes());
+    }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });
     !stuck && moved_before_go < 0.5 && r.all_finished()
@@ -284,6 +313,7 @@ fn main() {
     }
     let mut out = String::new();
     let mut ok = true;
+    let _ = std::fs::remove_file(sound_log_file());
     if let Some(name) = a.first() {
         let dir = if a.get(1).map_or(false, |d| d.starts_with('b')) { Direction::Backward } else { Direction::Forward };
         let laps = a.get(2).and_then(|l| l.parse().ok()).unwrap_or(2);

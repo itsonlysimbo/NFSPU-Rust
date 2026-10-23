@@ -134,4 +134,14 @@ What each skid kind and surface code means, and the input that drives the wind c
 ## Not done / not verified
 
 - None of the levels has been compared with a retail recording. The overall balance between engine, effects and speech is a guess (`MIX` = 0.7 on everything).
-- Doppler shift, the `c` table set, rain (`rain.bnk`), road surfaces other than tarmac, opponents' skids and hits, the commentator's other lines, and the sideways balance swing are not modelled.
+- The `c` table set, road surfaces other than tarmac, opponents' hits, the commentator's other lines, and the sideways balance swing (`.spl` values 5 and 6) are not modelled.
+- Added 2026-10-23 on a cloud machine with neither the install nor the Ghidra bridge, so the rules below are **guesses, not traced** and **not tested** against game files:
+
+| Channel | Sound | Rule (ours) |
+|---|---|---|
+| rain on the car | `rain.bnk` (in `zzzwzzz.viv`), its one loop | weather rain amount (0..1) x effects level, x0.6 in outside views |
+| opponent skid | `SND_coll` 0x2a per opponent, placed like its engine | the player's skid rule for its strongest wheel slide x retail's distance volume `2048 / (m + 2)` capped at 127 |
+| Doppler | every opponent engine and skid voice | pitch x `343 / (343 - v)`, v = closing speed in m/s held to +-60 (0.85..1.21); the listener moves with the player's car |
+
+- Events (rain, skid starts and stops, opponents approaching and passing within 40 m) are logged by `race_sound::SoundTrace`, both in the game and in the headless `race_drive`, to `logs/race_sound.log`.
+- To trace in the executable: whether retail shifts pitch by relative speed at all (the `lden`/`ldex` crossfade may be its only treatment), which inputs the rain channel reads, and whether opponents' skids use the same table as the player's.

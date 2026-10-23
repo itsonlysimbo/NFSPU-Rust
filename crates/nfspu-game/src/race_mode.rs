@@ -629,6 +629,7 @@ fn race_tick(
     status.car_places = std::iter::once(&car.car).chain(run.racers.iter().map(|r| &r.car)).map(|c| [c.pos.x, c.pos.z, c.yaw, c.speed]).collect();
     let cars = || std::iter::once(&car.car).chain(run.racers.iter().map(|r| &r.car));
     status.car_rpm = cars().map(|c| c.rpm() / c.sim.spec.redline.max(1.0)).collect();
+    status.car_slide = cars().map(|c| if c.on_ground { c.sim.wheels.iter().map(|w| if w.locked { 1.0 } else { w.slide }).fold(0.0f32, f32::max) } else { 0.0 }).collect();
     if status.car_specs.len() != status.car_rpm.len() {
         status.car_specs = cars().map(|c| c.sim.spec.name.clone()).collect();
     }

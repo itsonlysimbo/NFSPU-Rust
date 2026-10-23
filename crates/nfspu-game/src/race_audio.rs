@@ -45,6 +45,8 @@ struct OpponentVoices {
     approach: Entity,
     away: Entity,
     ratio: (f32, f32),
+    /// Its tyre squeal (`SND_coll` 0x2a), spatial.
+    squeal: Option<Entity>,
 }
 
 struct AmbientVoice {
@@ -70,6 +72,9 @@ struct RaceSound {
     scrape: Option<Entity>,
     wind: Option<Entity>,
     wind_walk: Wind,
+    rain: Option<Entity>,
+    /// Logs rain, skid and passing events.
+    trace: rs::SoundTrace,
     speech: Option<Archive>,
     last_count: Option<u8>,
     was_held: bool,
@@ -217,6 +222,7 @@ fn start_sound(
             approach: spawn_loop(&mut commands, add_pcm(&o.approach, &mut assets), true),
             away: spawn_loop(&mut commands, add_pcm(&o.away, &mut assets), true),
             ratio: (rs::key_ratio(o.approach.key, o.approach.fine), rs::key_ratio(o.away.key, o.away.fine)),
+            squeal: None,
         }));
     }
 
@@ -233,6 +239,17 @@ fn start_sound(
     let scrub = coll_loop(rs::coll::SCRUB, "skid scrub", &mut commands);
     let scrape = coll_loop(rs::coll::SCRAPE, "wall scrape", &mut commands);
     let wind = coll_loop(rs::coll::WIND, "wind", &mut commands);
+    // each opponent's own tyre squeal, placed like its engine
+    if let Some((h, _)) = cached(&mut coll_cache, coll.as_deref(), rs::coll::SQUEAL, &mut assets) {
+        for o in opponents.iter_mut().flatten() {
+            o.squeal = Some(spawn_loop(&mut commands, h.clone(), true));
+        }
+    }
+
+    // rain on the car: the one loop in rain.bnk (zzzwzzz.viv)
+    let rain_pcm = opp_archive.as_ref().and_then(|a| rs::decode(a.get("rain.bnk")?, 0));
+    sound_log(&format!("rain.bnk: {}", rain_pcm.as_ref().map_or("missing".to_string(), |p| format!("{} samples at {} Hz, loop {}, key {}", p.samples.len(), p.rate, p.looped, p.key))));
+    let rain = rain_pcm.map(|p| spawn_loop(&mut commands, add_pcm(&p, &mut assets), false));
 
     // countdown voice, track ambience
     let speech = rs::speech_archive(&dir);
@@ -272,6 +289,8 @@ fn start_sound(
         scrape,
         wind,
         wind_walk: Wind::default(),
+        rain,
+        trace: rs::SoundTrace::default(),
         speech,
         last_count: None,
         was_held: true,
@@ -315,6 +334,7 @@ fn run_sound(
     mut spatial: Query<&mut SpatialAudioSink>,
     mut assets: ResMut<Assets<AudioSource>>,
     settings: Option<Res<Levels>>,
+    weather: Option<Res<nfspu_game::weather_fx::WeatherState>>,
 ) {
     let (Some(mut sound), Some(car)) = (sound, car) else { return };
     let s = &mut *sound;
@@ -371,6 +391,11 @@ fn run_sound(
     let wind = s.wind_walk.gain(c.speed) * if near { 1.0 } else { 0.5 };
     set_voice(s.wind, wind * fx, s.wind_walk.speed(), &mut sinks, &mut spatial);
 
+    // rain on the car, following the weather at the camera's slice
+    let rain_amount = weather.as_ref().map_or(0.0, |w| w.now.rain);
+    let rain = rs::rain_gain(rain_amount, near);
+    set_voice(s.rain, rain * fx, 1.0, &mut sinks, &mut spatial);
+
     // hits: walls (m/s into the wall) and cars (collide_cars units, 80 = a big hit)
     let mut hit = |n: usize, impact: f32, s: &mut RaceSound, commands: &mut Commands| {
         let g = rs::hit_gain(impact);
@@ -398,7 +423,8 @@ fn run_sound(
 
     // opponents: kept one metre from the listener in their direction, volume by distance
     let listen = cam.translation;
-    for (i, o) in s.opponents.iter().enumerate() {
+    let ear_vel = [-c.yaw.sin() * c.speed, -c.yaw.cos() * c.speed];
+    for (i, o) in s.opponents.iter_mut().enumerate() {
         let (Some(o), Some(p)) = (o, status.car_places.get(i)) else { continue };
         let pos = Vec3::new(p[0], c.pos.y, p[1]);
         let rel = pos - listen;
@@ -408,12 +434,39 @@ fn run_sound(
         let receding = if p[3].abs() > 0.5 { dir.dot(vel) / p[3].abs() } else { 0.0 };
         let rpm = status.car_rpm.get(i).copied().unwrap_or(0.2);
         let (front, back, pitch) = rs::opponent_engine(rpm, dist, receding);
+        // Doppler: the listener rides with the player's car (the camera follows it)
+        let closing = rs::closing_speed([rel.x, rel.z], [vel.x, vel.z], ear_vel);
+        let shift = rs::doppler(closing);
         for (e, g, r) in [(o.approach, front, o.ratio.0), (o.away, back, o.ratio.1)] {
             if let Ok(mut t) = transforms.get_mut(e) {
                 t.translation = listen + dir;
             }
-            set_voice(Some(e), g * lv.engine * MIX, pitch * r, &mut sinks, &mut spatial);
+            set_voice(Some(e), g * lv.engine * MIX, pitch * r * shift, &mut sinks, &mut spatial);
         }
+        let slide = status.car_slide.get(i).copied().unwrap_or(0.0);
+        let skid = rs::opponent_skid_gain(if p[3].abs() > 2.0 { slide } else { 0.0 }, dist);
+        if let Some(e) = o.squeal {
+            if let Ok(mut t) = transforms.get_mut(e) {
+                t.translation = listen + dir;
+            }
+            set_voice(Some(e), skid * fx, shift, &mut sinks, &mut spatial);
+        }
+    }
+
+    // event log: the player is car 0 (the listener rides with it for passes)
+    let cars: Vec<rs::TraceCar> = status
+        .car_places
+        .iter()
+        .enumerate()
+        .map(|(i, p)| rs::TraceCar {
+            pos: [p[0], p[1]],
+            vel: [-p[2].sin() * p[3], -p[2].cos() * p[3]],
+            slide: if i == 0 { slide } else { status.car_slide.get(i).copied().unwrap_or(0.0) },
+            rpm_frac: status.car_rpm.get(i).copied().unwrap_or(0.0),
+        })
+        .collect();
+    for line in s.trace.observe(status.tick, rain_amount, near, &cars) {
+        sound_log(&line);
     }
 
     // countdown voice: 3, 2, 1 as the numbers show, "go" when the cars are let go
