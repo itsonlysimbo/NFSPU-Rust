@@ -130,3 +130,9 @@ Add a line per playtest: date, recording path, what was wrong.
 Set Traffic to light/medium/heavy in the quick-race menu (`NFSPU_TRAFFIC=1..3` from the command line). Check: cars appear
 ahead without popping in view, both directions, lanes sensible, they slow for you, hits shove both cars and cause damage,
 nothing floats or sits across the road, the frame rate holds on heavy. Counts, lanes and speeds are guesses.
+
+## Opponents avoiding traffic (2026-10-23, `claude/cloud-traffic-avoid`)
+Quick race, 7 opponents, Traffic heavy. Check: opponents pull out to pass slow traffic and slot back in, they stay right
+for oncoming cars, they brake behind traffic when both halves are blocked instead of ramming it; oncoming traffic edges
+to its kerb as you come at it; traffic keeps clear of the centre line. Watch for opponents weaving or scraping walls on
+narrow Monaco streets while passing. Measured offline only (not seen in a window).

@@ -6,7 +6,9 @@
 //! Run: `cargo run -p nfspu-game --example race_drive --release -- monaco1 forward 2 7 2`
 //! (track, forward|backward, laps, opponents 0-7, difficulty 0-2; with no track it runs every track
 //! once, alone). `NFSPU_AI_SEED` fixes the random draws. Log: logs/race_drive.txt
-//! `RACE_DRIVE_TRAFFIC=<0-3>` adds road traffic (none, light, medium, heavy; default 0).
+//! `RACE_DRIVE_TRAFFIC=<0-3>` adds road traffic (none, light, medium, heavy; default 0). The
+//! autopilot passes and brakes for traffic like the opponents (`ai::avoid`); `RACE_DRIVE_NO_AVOID=1`
+//! turns that off to compare.
 //! `RACE_DRIVE_CAR=<catalogue id>` drives that retail car (default: the made-up `Spec::generic`);
 //! opponents drive the 993's retail car.
 
@@ -88,12 +90,14 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let mut route = slice;
     let mut route_target = p.slices[route].pos;
     let debug = std::env::var("RACE_DRIVE_DEBUG").is_ok();
+    let no_avoid = std::env::var("RACE_DRIVE_NO_AVOID").as_deref() == Ok("1");
     let mut moved_before_go = 0.0f32;
     // spin-outs: the slip angle (velocity against heading) passing 35 degrees above 10 m/s
     let (mut spins, mut spinning) = (0u32, false);
     let (mut wrong_ticks, mut stuck, mut backing, mut best_progress, mut last_gain) = (0u32, false, 0.0f32, 0.0f32, 0u32);
     while !r.all_finished() {
         let before = car.pos;
+        let traffic_now: Vec<Other> = fleet.cars.iter().filter(|t| t.state == nfspu_game::traffic::State::Driving).map(|t| Other::of(&t.car)).collect();
         let input = if r.held() {
             Input::default()
         } else {
@@ -105,9 +109,29 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 route = next;
                 route_target = p.slices[route].pos;
             }
-            let to = route_target - car.pos;
+            // pass or brake for the opponents and traffic ahead (same rule as the AI drivers);
+            // RACE_DRIVE_NO_AVOID=1 turns it off to compare
+            let a = if no_avoid {
+                ai::Avoid::default()
+            } else {
+                let mut near: Vec<Other> = racers.iter().map(|x| Other::of(&x.0)).collect();
+                near.extend(traffic_now.iter().copied());
+                ai::avoid(&car, &near, p, slice, dir)
+            };
+            let to = a.offset.map_or(route_target, |o| ai::aim_at_offset(route_target, p, route, dir, o)) - car.pos;
             let diff = wrap((-to.x).atan2(-to.z) - car.yaw);
-            let want = if diff.abs() > 0.5 { 10.0 } else { 22.0 };
+            let mut want: f32 = if diff.abs() > 0.5 { 10.0 } else { 22.0 };
+            if let Some(cap) = a.cap {
+                want = want.min(cap);
+            }
+            if debug && (a.offset.is_some() || a.cap.is_some()) {
+                let near = traffic_now.iter().map(|o| (o.pos - car.pos, o.vel)).filter(|(rel, _)| rel.dot(car.heading()) > 0.0 || rel.length() < 8.0).min_by(|x, y| x.0.length().total_cmp(&y.0.length()));
+                if let Some((rel, vel)) = near {
+                    let right = bevy::math::Vec3::new(car.yaw.cos(), 0.0, -car.yaw.sin());
+                    let _ = writeln!(out, "      avoid {:>5}: speed {:.1} offset {:?} cap {:?} nearest traffic {:.1} ahead {:.1} right, its speed along {:.1}, road room {:.1}/{:.1}",
+                        r.tick, car.speed, a.offset, a.cap, rel.dot(car.heading()), rel.dot(right), vel.dot(car.heading()), p.slices[slice].left_width, p.slices[slice].right_width);
+                }
+            }
             // with the retail model the driver damps its steering with the yaw rate and lifts
             // while sliding, or full lock plus full throttle spins a rear-drive car
             let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
@@ -116,7 +140,7 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 backing -= dt;
                 Input { brake: true, steer: -(diff * 2.5).clamp(-1.0, 1.0), ..Default::default() }
             } else {
-                Input { throttle: car.speed < want && !sliding, brake: car.speed > want + 5.0, steer, ..Default::default() }
+                Input { throttle: car.speed < want && !sliding, brake: car.speed > want + if a.cap.is_some() { 1.0 } else { 5.0 }, steer, ..Default::default() }
             }
         };
         car.sim.held = r.held(); // on the grid the brake is held on until GO (retail)
@@ -139,7 +163,8 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         }
         let player_progress = r.cars[0].progress;
         let rate = ai::player_rate(player_progress - fractions[0], r.race_ticks());
-        let others: Vec<Other> = std::iter::once(Other { pos: car.pos, speed: car.speed }).chain(racers.iter().map(|x| Other { pos: x.0.pos, speed: x.0.speed })).collect();
+        let mut others: Vec<Other> = std::iter::once(Other::of(&car)).chain(racers.iter().map(|x| Other::of(&x.0))).collect();
+        others.extend(traffic_now.iter().copied());
         let mut samples = vec![CarSample::default(); cars];
         for i in 0..racers.len() {
             let view = View { path: p, routes: &t.routes, line: &line, dir, held: r.held(), finished: r.cars[i + 1].state == race::CarState::Finished, difficulty, lead: r.cars[i + 1].progress - player_progress, player_rate: rate };
@@ -190,7 +215,9 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
         }
         if !fleet.cars.is_empty() {
             let mut refs: Vec<&mut Car> = std::iter::once(&mut car).chain(racers.iter_mut().map(|x| &mut x.0)).collect();
-            for e in fleet.tick(p, &ground, &walls, &mut refs, slice, dt, false) {
+            let events = fleet.tick(p, &ground, &walls, &mut refs, slice, dt, false);
+            drop(refs);
+            for e in events {
                 use nfspu_game::traffic::Event;
                 match e {
                     Event::Spawned { .. } => traffic_spawns += 1,
@@ -200,6 +227,14 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 }
                 if traffic_spawns + traffic_removed <= 12 || matches!(e, Event::Hit { .. }) && traffic_hits <= 12 {
                     let _ = writeln!(out, "      tick {:>5}: traffic {e:?}", r.tick);
+                }
+                if let Event::Hit { car: k, with, .. } = e {
+                    // where the traffic car was against the racer it hit, for tuning the avoidance
+                    let rc = if with == 0 { &car } else { &racers[with - 1].0 };
+                    let t = &fleet.cars[k];
+                    let rel = t.car.pos - rc.pos;
+                    let _ = writeln!(out, "      hit: racer {with} speed {:.1}, traffic {:?} speed {:.1} at {:.1} ahead {:.1} right, heading dot {:.2}",
+                        rc.speed, t.dir, t.car.speed, rel.dot(rc.heading()), rel.dot(bevy::math::Vec3::new(rc.yaw.cos(), 0.0, -rc.yaw.sin())), t.car.heading().dot(rc.heading()));
                 }
             }
             traffic_max = traffic_max.max(fleet.driving());
