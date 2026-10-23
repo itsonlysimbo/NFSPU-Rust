@@ -113,13 +113,16 @@ struct CareerMode {
     pending: Option<u32>,
     /// `NFSPU_CAREER_PLACE=n`: pay this place when a race ends unfinished (for tests).
     forced_place: Option<usize>,
+    /// The shop screens' state (dealership, used cars, parts ...) and the page they are showing.
+    ui: nfspu_game::career_ui::ShopUi,
+    page: String,
 }
 
 impl CareerMode {
     fn load(game_dir: &std::path::Path) -> CareerMode {
         let data = std::fs::read(game_dir.join("FEData").join("Data").join("nfs5.trn")).map(|b| career::parse_tournaments(&b)).unwrap_or_default();
         let forced_place = std::env::var("NFSPU_CAREER_PLACE").ok().and_then(|v| v.trim().parse().ok());
-        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place }
+        CareerMode { on: false, data, career: None, dir: career::Career::dir(), pending: None, forced_place, ui: nfspu_game::career_ui::ShopUi::load(game_dir), page: String::new() }
     }
 }
 
@@ -171,6 +174,31 @@ impl FrontEnd {
         if let (true, Some(c)) = (self.career.on, &self.career.career) {
             self.session.choices.extend(c.choices(&self.career.data, &self.quick.cars, &self.quick.tracks, &self.locale, self.language));
             self.session.watch.extend(c.watches(&self.career.data, &self.quick.tracks, &self.locale, self.language));
+            let page = if self.career.page.is_empty() { self.page.name.clone() } else { self.career.page.clone() };
+            let view = self.career.ui.view(c, &self.quick.cars, &self.locale, self.language, &page);
+            self.session.choices.extend(view.choices);
+            self.session.watch.extend(view.watch);
+            self.session.lists = view.lists;
+            self.session.hidden.extend(view.hidden);
+            self.quick.showcase = view.showcase;
+            self.session.car_logo = self.quick.car_logo();
+        } else {
+            self.quick.showcase = None;
+        }
+    }
+
+    /// Notes the page about to show (the shop screens pick their 3D car and logo by it).
+    fn note_page(&mut self, name: &str) {
+        self.career.page = name.to_string();
+        self.sync_quick();
+    }
+
+    /// Saves the career after a shop action.
+    fn save_career(&mut self) {
+        if let Some(c) = self.career.career.as_ref() {
+            if let Err(e) = c.save_to(&self.career.dir) {
+                crate::log_line(&format!("career: could not save: {e}"));
+            }
         }
     }
 
@@ -231,6 +259,8 @@ impl FrontEnd {
         setup.paint_section = owned.paint;
         setup.custom_colour = None;
         setup.difficulty = track.difficulty.clamp(0, 2) as u8;
+        let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+        setup.tuning = c.tuning_of(at, &career::Shop { cars: &self.quick.cars, parts: &self.career.ui.parts });
         self.career.pending = Some(t.id);
         crate::log_line(&format!("career: race {} of {} in tournament {} on '{}' in '{}'", c.next_race(&t) + 1, tracks.len(), t.id, track.file, car.name));
         Some(setup)
@@ -865,8 +895,39 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
     // start page (built before it) is rebuilt.
     state.update_progress();
     // The career screens can be started directly (tests and captures): `NFSPU_MENU=tournament`.
-    if ["tournament", "prerace"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) {
+    // `NFSPU_CAREER=1` does the same for any page (the shop screens); `NFSPU_CAREER_CASH=n` and
+    // `NFSPU_CAREER_YEAR=y` set the account and the year for such a test.
+    if ["tournament", "prerace"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) || std::env::var("NFSPU_CAREER").as_deref() == Ok("1") {
         state.enter_career();
+        state.career.page = page_name.to_string();
+        if let Some(c) = state.career.career.as_mut() {
+            if let Some(cash) = std::env::var("NFSPU_CAREER_CASH").ok().and_then(|v| v.trim().parse().ok()) {
+                c.cash = cash;
+            }
+            if let Some(year) = std::env::var("NFSPU_CAREER_YEAR").ok().and_then(|v| v.trim().parse().ok()) {
+                c.year = year;
+            }
+        }
+        // `NFSPU_CAREER_DO=a;b;c` presses shop buttons in order on the start page (a test hook):
+        // `BUYCAR`, `SELLCAR`, `PURCHASECALLBACK` ..., `pick:Accessor=n` for a dropdown choice and
+        // `row:Accessor=n` for a list row.
+        if let Ok(script) = std::env::var("NFSPU_CAREER_DO") {
+            for step in script.split(';').map(str::trim).filter(|x| !x.is_empty()) {
+                let st = &mut state;
+                let Some(c) = st.career.career.as_mut() else { break };
+                if let Some((kind, rest)) = step.split_once(':') {
+                    let Some((accessor, n)) = rest.split_once('=') else { continue };
+                    let n = n.trim().parse().unwrap_or(0);
+                    let done = if kind == "pick" { st.career.ui.pick(accessor.trim(), n, c, &st.quick.cars) } else { st.career.ui.list_pick(accessor.trim(), n) };
+                    crate::log_line(&format!("career: test step {step} -> {done}"));
+                } else {
+                    let line = st.career.ui.callback(step, &page_name, c, &st.quick.cars);
+                    crate::log_line(&format!("career: test step {step} -> {}", line.unwrap_or_else(|| "not a shop button".into())));
+                }
+            }
+            state.save_career();
+        }
+        state.reload();
     }
     state.reload();
     match popup_name.as_deref() {
@@ -1224,6 +1285,7 @@ fn click(
             }
             sounds.play(SOUND_SELECT, &mut commands, &mut audio);
             sounds.play(SOUND_SCREEN, &mut commands, &mut audio);
+            state.note_page(&name);
             let Some(next) = state.load(&name) else {
                 crate::log_line(&format!("menu: '{name}' is not a screen"));
                 return;
@@ -1241,6 +1303,9 @@ fn click(
             let Some((page, popup)) = state.history.pop() else { return };
             state.page = page;
             state.popup = popup;
+            let name = state.popup.as_ref().unwrap_or(&state.page).name.clone();
+            state.note_page(&name);
+            state.reload();
         }
         // Retail may ask for confirmation first; not modelled.
         Hit::Quit => {
@@ -1280,6 +1345,13 @@ fn click(
                     if let Some(c) = state.career.career.as_mut() {
                         c.chosen_car = index;
                     }
+                    state.sync_quick();
+                }
+                (true, _) if state.career.career.is_some() && {
+                    let s = &mut *state;
+                    s.career.ui.pick(&accessor, index, s.career.career.as_mut().expect("career"), &s.quick.cars)
+                } => {
+                    state.save_career();
                     state.sync_quick();
                 }
                 _ => {
@@ -1369,11 +1441,36 @@ fn click(
                 "TRACK1INC" | "LOOPEDINC" => state.quick.step_track(1),
                 "TRACK1DEC" | "LOOPEDDEC" => state.quick.step_track(-1),
                 other => {
-                    crate::log_line(&format!("menu: callback {other} not handled yet"));
-                    return;
+                    let st = &mut *state;
+                    let page = st.popup.as_ref().unwrap_or(&st.page).name.clone();
+                    let line = match st.career.career.as_mut() {
+                        Some(c) if st.career.on => st.career.ui.callback(other, &page, c, &st.quick.cars),
+                        _ => None,
+                    };
+                    match line {
+                        Some(line) => {
+                            crate::log_line(&line);
+                            state.save_career();
+                            state.sync_quick();
+                        }
+                        None => {
+                            crate::log_line(&format!("menu: callback {other} not handled yet"));
+                            return;
+                        }
+                    }
                 }
             }
             state.reload();
+        }
+        Hit::ListPick(accessor, index) => {
+            sounds.play(SOUND_SELECT, &mut commands, &mut audio);
+            if state.career.ui.list_pick(&accessor, index) {
+                state.sync_quick();
+                state.reload();
+                state.stack();
+                state.dirty = true;
+            }
+            return;
         }
         Hit::Inert => return,
         Hit::Select(row) => {
