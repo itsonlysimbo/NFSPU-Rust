@@ -56,6 +56,8 @@ pub struct Car {
     /// An open car (cabriolet, roadster, speedster, convertible): byte 0x1bf is 1. The roof
     /// setting applies to these.
     pub open_top: bool,
+    /// List price (`u32` at 0x208).
+    pub price: u32,
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -95,6 +97,7 @@ impl Car {
             availability: u16_at(r, 0x204),
             style: r[0x1c0] as usize + 1,
             open_top: r[0x1bf] == 1,
+            price: u32_at(r, 0x208),
         }
     }
 

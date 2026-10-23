@@ -75,6 +75,8 @@ pub struct QuickRace {
     pub paints: Vec<Paint>,
     paints_for: String,
     pub player: String,
+    /// A car the career's shop screens show instead of the chosen one: (catalogue index, paint section).
+    pub showcase: Option<(usize, usize)>,
     // Choices, as dropdown positions.
     pub car: usize,
     pub colour: usize,
@@ -352,6 +354,9 @@ impl QuickRace {
     /// not differ. The paint is the colour list's choice; an owned car's own colour (kept in the
     /// save) is not read yet. A model without a `.clr` keeps the car model's default paint.
     pub fn car_look(&self) -> Option<(String, usize, usize)> {
+        if let Some((i, paint)) = self.showcase.filter(|(i, _)| *i < self.cars.len()) {
+            return Some((self.cars[i].model.clone(), paint, self.cars[i].style.max(1)));
+        }
         let (i, _) = self.chosen_car()?;
         let car = &self.cars[i];
         Some((car.model.clone(), self.paint_section_or(crate::car_model::CarOptions::default().paint), car.style.max(1)))
@@ -359,7 +364,7 @@ impl QuickRace {
 
     /// The chosen car's logo (`NFS5.CarLogo`): archive file and logo number (two entries each).
     pub fn car_logo(&self) -> Option<(String, usize)> {
-        let (i, _) = self.chosen_car()?;
+        let (i, _) = self.showcase.filter(|(i, _)| *i < self.cars.len()).map(|(i, _)| (i, true)).or_else(|| self.chosen_car())?;
         let car = &self.cars[i];
         (!car.logo_file.is_empty()).then(|| (format!("{}.fsh", car.logo_file), car.logo_index as usize))
     }
@@ -418,6 +423,7 @@ impl QuickRace {
             damage: self.damage == 1,
             difficulty: self.difficulty as u8,
             player: self.player.clone(),
+            tuning: Default::default(),
         }
     }
 }

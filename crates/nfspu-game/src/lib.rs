@@ -5,6 +5,8 @@ pub mod ai_route;
 pub mod audio_settings;
 pub mod car;
 pub mod career;
+pub mod career_shop;
+pub mod career_ui;
 pub mod car_damage;
 pub mod car_load;
 pub mod car_sim;

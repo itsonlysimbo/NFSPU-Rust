@@ -164,6 +164,15 @@ pub enum Hit {
     Slider(String, i32, i32),
     /// An Options tab (`NFS5.GRAPHICTABBUTTON`): show the panel it names.
     Tab(String),
+    /// Select row `index` of the list box for this accessor (the parts screen's lists).
+    ListPick(String, usize),
+}
+
+/// What a list box (`NFS5.ListBox`) shows: rows of (category, name, price) and the chosen row.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ListData {
+    pub rows: Vec<[String; 3]>,
+    pub selected: Option<usize>,
 }
 
 /// One row of a dropdown list: a centred section title, or a choosable item with an optional
@@ -609,6 +618,8 @@ pub struct Session {
     pub panel: String,
     /// The Evolution career is in use (game type 4): the bottom bar shows the account.
     pub career: bool,
+    /// List boxes by accessor (`Parts.AllParts`, `Parts.ShoppingList`).
+    pub lists: BTreeMap<String, ListData>,
 }
 
 impl Default for Session {
@@ -628,6 +639,7 @@ impl Default for Session {
             levels: BTreeMap::new(),
             panel: OPTION_PANELS[3].to_string(),
             career: false,
+            lists: BTreeMap::new(),
         }
     }
 }
@@ -1094,6 +1106,38 @@ fn append_control_with(
             screen.draw.push(Draw::Text { text, pos: [x + shift, y], size: point_size(&font), colour, font });
             true
         }
+        // A list box (`ListBox.ctr`, the parts screen): the rows sit on the layout's black panel,
+        // category / name on the left and the price right-aligned at the box's right edge. The
+        // chosen row is red; a click picks a row. Rows beyond the box's height are not shown
+        // (the chosen row scrolls into view). Look is **approximate**.
+        "NFS5.ListBox" if data.get("accessor").map(|a| a.trim()) != Some("UserList.UserList") => {
+            if hidden(&data) {
+                return true;
+            }
+            let accessor = accessor_key(data.get("accessor").map(String::as_str).unwrap_or(""));
+            let list = context.session.and_then(|s| s.lists.get(&accessor)).cloned().unwrap_or_default();
+            let w = number("width").unwrap_or(100.0);
+            let max_h = number("selectionboxmaxheight").unwrap_or(98.0);
+            let visible = ((max_h / LIST_ROW).floor() as usize).max(1);
+            let first = list.selected.map_or(0, |s| (s + 1).saturating_sub(visible));
+            let font = "univers8b.ffn".to_string();
+            for (n, row) in list.rows.iter().enumerate().skip(first).take(visible) {
+                let ry = y + (n - first) as f32 * LIST_ROW;
+                let rect = [x, ry, w, LIST_ROW];
+                let chosen = list.selected == Some(n);
+                let (idle, hover) = if chosen { ([0.74, 0.0, 0.0, 1.0], None) } else { ([0.0, 0.0, 0.0, 0.0], Some([0.3, 0.0, 0.0, 1.0])) };
+                let colour = if chosen { [1.0; 4] } else { [0.93, 0.72, 0.1, 1.0] };
+                let size = point_size(&font);
+                let pw = label_width(game_dir, &font, &row[2]);
+                // Painted from the end: the click target, then the texts, then the row's fill.
+                screen.draw.push(Draw::Target { rect, hit: Hit::ListPick(accessor.clone(), n) });
+                screen.draw.push(Draw::Text { text: row[2].clone(), pos: [x + w - 6.0 - pw, ry + 1.0], size, colour, font: font.clone() });
+                screen.draw.push(Draw::Text { text: row[1].clone(), pos: [x + 130.0, ry + 1.0], size, colour, font: font.clone() });
+                screen.draw.push(Draw::Text { text: row[0].clone(), pos: [x + 4.0, ry + 1.0], size, colour, font: font.clone() });
+                screen.draw.push(Draw::Quad { rect, colour: idle, hover, link: None, back: false });
+            }
+            true
+        }
         // Decorative pieces the layout places as plain rectangles or lines.
         "NFS5.GLINTYLINE" | "NFS5.Rectangle" | "NFS5.OutlineRectangle" => {
             let Some((w, h)) = size else { return false };
@@ -1152,12 +1196,9 @@ fn append_control_with(
         // retail screen shows them solid, so alpha is ignored here. Row height and the white
         // selected text are measured from a retail screenshot (**guess** until the `.ffn` fonts
         // are read).
-        "NFS5.ListBox" => {
+        "NFS5.ListBox" if data.get("accessor").map(|a| a.trim()) == Some("UserList.UserList") => {
             if hidden(&data) {
                 return true;
-            }
-            if data.get("accessor").map(|a| a.trim()) != Some("UserList.UserList") {
-                return false;
             }
             let width = number("width").unwrap_or(100.0);
             let max_height = number("selectionboxmaxheight").unwrap_or(130.0);

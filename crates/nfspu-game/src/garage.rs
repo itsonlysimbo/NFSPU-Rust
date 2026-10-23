@@ -76,7 +76,7 @@ pub const DOOR_OPEN_TURNS: f32 = 0.15;
 /// The room a layout's `room=` id asks for (`None` for no room or one not drawn yet).
 pub fn room_for(id: &str) -> Option<RoomLook> {
     match id.trim().to_ascii_uppercase().as_str() {
-        "ID_GARAGE" => Some(GARAGE),
+        "ID_GARAGE" | "ID_DEALER" => Some(GARAGE),
         "ID_TRACK" => Some(TRACK),
         _ => None,
     }

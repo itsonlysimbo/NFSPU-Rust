@@ -163,7 +163,38 @@ pub struct Spec {
     pub auto_top_slot: usize,
 }
 
+/// Handling changes from installed career parts: factors on the `.sim` values (1.0 = stock).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tuning {
+    pub power: f32,
+    pub grip: f32,
+    pub brake: f32,
+    pub mass: f32,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Tuning { power: 1.0, grip: 1.0, brake: 1.0, mass: 1.0 }
+    }
+}
+
 impl Spec {
+    /// Applies career part effects: engine torque and top speed (drag is kept, so more power is
+    /// more speed), tyre grip, braking, and weight (drive force per torque follows the mass).
+    pub fn tuned(mut self, t: &Tuning) -> Spec {
+        for v in self.torque.iter_mut() {
+            *v *= t.power;
+        }
+        self.top_speed *= t.power.max(0.1).cbrt();
+        self.grip *= t.grip;
+        self.brake_decel *= t.brake;
+        self.mass *= t.mass;
+        for a in self.accel_per_lbft.iter_mut() {
+            *a /= t.mass.max(0.1);
+        }
+        self
+    }
+
     /// Torque in lb-ft at an engine speed, from the 500 rpm table (clamped to 0..redline).
     pub fn torque_at(&self, rpm: f32) -> f32 {
         let rpm = rpm.clamp(0.0, self.redline);
