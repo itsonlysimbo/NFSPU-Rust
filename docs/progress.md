@@ -9,7 +9,7 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Front end | 3D garage and car pick (model, body, paint) | Done | 85 | Roof up/down drawn; not playtested |
 | Front end | Options menu (audio, graphics, controls) | In progress | 25 | Audio sliders merged; graphics and controls not checked |
 | Front end | Options > Audio sliders | Done | 70 | Saved to `settings/audio.txt`; not playtested |
-| Front end | Location screen 3D track room | Partial | 50 | Track room merged; header overlay (flags) not drawn |
+| Front end | Location screen 3D track room | Partial | 65 | Track room and header flags merged; not playtested |
 | Front end | Retail race results screen | Partial | 60 | Summary panel merged (gold panel, bars, times); not playtested |
 | Front end | Loading screen | Done | 95 |  |
 | Race | Quick race: grid, countdown, laps, finish | Done | 90 |  |
@@ -26,7 +26,7 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Physics | Damage (visual and mechanical) | Partial | 55 | Damage zones, painted damage stamps and damage option merged; not playtested |
 | Graphics | Tracks: geometry, textures, objects | Done | 92 | Côte d'Azur water planes |
 | Graphics | Cars: textures, smooth shading, cabin, shadows | Done | 88 | Roof up/down drawn; not playtested |
-| Graphics | Car reflections: sun highlight, lamp glow | Partial | 60 | Sun highlight merged; lamp glow not seen by eye; 'covered' glows open |
+| Graphics | Car reflections: sun highlight, lamp glow | Partial | 70 | Sun highlight, lamp glow and covered glows merged; lamp glow not seen by eye |
 | Graphics | Cockpit arms and steering wheel | Partial | 60 | Arms follow the wheel; retail hand placement not confirmed |
 | Graphics | Cameras: chase and in-car | Done | 85 |  |
 | Graphics | Sky, sun, lens flare, glows | Done | 85 | Flare occlusion untested on Cote d'Azur |
@@ -34,8 +34,8 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | HUD | Retail HUD, minimap, positions | Done | 90 |  |
 | Sound | Menu music | Done | 95 |  |
 | Sound | In-race sound: engine, announcer, skids, ambience | Partial | 65 | Race sound channels (rain, wet road, opponent skids and hits, Doppler, commentator) merged; levels need an ear |
-| Career | Evolution career (eras, money, upgrades) | Not started | 0 |  |
+| Career | Evolution career (eras, money, upgrades) | Partial | 15 | First slice merged (1abe481): profile, money, eras and events, payout by place; upgrades, buying/selling not yet; see career.md |
 | Career | Factory Driver mode | Not started | 0 |  |
 | Career | Used cars, dealership, parts, paint shop | Not started | 0 | Screens exist as layouts only |
-| Career | Save profiles (load/save .sav) | Partial | 20 | Reads settings only |
+| Career | Save profiles (load/save .sav) | Partial | 35 | Career profile saved in our own format; retail .sav read for settings |
 | Online | Multiplayer (new netcode, no EA services) | Not started | 0 | Long-term; ask first |
