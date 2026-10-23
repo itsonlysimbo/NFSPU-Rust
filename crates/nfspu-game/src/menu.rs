@@ -607,6 +607,8 @@ pub struct Session {
     pub levels: BTreeMap<String, u32>,
     /// The Options tab's selected panel (`ID_audio_panel`, ...).
     pub panel: String,
+    /// The Evolution career is in use (game type 4): the bottom bar shows the account.
+    pub career: bool,
 }
 
 impl Default for Session {
@@ -625,6 +627,7 @@ impl Default for Session {
             track_art: None,
             levels: BTreeMap::new(),
             panel: OPTION_PANELS[3].to_string(),
+            career: false,
         }
     }
 }
@@ -677,9 +680,17 @@ fn append_control_with(
 ) -> bool {
     let (profiles, game_dir, disabled) = (context.profiles, context.game_dir, context.disabled);
     // The bottom bar shows its cash backdrop and "ACCOUNT" label only in career mode (game type
-    // 4) and hides them otherwise (verified in the executable). There is no career mode yet, so
-    // both stay hidden; they count as handled.
-    if matches!(block.get("name").map(str::trim), Some(ACCOUNT_LABEL) | Some(CASH_BACKDROP)) {
+    // 4) and hides them otherwise (verified in the executable).
+    if matches!(block.get("name").map(str::trim), Some(ACCOUNT_LABEL) | Some(CASH_BACKDROP)) && !context.session.is_some_and(|s| s.career) {
+        return true;
+    }
+    // The cash backdrop (`NFS5.ACCOUNTTHING`, the account display control) draws the player's
+    // money to the right of the "ACCOUNT" label. Its backdrop art is not drawn yet and the text
+    // position is a **guess**.
+    if block.get("id").map(str::trim) == Some("NFS5.ACCOUNTTHING") {
+        if let Some(text) = context.session.and_then(|s| s.watch.get("Tournament.Data(ACCOUNT)")).cloned() {
+            screen.draw.push(Draw::Text { text, pos: [198.0, 464.0], size: point_size("univers7b.ffn"), colour: [1.0; 4], font: "univers7b.ffn".to_string() });
+        }
         return true;
     }
     if let (Some(session), Some(name)) = (context.session, block.get("name").map(str::trim)) {
