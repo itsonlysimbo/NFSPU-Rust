@@ -159,3 +159,7 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 - Check: does the payout size feel right? Does retail pay per race or at the end? Does the
   description text under the event name appear in retail (ours is missing)? Entry fee and start
   cash are guesses.
+
+## Body lean and cameras (branch claude/footage-car-7859f5)
+- `LEAN_LOOK` is now 1.0. Drive the 356 in chase view through hard corners: the tail should roll about 6-10 degrees, like retail.
+- Coordinator: take screen captures of the 356 and GT1 in chase and cockpit views at the corners in the 2026-10-23 videos (the cloud has no window). Compare hand positions (retail: 10 and 2) and camera distance and FOV.
