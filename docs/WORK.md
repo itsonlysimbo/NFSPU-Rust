@@ -34,7 +34,7 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
 | Menu button outline light that travels around the border | Mid | Waiting for retail footage from the user |
 | Body lean scale (`LEAN_LOOK`) | Mid | Sim already matches the decoded numbers; pick the scale from retail footage (user) |
-| Race sound fine-tuning against retail | Strong | Waiting for a retail recording with game sound |
+| Race sound fine-tuning against retail | Strong | CLAIMED footage-sound (claude/footage-sound-a19d43, 2026-10-23): footage extracted to extracted/footage, analysing; `sound_render` example renders our engine offline |
 | Cockpit hand placement | Mid | Arms follow the wheel (45d5bec); retail placement not found in the decomp; compare with footage |
 | Playtest round (see `docs/PLAYTEST.md`) | User | Many merged items wait for eyes and ears |
 
