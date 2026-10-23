@@ -116,7 +116,7 @@ impl RaceSetup {
     /// The player's car model options in the race: the setup's body style and paint section (the
     /// ones the garage showed), exterior detail, a driver in the seat.
     pub fn car_options(&self) -> crate::car_model::CarOptions {
-        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, body: self.custom_colour, ..Default::default() }
+        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, body: self.custom_colour, roof_up: self.roof_up, ..Default::default() }
     }
 
     /// `key = value` lines, one per field, in a fixed order.

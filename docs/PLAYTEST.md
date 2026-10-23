@@ -111,3 +111,9 @@ Add a line per playtest: date, recording path, what was wrong.
   under hard braking, before our 0.6 look scale (`LEAN_LOOK` in `car.rs`; drawn 4.6 / 3 degrees).
 - Look for: how far the body rolls in a hard corner and dips under braking compared with retail
   footage. If retail looks bigger, raise `LEAN_LOOK` toward 1.0; if smaller, lower it. Not tested by eye.
+
+## Roof up/down (roof-drawing)
+- Garage: pick a convertible (993 Cabriolet, Boxster, 356 Cabriolet), set Roof to Up then Down on the
+  car page: the car in the room should be rebuilt with the top up or folded (no animation, not tested live).
+- Race and cockpit: roof down shows the folded top behind the seats; roof up the raised soft top.
+- Coupes should look the same either way. Captures in `logs/car_993_s6_*`.

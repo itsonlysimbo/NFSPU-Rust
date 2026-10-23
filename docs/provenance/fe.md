@@ -504,8 +504,7 @@ Plain text, one `[sectionN]` per paint scheme, with `color1..4` as both HSV (`.h
   (Ghidra); that the number is this byte is shown by the data (all 84 cars match by name).
 - Opponents now also use their record's style, and a random paint by `.clr` section number (the
   list index used before was off by one, and 0 means unpainted).
-- **Not done**: roof up/down is passed (`roof_up`) and logged, but the car model draws each style
-  one way only; the roof pieces' types are not mapped to up and down yet.
+- Roof up/down: drawn (see `car.md`, "Roof up and down").
 
 ### RACE hand-off
 Pressing RACE builds a `RaceSetup` (`crates/nfspu-game/src/race_setup.rs`), logs it to

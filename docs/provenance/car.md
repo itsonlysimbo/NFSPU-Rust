@@ -540,3 +540,14 @@ the 993's file). `[damagezones]` in the `.tpg` gives the zone box sizes (width, 
 and length in percent, corner lengths, bottom, height); not used by us yet. `<name>L.fsh` holds a
 similar set (purpose unknown; perhaps a second level of damage). Ours paints `D.fsh` the same way
 (`car_model::paint_damage`), repainting when a zone changes by 2 or more.
+
+## Roof up and down
+Open cars carry the folding top as piece 41 with paired types: `CabrioUp` (type 1, or 3 and 5 on the
+356 A/B variants) and `CabrioDown` (the next type: 2, 4, 6). The body style's `.tpg` lists the up
+type, so roof down = that type + 1 (`CarOptions::roof_up`, `piece_type`). Checked by article lists
+on 356_1, 356a, 356b, 944, 964, 993, 996 and boxster: every one follows the pairing. Piece 37
+(`Cabrio`, the body) is the same both ways. Coupes list no piece 41, so the setting does nothing there;
+targa roofs (piece 7 and 8) have no up/down pair. Garage, race and cockpit use the same selection
+(the cockpit camera sits inside the same model). Which pieces move, and the folding animation, are not
+traced in the decomp (not tested). Captures: `NFSPU_CAR_ROOF=down` with `NFSPU_CAR_CAPTURE=993/6`
+writes `logs/car_993_s6_roofdown_*.png`.

@@ -644,11 +644,25 @@ pub struct CarOptions {
     /// A custom body colour (the player's own pick): replaces the scheme's `color1`, keeping its
     /// stripe and cabin colours. With no matching section the model's first scheme is used.
     pub body: Option<[u8; 3]>,
+    /// Soft top raised (the default). Open cars carry the top as piece 41: the style lists its up
+    /// version (type 1, 3 or 5) and the matching down version is the next type (2, 4 or 6).
+    pub roof_up: bool,
+}
+
+/// The piece id of an open car's folding top (`CabrioUp` / `CabrioDown`).
+const FOLDING_TOP: u32 = 41;
+
+impl CarOptions {
+    /// The type of piece `geometry` to draw for `style`, honouring the roof setting.
+    pub fn piece_type(&self, style: &Style, geometry: u32) -> u32 {
+        let t = style.geometry_type(geometry);
+        if geometry == FOLDING_TOP && !self.roof_up && t % 2 == 1 { t + 1 } else { t }
+    }
 }
 
 impl Default for CarOptions {
     fn default() -> Self {
-        CarOptions { level: 3, style: 1, driver: 1, paint: 4, body: None }
+        CarOptions { level: 3, style: 1, driver: 1, paint: 4, body: None, roof_up: true }
     }
 }
 
@@ -807,7 +821,7 @@ pub fn tint_bands(rgba: &mut [u8], bands: &[[u8; 3]; BANDS]) {
 
 /// Loads a car (e.g. "993") built as described by `options`.
 pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
-    let CarOptions { level, style: style_number, driver, paint, body } = *options;
+    let CarOptions { level, style: style_number, driver, paint, body, .. } = *options;
     let path = car_dir()?.join(format!("{name}.crp"));
     let raw = fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     // most cars are RefPack-compressed; a few (e.g. the 928) are stored plain
@@ -937,7 +951,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
             if driver == 0 || base.geometry != 9 || (!traffic && base.type_index != driver) {
                 continue;
             }
-        } else if !is_arm && !is_steer && (base.type_index as u32 != style.geometry_type(base.geometry as u32) || is_skipped_name(&article_name) || (interior_pass && (is_hidden_in_cabin(&article_name) || is_shadow_name(&article_name)))) {
+        } else if !is_arm && !is_steer && (base.type_index as u32 != options.piece_type(&style, base.geometry as u32) || is_skipped_name(&article_name) || (interior_pass && (is_hidden_in_cabin(&article_name) || is_shadow_name(&article_name)))) {
             continue;
         }
         let is_shadow = is_shadow_name(&article_name);
@@ -1577,5 +1591,23 @@ mod damage_tests {
         let out = paint_damage(&base, 4, 0, std::slice::from_ref(&stamp), &zones);
         assert_eq!(out[(4 + 1) * 4], 200);
         assert_eq!(paint_damage(&base, 4, 1, &[stamp], &zones), base, "other page untouched");
+    }
+}
+
+#[cfg(test)]
+mod roof_tests {
+    use super::*;
+
+    #[test]
+    fn folding_top_follows_the_roof_setting() {
+        let style = Style { geometry: [(41u32, 1u32), (7, 3)].into_iter().collect(), ..Default::default() };
+        let up = CarOptions::default();
+        let down = CarOptions { roof_up: false, ..Default::default() };
+        assert_eq!(up.piece_type(&style, 41), 1);
+        assert_eq!(down.piece_type(&style, 41), 2);
+        let alt = Style { geometry: [(41u32, 3u32)].into_iter().collect(), ..Default::default() };
+        assert_eq!(down.piece_type(&alt, 41), 4);
+        assert_eq!(down.piece_type(&style, 7), 3); // other pieces are untouched
+        assert_eq!(down.piece_type(&Style::default(), 41), 0); // a coupe has no top to fold
     }
 }

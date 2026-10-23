@@ -16,6 +16,11 @@ const VIEWS: [(&str, u8, [f32; 3]); 6] = [
     ("top", 2, [0.9, 1.0, 5.5]),
 ];
 
+/// `NFSPU_CAR_ROOF=down` captures open cars with the top folded.
+fn roof_down() -> bool {
+    std::env::var("NFSPU_CAR_ROOF").is_ok_and(|v| v.eq_ignore_ascii_case("down"))
+}
+
 /// One car to capture: model, body style, and paint (a section, or a custom colour), if given.
 #[derive(Clone, Debug, PartialEq)]
 struct Entry {
@@ -105,7 +110,7 @@ pub fn update(
         commands.entity(holder.model).despawn();
         name.0 = car.clone();
         style.0 = car_style;
-        let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, ..Default::default() };
+        let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, roof_up: !roof_down(), ..Default::default() };
         let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut paints, &mut images, holder.root, &car, &options);
         holder.model = model;
         holder.lean = lean;
@@ -131,7 +136,7 @@ pub fn update(
         return;
     }
     let safe: String = car.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-    let path = super::log_path().parent().unwrap().join(format!("car_{safe}_s{car_style}{}_{view_name}.png", entry.tag));
+    let path = super::log_path().parent().unwrap().join(format!("car_{safe}_s{car_style}{}{}_{view_name}.png", entry.tag, if roof_down() { "_roofdown" } else { "" }));
     probe.waiting = true;
     commands.spawn(Screenshot::primary_window()).observe(move |captured: On<ScreenshotCaptured>, mut probe: ResMut<CarProbe>| {
         let result = captured.image.clone().try_into_dynamic().map_err(|e| e.to_string()).and_then(|image| image.to_rgb8().save(&path).map_err(|e| e.to_string()));
