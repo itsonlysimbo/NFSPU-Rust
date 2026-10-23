@@ -465,7 +465,11 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
     let held = run.race.held();
     let player_progress = run.race.cars[run.player].progress;
     let rate = ai::player_rate(player_progress - run.player_start, run.race.race_ticks());
-    let others: Vec<Other> = std::iter::once(Other { pos: player.pos, speed: player.speed }).chain(run.racers.iter().map(|r| Other { pos: r.car.pos, speed: r.car.speed })).collect();
+    let mut others: Vec<Other> = std::iter::once(Other::of(player)).chain(run.racers.iter().map(|r| Other::of(&r.car))).collect();
+    // road traffic is in the way too (after the racers, so the racer indices below still hold)
+    if let Some(tr) = &run.traffic {
+        others.extend(tr.fleet.cars.iter().filter(|t| t.state == nfspu_game::traffic::State::Driving).map(|t| Other::of(&t.car)));
+    }
     for i in 0..run.racers.len() {
         let race_car = i + 1;
         let finished = run.race.cars[race_car].state == race::CarState::Finished;

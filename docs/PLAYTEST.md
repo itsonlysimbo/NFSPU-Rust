@@ -140,3 +140,8 @@ Not tested by ear (made in a cloud session without speakers). Quick race on Auto
 - Chase view: swinging the camera to the side of the car should bring out the engine-side layers a little.
 - Commentator: on a circuit, "lap 2" (etc.) at the line and "final lap" before the last; at the finish "you won the race" / "you placed Nth".
 
+## Opponents avoiding traffic (2026-10-23, `claude/cloud-traffic-avoid`)
+Quick race, 7 opponents, Traffic heavy. Check: opponents pull out to pass slow traffic and slot back in, they stay right
+for oncoming cars, they brake behind traffic when both halves are blocked instead of ramming it; oncoming traffic edges
+to its kerb as you come at it; traffic keeps clear of the centre line. Watch for opponents weaving or scraping walls on
+narrow Monaco streets while passing. Measured offline only (not seen in a window).

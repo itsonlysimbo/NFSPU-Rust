@@ -10,8 +10,8 @@
 //! - it cruises near 16.5 m/s, scaled by a per-car factor of 1.0, 0.9, 0.8 or 0.7.
 //!
 //! Ours: the same placement and removal rules, the same speeds, the same car physics as every other
-//! car (so hits move both cars), and a simple driver that follows its lane and slows for a car in
-//! front. The wait time table, the lane widths, the car counts per density and the braking and
+//! car (so hits move both cars), and a simple driver that follows its lane, slows for a car in
+//! front (or stops for one coming head on) and moves to its outer lane when a racer comes at it. The wait time table, the lane widths, the car counts per density and the braking and
 //! honking rules are guesses.
 
 use crate::ai::Rng;
@@ -34,6 +34,9 @@ pub const SPEED_FACTORS: [f32; 4] = [1.0, 0.9, 0.8, 0.7];
 /// Lane centres as a share of the half road width on the car's own side (guess; retail has four
 /// lane values per vehicle type that were not decoded).
 pub const LANES: [f32; 4] = [0.25, 0.4, 0.55, 0.7];
+/// The nearest a lane centre comes to the road's centre line (m, guess: half a car width and
+/// some air, so a racer on the other half can pass).
+pub const MIN_LANE: f32 = 1.4;
 /// A car this near another car at spawn time blocks the spawn (m, guess).
 pub const SPAWN_CLEAR: f32 = 30.0;
 /// Seconds with almost no speed before a traffic car is taken off the road (guess).
@@ -118,9 +121,10 @@ fn heading(path: &RoadPath, slice: usize, dir: Direction) -> Vec3 {
 fn lane_point(path: &RoadPath, slice: usize, dir: Direction, lane: f32) -> Vec3 {
     let s = &path.slices[slice];
     let right = heading(path, slice, dir).cross(s.up).normalize_or_zero();
-    // keep a metre from the road edge; use the narrower side so one lane value suits both ways
+    // keep a metre from the road edge; use the narrower side so one lane value suits both ways;
+    // never nearer the centre line than MIN_LANE, so the other half stays free for passing
     let room = (s.left_width.min(s.right_width) - 1.5).max(0.0);
-    s.pos + right * (room * lane).min(room)
+    s.pos + right * (room * lane).max(MIN_LANE).min(room)
 }
 
 fn yaw_of(h: Vec3) -> f32 {
@@ -274,10 +278,19 @@ impl Fleet {
     /// closer than 12 m ahead and closing).
     fn think(t: &TrafficCar, path: &RoadPath, refs: &[&mut Car]) -> (Input, bool) {
         let car = &t.car;
+        let (fwd, right) = (car.heading(), Vec3::new(car.yaw.cos(), 0.0, -car.yaw.sin()));
+        // a racer coming head on in this half of the road: keep to the kerb (guess; retail's
+        // lane values were not decoded)
+        let squeezed = refs.iter().any(|r| {
+            let d = r.pos - car.pos;
+            let (ahead, side) = (d.dot(fwd), d.dot(right));
+            (r.heading() * r.speed).dot(fwd) < -2.0 && ahead > 0.0 && ahead < 80.0 && side > -3.5
+        });
+        let lane = if squeezed { 1.0 } else { t.lane };
         let look = (car.speed.abs() * 0.5).max(8.0);
         // walk to the first lane point at least `look` metres ahead
         let mut s = t.slice;
-        let mut target = lane_point(path, s, t.dir, t.lane);
+        let mut target = lane_point(path, s, t.dir, lane);
         for _ in 0..40 {
             if target.distance(car.pos) >= look {
                 break;
@@ -287,7 +300,7 @@ impl Fleet {
                 break;
             }
             s = n;
-            target = lane_point(path, s, t.dir, t.lane);
+            target = lane_point(path, s, t.dir, lane);
         }
         let to = target - car.pos;
         let diff = wrap((-to.x).atan2(-to.z) - car.yaw);
@@ -297,15 +310,16 @@ impl Fleet {
             want = want.min(8.0);
         }
         let mut honk = false;
-        let (fwd, right) = (car.heading(), Vec3::new(car.yaw.cos(), 0.0, -car.yaw.sin()));
         for r in refs {
             let d = r.pos - car.pos;
             let (ahead, side) = (d.dot(fwd), d.dot(right).abs());
             // something in the way: same lane width, ahead, within a braking distance
             if ahead > 0.0 && side < 2.6 && ahead < 10.0 + car.speed.abs() * 1.6 {
-                let closing = car.speed - r.speed.max(0.0);
+                // the racer's speed along this car's way: negative when it comes head on
+                let theirs = (r.heading() * r.speed).dot(fwd);
+                let closing = car.speed - theirs;
                 if closing > 0.0 || ahead < 8.0 {
-                    want = want.min((r.speed * 0.8).max(0.0));
+                    want = want.min((theirs * 0.8).max(0.0));
                     if ahead < 12.0 && closing > 2.0 {
                         honk = true;
                     }
