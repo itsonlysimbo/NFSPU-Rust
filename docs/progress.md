@@ -5,7 +5,7 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Area | Feature | Status | Percent | Notes |
 |---|---|---|---|---|
 | Front end | Main menus, layouts, fonts, art, intro movie | Done | 95 |  |
-| Front end | Menu transitions, hover animations, dropdowns | Done | 90 | Playtest |
+| Front end | Menu transitions, hover animations, dropdowns, button outline light | Done | 90 | Outline light from retail footage (6024b73); not playtested |
 | Front end | 3D garage and car pick (model, body, paint) | Done | 85 | Roof up/down drawn; not playtested |
 | Front end | Options menu (audio, graphics, controls) | In progress | 25 | Audio sliders merged; graphics and controls not checked |
 | Front end | Options > Audio sliders | Done | 70 | Saved to `settings/audio.txt`; not playtested |
@@ -14,7 +14,7 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Front end | Loading screen | Done | 95 |  |
 | Race | Quick race: grid, countdown, laps, finish | Done | 90 |  |
 | Race | Mirrored and reversed tracks | Done | 90 |  |
-| Race | In-race pause menu (resume, restart, quit) | Done | 75 | Retail HPause layout; not playtested |
+| Race | In-race pause menu (resume, restart, quit) | Done | 80 | Restyled to match retail footage; not playtested |
 | Race | Opponents: racing lines, retail drivers | Partial | 75 | Route choice at junctions verified on 7 tracks; not playtested |
 | Race | Traffic | Partial | 50 | Retail spawn, cull and lane driving; opponents and autopilot avoid it; not playtested |
 | Race | Knockout / tournament modes | Not started | 0 |  |
@@ -33,9 +33,9 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Graphics | Weather, night, fog, rain/snow, headlights | Done | 80 | Feel vs retail |
 | HUD | Retail HUD, minimap, positions | Done | 90 |  |
 | Sound | Menu music | Done | 95 |  |
-| Sound | In-race sound: engine, announcer, skids, ambience | Partial | 65 | Race sound channels (rain, wet road, opponent skids and hits, Doppler, commentator) merged; levels need an ear |
-| Career | Evolution career (eras, money, upgrades) | Partial | 15 | First slice merged (1abe481): profile, money, eras and events, payout by place; upgrades, buying/selling not yet; see career.md |
+| Sound | In-race sound: engine, announcer, skids, ambience | Partial | 75 | All channels merged; mix tuned to a retail recording (sound.md); needs an ear |
+| Career | Evolution career (eras, money, upgrades) | Partial | 35 | Slices 1-2 merged: profile, money, events, payout, buy/sell, parts and tuning raced; paint shop and later eras open; see career.md |
 | Career | Factory Driver mode | Not started | 0 |  |
-| Career | Used cars, dealership, parts, paint shop | Not started | 0 | Screens exist as layouts only |
+| Career | Used cars, dealership, parts, paint shop | Partial | 50 | Dealership, used lot, parts and tuning merged with retail value formula; paint shop open |
 | Career | Save profiles (load/save .sav) | Partial | 35 | Career profile saved in our own format; retail .sav read for settings |
 | Online | Multiplayer (new netcode, no EA services) | Not started | 0 | Long-term; ask first |
