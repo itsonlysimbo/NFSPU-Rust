@@ -56,3 +56,8 @@ Add a line per playtest: date, recording path, what was wrong.
 - race again: the loading screen, then the same race from the grid.
 - quit…: "Are you sure you want to exit?" with exit to game menu / exit to windows / cancel.
 - Does retail's pause camera circle the car? Ours stays still.
+
+## Traffic (2026-10-23, `claude/traffic-4f929a`)
+Set Traffic to light/medium/heavy in the quick-race menu (`NFSPU_TRAFFIC=1..3` from the command line). Check: cars appear
+ahead without popping in view, both directions, lanes sensible, they slow for you, hits shove both cars and cause damage,
+nothing floats or sits across the road, the frame rate holds on heavy. Counts, lanes and speeds are guesses.

@@ -44,6 +44,9 @@ pub struct RaceRequest {
     pub opponent_cars: Vec<String>,
     /// The Damage option: off, hits leave no damage (they still shake the car).
     pub damage: bool,
+    /// Road traffic (`Track1.Traffic`): 0 none, 1 light, 2 medium, 3 heavy. `NFSPU_TRAFFIC` sets it
+    /// for a race started from the environment.
+    pub traffic: u8,
 }
 
 impl RaceRequest {
@@ -59,13 +62,16 @@ impl RaceRequest {
         let laps = parts.next().and_then(|l| l.parse().ok()).filter(|&l| l > 0).unwrap_or(2);
         let opponents: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0).min(7);
         let difficulty = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
-        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true })
+        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true, traffic: 0 })
     }
 
     pub fn from_env() -> Option<Self> {
         let mut r = std::env::var("NFSPU_RACE").ok().and_then(|s| Self::parse(&s))?;
         if let Ok(list) = std::env::var("NFSPU_OPPONENTS") {
             r.opponent_cars = list.split(',').map(|m| m.trim().to_string()).collect();
+        }
+        if let Some(t) = std::env::var("NFSPU_TRAFFIC").ok().and_then(|t| t.parse::<u8>().ok()) {
+            r.traffic = t.min(3);
         }
         Some(r)
     }
@@ -85,6 +91,15 @@ pub struct AiBody {
     pub wheel_y: [f32; 4],
     /// The car's damage zones, for painting its body.
     pub damage: [f32; nfspu_game::car_damage::ZONES],
+}
+
+/// The road traffic of a race and the entities that show it.
+struct TrafficRun {
+    fleet: nfspu_game::traffic::Fleet,
+    /// Each traffic car's body entity and the lean node under it.
+    bodies: Vec<(Entity, Entity)>,
+    spawns: u32,
+    removals: u32,
 }
 
 /// One opponent: its car, its driver and the entity that shows it.
@@ -107,6 +122,7 @@ struct RaceRun {
     player: usize,
     /// Opponents; racer `i` is race car `i + 1` (the player is car 0, on pole).
     racers: Vec<Racer>,
+    traffic: Option<TrafficRun>,
     line: Vec<Vec3>,
     rng: Rng,
     difficulty: u8,
@@ -130,7 +146,7 @@ impl Plugin for RacePlugin {
         // direct start) has run `setup`.
         app.add_systems(
             Update,
-            (start_race, race_tick, place_opponents, results_screen, leave_results)
+            (start_race, race_tick, place_opponents, place_traffic, results_screen, leave_results)
                 .chain()
                 .after(crate::drive_car)
                 .run_if(crate::flow::in_race_scene)
@@ -302,6 +318,7 @@ fn start_race(
         racer_car.sim.damage.enabled = req.damage;
         racers.push(Racer { car: racer_car, brain: Opponent::new(spec, driver, spot.slice), body, lean, name, steer: 0.0, braking: false, resets: 0 });
     }
+    let traffic = (req.traffic > 0).then(|| build_traffic(&mut commands, &mut meshes, &mut materials, &mut car_paints, &mut images, &game, &catalogue, req.traffic, seed)).flatten();
     // opponents that could not be set up drop out of the race
     let cars = 1 + racers.len();
     let race = if cars == race.cars.len() { race } else { Race::new(RaceSetup { kind, laps: req.laps, cars }, &fractions[..cars]) };
@@ -321,6 +338,7 @@ fn start_race(
         race,
         player,
         racers,
+        traffic,
         line,
         rng,
         difficulty: req.difficulty,
@@ -334,6 +352,111 @@ fn start_race(
         track,
     });
 }
+
+/// Road traffic for a race: a fleet sized by the density, each car in a random traffic model
+/// (catalogue records of kind 1), hidden until the fleet puts it on the road.
+#[allow(clippy::too_many_arguments)]
+fn build_traffic(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    car_paints: &mut Assets<nfspu_game::car_shine::CarPaint>,
+    images: &mut Assets<Image>,
+    game: &std::path::Path,
+    catalogue: &[nfspu_game::catalog::Car],
+    density: u8,
+    seed: u32,
+) -> Option<TrafficRun> {
+    let records: Vec<&nfspu_game::catalog::Car> = catalogue.iter().filter(|c| c.kind == 1).collect();
+    let Some(first) = records.first() else {
+        race_log("traffic: the catalogue has no traffic cars, none added");
+        return None;
+    };
+    let loaded = match car_load::load(game, Pick::Id(first.id), false) {
+        Ok(l) => l,
+        Err(e) => {
+            race_log(&format!("traffic: no physics for '{}' ({e}), none added", first.model));
+            return None;
+        }
+    };
+    race_log(&format!("traffic: {}", loaded.note));
+    let count = nfspu_game::traffic::cars_for_density(density);
+    let mut rng = Rng::new(seed ^ 0x51ed_270b);
+    let mut bodies = Vec::new();
+    let mut counts = std::collections::BTreeMap::<String, u32>::new();
+    for _ in 0..count {
+        let record = records[rng.below(records.len())];
+        let options = CarOptions { style: record.style, ..Default::default() };
+        let body = commands.spawn((Transform::from_translation(Vec3::new(0.0, -1000.0, 0.0)), Visibility::Hidden, AiBody::default(), DespawnOnExit(AppState::Race))).id();
+        let (_, lean, _) = crate::spawn_car_model(commands, meshes, materials, car_paints, images, body, &record.model, &options);
+        *counts.entry(record.model.clone()).or_default() += 1;
+        bodies.push((body, lean));
+    }
+    race_log(&format!("traffic: density {density}, {count} cars: {counts:?}"));
+    let template = Car::with_spec(Vec3::ZERO, 0.0, loaded.spec, Default::default());
+    Some(TrafficRun { fleet: nfspu_game::traffic::Fleet::new(count, &template, seed), bodies, spawns: 0, removals: 0 })
+}
+
+/// One 64 Hz tick of road traffic around the player and the opponents. Returns the hardest hit
+/// the player took.
+fn drive_traffic(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet) -> f32 {
+    use nfspu_game::traffic::Event;
+    let RaceRun { racers, traffic, track, slice, race, .. } = run;
+    let Some(tr) = traffic else { return 0.0 };
+    let tick = race.tick;
+    let wet = player.wet;
+    let mut refs: Vec<&mut Car> = std::iter::once(player).chain(racers.iter_mut().map(|r| &mut r.car)).collect();
+    let mut hit = 0.0f32;
+    for e in tr.fleet.tick(&track.path, ground, walls, &mut refs, *slice, dt, wet) {
+        match e {
+            Event::Spawned { car, slice, dir, speed, lane, from } => {
+                tr.spawns += 1;
+                if tr.spawns <= 40 {
+                    race_log(&format!("tick {tick}: traffic {car} appears at slice {slice} going {dir:?}, {speed:.1} m/s, lane {lane:.2}, {from:.0} m from you"));
+                }
+            }
+            Event::Removed { car, why, dist } => {
+                tr.removals += 1;
+                if tr.removals <= 40 {
+                    race_log(&format!("tick {tick}: traffic {car} taken off ({why}, {dist:.0} m away)"));
+                }
+            }
+            Event::Honk { car } => race_log(&format!("tick {tick}: traffic {car} honks")),
+            Event::Hit { car, with, impact } => {
+                if with == 0 {
+                    hit = hit.max(impact);
+                }
+                race_log(&format!("tick {tick}: traffic {car} hit car {with} (impact {impact:.0})"));
+            }
+        }
+    }
+    hit
+}
+
+/// Puts the traffic bodies where their cars are; cars waiting to appear stay hidden.
+fn place_traffic(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform, &mut AiBody, &mut Visibility), Without<crate::BodyLean>>, mut leans: Query<&mut Transform, (With<crate::BodyLean>, Without<AiBody>)>) {
+    let Some(tr) = run.as_deref().and_then(|r| r.traffic.as_ref()) else { return };
+    for (t, &(body, lean)) in tr.fleet.cars.iter().zip(&tr.bodies) {
+        let Ok((mut tf, mut ab, mut vis)) = bodies.get_mut(body) else { continue };
+        let driving = t.state == nfspu_game::traffic::State::Driving;
+        let want = if driving { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        if !driving {
+            continue;
+        }
+        tf.translation = t.car.draw_pos();
+        let (pitch, roll) = t.car.chassis_tilt();
+        tf.rotation = Quat::from_euler(EulerRot::YXZ, t.car.yaw, pitch, roll);
+        if let Ok(mut lt) = leans.get_mut(lean) {
+            let (lp, lr) = t.car.lean_tilt();
+            lt.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, lp, lr);
+        }
+        *ab = AiBody { speed: t.car.speed, steer: t.steer, braking: t.braking, wheel_y: t.car.wheel_heights(), damage: t.car.sim.damage.zones };
+    }
+}
+
 
 /// One 64 Hz tick for every opponent: think, drive the car physics, follow it along the slices
 /// and fill its race sample. Cars stuck for long or fallen off the world go back on the road.
@@ -399,7 +522,7 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
             }
         }
     }
-    player_hit
+    player_hit.max(drive_traffic(run, player, dt, ground, walls))
 }
 
 /// The road's centre line as one (x, z) polyline per road run, for the HUD map.

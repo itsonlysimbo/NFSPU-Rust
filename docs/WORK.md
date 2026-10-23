@@ -19,6 +19,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 | Retail results screen | Mid | OpenCode (continuing) | `claude/results-screen-a9f5cc` | merged, built, tests pass, `race_drive` ALL OK; visual not checked by eye | Next: capture `logs/menu_results*.png` (finish a race) and compare the panel's look/position/timing with retail; add to PLAYTEST | Finishing shows the retail table, Space/Esc go to the menu |
 | Race sound effects polish | Mid | OpenCode | — | 2026-10-22: verified working from a race's `logs/race_sound.log` (engine layers, SND_coll skid/road/wind/wall, countdown voice, 75 coastal ambience including water lapping; levels follow the Options sliders). No specific fault found; the mix balance (MIX 0.7) and the missing Doppler/rain/opponent-skid channels are the open items | Next: wait for the user's ear (PLAYTEST), then adjust `MIX`/channel levels or add rain/opponent skids; `docs/provenance/sound.md` "Not done" lists the gaps | Sounds match retail |
 | In-race pause menu (Esc) | Mid | Claude (pause-menu session) | `claude/pause-menu-22e199` | Done on branch: retail `HPause` panel (continue / race again / quit… with exit confirmation), clock/AI/car/sound freeze, race again, quit; `NFSPU_PAUSE_TEST` checks pass, tests pass, race_drive ALL OK | Next: coordinator merge; playtest (PLAYTEST.md). Not done: orbiting pause camera, hide-menu key | Esc pauses with the retail menu; resume/restart/quit work; race_drive ALL OK |
+| Retail traffic in races | Strong | Claude (traffic session) | `claude/traffic-4f929a` | done: race_drive ALL OK 15 tracks traffic 0 and 3, tests pass, game bin checks (not seen in a window) | Next: coordinator merge; playtest (PLAYTEST.md); then decode lane data and the speed ladder | Races with traffic on show retail-like traffic; race_drive ALL OK with traffic on and off |
 
 ## Up next (unclaimed)
 Pick from here, highest first. See `docs/progress.md` for the full feature list.
@@ -34,7 +35,6 @@ Pick from here, highest first. See `docs/progress.md` for the full feature list.
 | Race sound fine-tuning against retail | Strong | Needs a retail recording with game sound |
 | Body lean closer to retail | Strong | After damage/suspension merges |
 | Playtest round: 2026-10-20 fixes, Options > Audio, race sound | User | Flare on Côte d'Azur, slider dragging and sound levels by ear are not tested |
-| Traffic | Strong | Needs decomp work (AIHigh_Traffic) |
 | Roof up/down drawing | Mid | Choice already reaches the race |
 | Location screen 3D track room | Mid | |
 | Evolution career, Factory Driver | Strong | Big; split into pieces first |

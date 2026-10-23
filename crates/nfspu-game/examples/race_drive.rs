@@ -6,6 +6,7 @@
 //! Run: `cargo run -p nfspu-game --example race_drive --release -- monaco1 forward 2 7 2`
 //! (track, forward|backward, laps, opponents 0-7, difficulty 0-2; with no track it runs every track
 //! once, alone). `NFSPU_AI_SEED` fixes the random draws. Log: logs/race_drive.txt
+//! `RACE_DRIVE_TRAFFIC=<0-3>` adds road traffic (none, light, medium, heavy; default 0).
 //! `RACE_DRIVE_CAR=<catalogue id>` drives that retail car (default: the made-up `Spec::generic`);
 //! opponents drive the 993's retail car.
 
@@ -66,6 +67,13 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             (Car::with_spec(s.pos + bevy::math::Vec3::Y, s.yaw, opp_spec.clone(), Default::default()), Opponent::new(spec.clone(), d, s.slice), n)
         })
         .collect();
+    // road traffic: the density from RACE_DRIVE_TRAFFIC, cars with the 993's physics
+    let density = std::env::var("RACE_DRIVE_TRAFFIC").ok().and_then(|v| v.parse::<u8>().ok()).unwrap_or(0).min(3);
+    let mut fleet = nfspu_game::traffic::Fleet::new(nfspu_game::traffic::cars_for_density(density), &Car::with_spec(bevy::math::Vec3::ZERO, 0.0, opp_spec.clone(), Default::default()), seed);
+    let (mut traffic_spawns, mut traffic_removed, mut traffic_hits, mut traffic_honks, mut traffic_max) = (0u32, 0u32, 0u32, 0u32, 0usize);
+    if density > 0 {
+        let _ = writeln!(out, "   traffic density {density}: {} cars", fleet.cars.len());
+    }
     let mut resets = vec![0u32; opponents];
     let mut taken = std::collections::BTreeMap::<(usize, usize), u32>::new();
     let mut choice_lines = 0u32;
@@ -180,6 +188,22 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 }
             }
         }
+        if !fleet.cars.is_empty() {
+            let mut refs: Vec<&mut Car> = std::iter::once(&mut car).chain(racers.iter_mut().map(|x| &mut x.0)).collect();
+            for e in fleet.tick(p, &ground, &walls, &mut refs, slice, dt, false) {
+                use nfspu_game::traffic::Event;
+                match e {
+                    Event::Spawned { .. } => traffic_spawns += 1,
+                    Event::Removed { .. } => traffic_removed += 1,
+                    Event::Hit { .. } => traffic_hits += 1,
+                    Event::Honk { .. } => traffic_honks += 1,
+                }
+                if traffic_spawns + traffic_removed <= 12 || matches!(e, Event::Hit { .. }) && traffic_hits <= 12 {
+                    let _ = writeln!(out, "      tick {:>5}: traffic {e:?}", r.tick);
+                }
+            }
+            traffic_max = traffic_max.max(fleet.driving());
+        }
         if r.held() {
             let d = car.pos - start_pos;
             moved_before_go = moved_before_go.max((d.x * d.x + d.z * d.z).sqrt());
@@ -196,6 +220,13 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 r.tick, p.segment_of(slice), p.fraction(slice, dir), car.pos.x, car.pos.y, car.pos.z, car.yaw, car.speed);
         }
         slice = p.track(slice, car.pos);
+        if !r.held() && (car.pos.y < p.slices[slice].pos.y - 30.0 || car.wants_recover) {
+            // as in the game: a car that fell off the world or crashed is put back on the road
+            let (pos, yaw) = ai::reset_pose(p, &line, slice, dir);
+            car = car.recover(pos, yaw);
+            route = slice;
+            route_target = p.slices[route].pos;
+        }
         let crossed = t.finish.map_or(false, |(a, b)| crosses(before, car.pos, a, b));
         let vel = car.pos - before;
         if p.wrong_way(slice, vel / dt, dir) && !r.held() {
@@ -231,6 +262,9 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             let _ = writeln!(out, "   junction {j}: {}", ways.join("; "));
         }
         let _ = writeln!(out, "   car-to-car hits of impact 20+: {hits}");
+    }
+    if !fleet.cars.is_empty() {
+        let _ = writeln!(out, "   traffic: {traffic_spawns} spawns, {traffic_removed} removals, up to {traffic_max} driving at once, {traffic_hits} hits of impact 20+, {traffic_honks} honks");
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });

@@ -34,6 +34,7 @@ pub mod refbuild;
 pub mod sky;
 pub mod sky_fx;
 pub mod track;
+pub mod traffic;
 pub mod weather;
 pub mod weather_fx;
 
