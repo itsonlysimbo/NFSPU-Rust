@@ -56,10 +56,14 @@ impl Watch {
         if car.pos.y < s.pos.y - FALL_DEPTH || self.airborne > AIR_TICKS {
             return Some(Why::Fell);
         }
-        let off = car.pos - s.pos;
-        let lateral = off.dot(s.right);
-        let width = if lateral < 0.0 { s.left_width } else { s.right_width };
-        if lateral.abs() > width + OUT_OF_BOUNDS {
+        // out of bounds only when far from the tracked slice and from the nearest slice anywhere
+        // (the tracked one can sit on a side stub while the car is on the main road)
+        let outside = |s: &crate::race_path::PathSlice| {
+            let lateral = (car.pos - s.pos).dot(s.right);
+            let width = if lateral < 0.0 { s.left_width } else { s.right_width };
+            lateral.abs() > width + OUT_OF_BOUNDS || (car.pos - s.pos).length() > OUT_OF_BOUNDS * 3.0
+        };
+        if outside(s) && outside(&path.slices[path.nearest(car.pos)]) {
             return Some(Why::OffRoad);
         }
         if car.speed.abs() > MAX_SPEED {
