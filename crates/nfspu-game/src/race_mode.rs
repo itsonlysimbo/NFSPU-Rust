@@ -129,6 +129,8 @@ struct RaceRun {
     /// The player's progress when the race started (for the lead slowdown's lap rate).
     player_start: f32,
     slice: usize,
+    /// Stuck / fallen / out-of-bounds watch on the player's car.
+    watch: nfspu_game::stuck::Watch,
     last_pos: Vec3,
     /// Unspent frame time, run off in 64 Hz ticks.
     carry: f32,
@@ -344,6 +346,7 @@ fn start_race(
         difficulty: req.difficulty,
         player_start,
         slice: spot.slice,
+        watch: Default::default(),
         last_pos: start,
         carry: 0.0,
         wrong_way: false,
@@ -596,6 +599,14 @@ fn race_tick(
         samples[run.player] = CarSample { fraction, crossed_finish: crossed };
         crossed = false;
         bump = bump.max(drive_opponents(run, &mut car.car, step, &ground.0, &walls.0, &mut samples));
+        if !run.race.held() && run.race.cars[run.player].state != race::CarState::Finished {
+            if let Some(why) = run.watch.tick(&car.car, &run.track.path, run.slice, dir) {
+                let (p, yaw) = ai::reset_pose(&run.track.path, &run.line, run.slice, dir);
+                car.car = car.car.recover(p, yaw);
+                run.watch.reset();
+                race_log(&format!("tick {}: player {}, put back on the road at slice {}", run.race.tick, why.text(), run.slice));
+            }
+        }
         for e in run.race.step(&samples) {
             let t = run.race.tick;
             match e {

@@ -404,3 +404,7 @@ per-car scale is needed or known to exist in retail. Drawn roll in steady corner
   a real bend, so a fitted scale would be a guess; `LEAN_LOOK` stays 1.0).
 - GT1 braking pitch from 150 km/h: about -1.6 degrees (footage: not measurable). `lean_check` now
   takes car names (`lean_check gt1`).
+
+## 11. Collision audit and stuck recovery (2026-10-24)
+
+`collision_audit` sweeps every road slice across its width plus 3 m shoulders and uses the car's own support tiers. Result: no real holes on the road; leftovers are slivers at the nominal road edge beside void (4 spots), slice/mesh offsets on unused side stubs, and open edges (skidpad, forest, autobahn) where a car can drive off into void. Steps over 0.6 m near edges are kerbs and rails. Two industrial spots block the whole road width for the wall test (not looked into). Instead of patching per spot, the player now gets retail's reset rules (`stuck.rs`): stuck 320 ticks, 35 m past the edge, over 115 m/s, plus our own fell 30 m or airborne 4 s. The out-of-bounds test also checks the nearest slice anywhere, because the tracked slice can sit on a side stub. `race_drive` fails if any of these fire. Not tested in the game window.

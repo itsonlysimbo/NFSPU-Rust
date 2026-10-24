@@ -209,3 +209,4 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
   moves to GOLDEN ERA 1970. The bonus-car race (935 Moby Dick) is not built.
 - Not matching: stripe decal on the garage and dealership cars (retail shows plain paint).
 
+- Stuck/fall recovery (collision session, 2026-10-23): wedge against a wall for 5 s, drive off a void edge (skidpad, forest) or fall off a track; the car should be put back on the road (log line "player stuck/fell/out of bounds, put back on the road"). Report any place you still had to restart.

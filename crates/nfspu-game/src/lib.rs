@@ -36,6 +36,7 @@ pub mod race_sound;
 pub mod refbuild;
 pub mod sky;
 pub mod sky_fx;
+pub mod stuck;
 pub mod track;
 pub mod traffic;
 pub mod weather;
