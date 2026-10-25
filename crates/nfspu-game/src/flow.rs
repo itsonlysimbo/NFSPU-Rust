@@ -212,7 +212,15 @@ fn knockout_config(run: &knockout::Run, base: &QuickRaceSetup) -> RaceConfig {
     let mut s = base.clone();
     s.opponents = run.ko.opponents_left().min(7) as u8;
     match run.ko.mode {
-        Mode::Quick => s.laps = run.quick_laps().clamp(1, 8) as u8,
+        Mode::Quick => {
+            s.laps = run.quick_laps().clamp(1, 8) as u8;
+            // laps need a circuit; a road would run once with nobody knocked out
+            if !knockout::is_circuit(&s.track) {
+                log_line(&format!("knockout: '{}' is a road, quick knockout uses monaco1 instead", s.track));
+                s.track = "monaco1".to_string();
+                s.track_name = "monaco1".to_string();
+            }
+        }
         Mode::Series => {
             if let Some(t) = run.track() {
                 s.track = t.to_string();

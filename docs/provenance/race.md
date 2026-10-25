@@ -397,3 +397,8 @@ Our rules (the guesses are marked):
   `NFSPU_KNOCKOUT=quick|series[,opponents]` from any screen, `NFSPU_KO_TRACKS=a,b,c` for the series,
   `NFSPU_KO_AUTO=1` to close the summaries by itself. Headless: `RACE_DRIVE_KNOCKOUT=quick|series
   cargo run -p nfspu-game --example race_drive -- <track[,track...]> forward <laps> <opponents>`.
+- Headless check args (2026-10-24): `RACE_DRIVE_KNOCKOUT=quick cargo run -p nfspu-game --example race_drive -- monaco1 forward 0 3`
+  = track, direction, (laps: ignored, laps = opponents), opponents. **Circuits only** (monaco1-5,
+  skidpad): on a road such as `canyon` the race has one run and nobody is knocked out, which is why
+  that command gave "0 out"; race_drive now says so and fails. In the game, a quick knockout picked
+  on a road falls back to monaco1, and knockout series pick their random tracks from the roads.

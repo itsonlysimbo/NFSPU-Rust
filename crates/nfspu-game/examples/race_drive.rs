@@ -160,6 +160,10 @@ fn drive_ko(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty:
     let mut r = Race::new(RaceSetup { kind, laps, cars }, &fractions);
     if knockout_quick {
         r.set_knockout();
+        if !r.is_knockout() {
+            let _ = writeln!(out, "   FAILED: quick knockout needs a circuit track (monaco1-5, skidpad); {name} is a one-way road");
+            return false;
+        }
     }
     // opponents: retail drivers of the difficulty, all with the 993's tables
     let game = std::path::PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
@@ -543,7 +547,8 @@ fn main() {
     }
     let mut out = String::new();
     let mut ok = true;
-    // RACE_DRIVE_KNOCKOUT=quick <track> [dir] [_] <opponents>: one lap per opponent, last of each lap out.
+    // RACE_DRIVE_KNOCKOUT=quick <circuit> [dir] [ignored] <opponents>: one lap per opponent, last of each lap out
+    // (the laps argument is ignored: laps = opponents). Circuits only: monaco1-5, skidpad.
     // RACE_DRIVE_KNOCKOUT=series <track,track,...> [dir] [laps] <opponents>: a race per round, last out.
     let ko = std::env::var("RACE_DRIVE_KNOCKOUT").unwrap_or_default();
     if (ko == "quick" || ko == "series") && a.first().is_some() {
