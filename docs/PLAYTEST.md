@@ -242,3 +242,12 @@ All rules are guesses (docs/provenance/pursuit.md).
 Garage or dealership > showcase: the four tabs switch the statistics panels and show the car's
 real numbers (weight, size, gears, power). Dealership > car compare: the five bars of the
 two cars show numbers. Judge the tab look (a stand-in) against retail.
+## Factory Driver (branch claude/factory-screens)
+- Single player > Factory Driver opens the mission list for the selected profile (a new profile sees
+  the welcome screens first). RACE drives the current mission: the car starts on the scene's own
+  start line (not the road's start grid), orange cones stand on the pad and fall over when hit, and a
+  banner at the top of the screen shows `TIME n / limit  GATES n/total  CONES n`, then `MISSION
+  PASSED` or `MISSION FAILED (reason)` for 3.5 s before the menu comes back.
+- Judge against retail: where the car is put at the start, the cone size and colour, the banner's
+  place and size, and whether a pass moves the mission list on (it does in the log; the speech is
+  not drawn yet). Missions with opponents (the races) are not built: RACE falls back to a plain race.

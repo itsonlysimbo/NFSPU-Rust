@@ -236,24 +236,26 @@ lines. `Progress::current` is the first mission not done; only a pass is kept.
 ### Built / not built
 Built (`factory.rs`, tests, `RACE_DRIVE_FACTORY=1 race_drive`): the table, scene reader, gate / cone /
 time / damage / place rules, progress file, a scripted driver that runs every scene mission and
-checks pass, slow-fail and the cone penalty (log `logs/factory_drive.txt`). **Not built**: the
-screens (`factorydriver`, `missionbrief`, `missionmap`, `factwelcome`, `factdone`, `FactoryVictory`),
-running a mission in the real race (cone objects the car can knock over, gate triggers fed from the
-live car, the start grid from the scene), the race missions, the mission cars with their parts, the
-prize cars, the spin-direction rule, the police of mission 5, snow in the Alps mission.
+checks pass, slow-fail and the cone penalty (log `logs/factory_drive.txt`).
 
-### Showcase and car compare data (2026-10-24, claude/career-screens)
-- `Showcase.Text(N)` on `general`, `chassis`, `performance` and `glancestats` is string N of the
-  car's own `FEData/Locale/<first model year><sim name>.loc` (`1950356Cabrio11.loc` for the '50 356
-  Cabriolet; the `.loc` language columns are those of `festrings`). **Verified** against the
-  footage values (790 Kg, 3950 / 1660 / 1300 / 2100 mm, gears 3.09 / 1.765 / 1.227 / 0.96, final
-  4.428:1, 40 bhp @ 4200, 23.5 s).
-- Car compare bars (acceleration, top speed, braking, handling, overall) are five `u16` at 0x324 of
-  the `nfs5.car` record (**verified**: 30 / 40 / 56 / 30 / 41 for the Cabriolet and 30 / 40 / 56 / 33
-  / 42 for the Coupe Ferdinand, as in the footage). The values print as the bars' numbers; the
-  second car is `GenericCar2.Car` (default: the next car in the list, **guess**).
-- The showcase tabs (`NFS5.TABBUTTON`: general, chassis and drivetrain, performance data,
-  statistics) switch the visible panel; the general panel shows first. The tab look is a
-  **stand-in** (plate + centred label, yellow when selected). Not built: the 3D car and the
-  picture frames on the panels, the second combobox of car compare, and the car setup sliders,
-  gear-ratio bars and part inventory (still open).
+Live in the game (2026-10-24, branch `claude/factory-screens`): `menu_factory.rs` (the
+`SETTYPEFACTORYDRIVER` entry, the `Factory.Data(...)` watches of the current mission, start and
+settle, the promotion screen `levelvictory`), `race_mission.rs` (the car placed at the scene's start
+pose, the scene's cones as cone objects that fall when hit, a banner with time / gates / cones, the
+verdict handed back through `factory_live.rs`), the progress file, and a flow-test hook.
+**Verified headless** (`NFSPU_MENU=factorydriver NFSPU_FACTORY_AUTO=40 NFSPU_FLOW_TEST=1,60`): mission
+0 drives on the skid pad, passes in 14.05 s with 1 cone, saves `done = 0,1,0,842`, logs the pass
+speech and returns to the mission list; mission 1 passes in 16.02 s (10 gates), mission 12 in 28.59 s
+(19 gates, autobahn) and mission 16 in 21.42 s (9 gates). Passing mission 12 (the last of rank 1)
+logs "Congratulations on your earned promotion to Test Driver" and opens `levelvictory`
+(`NFSPU_MENU=levelvictory NFSPU_FACTORY_MISSION=13 NFSPU_MENU_CAPTURE=1` saves
+`logs/menu_levelvictory.png`: Rolf's portrait, the promotion text, `done`). **Found on the way**: a
+mission car must not be given the road's rules — the crash reset, the stuck / out-of-bounds watch and
+the wrong-way test put it back on the road every second on the skid pad, so no gate ever counted;
+with a mission active they are skipped (`race_mode::race_tick`) and the physics still rights the car
+where it is.
+
+**Not built**: the mission pictures and maps (`FACTORYPIC`, `FACTORYMAP`), the pass/fail speech on
+the screen (it is only logged), the race missions (opponents, minimum place), the mission cars with
+their parts, the prize cars, the spin-direction rule, the police of mission 5, snow in the Alps
+mission.

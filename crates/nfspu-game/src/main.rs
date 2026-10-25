@@ -30,10 +30,12 @@ use nfspu_game::MIRROR_X;
 mod car_probe;
 mod console;
 mod flow;
+mod menu_factory;
 mod menu_mode;
 mod pause;
 mod race_audio;
 mod race_load;
+mod race_mission;
 mod race_mode;
 mod visual_probe;
 
