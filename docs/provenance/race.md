@@ -364,3 +364,36 @@ opponents' rows fill in as they finish. Space/Enter/Esc go back to the menu.
   race rules. **Not tested** by driving: those six tracks.
 - Live (real window, `NFSPU_RACE=skidpad,forward,1`): the countdown events came exactly 1 s apart
   and the car stayed on the grid. Driving a full race by hand in the window: **not tested**.
+
+## Knockout and quick knockout (2026-10-24)
+
+Read from the executable (decomp, read-only) and the FE layouts/strings. Our code is `knockout.rs`
+(rules), `race.rs` (`set_knockout`, `RaceEvent::Out`), `flow.rs` (`KnockoutRun`, the round chain).
+
+| Fact | Evidence |
+|---|---|
+| Two modes: **quick knockout** (`quickknockout` screen, game type 1) and **knockout** (`knockout` screen, type 2) | `SETTYPEQUICKKNOCKOUT` / `SETTYPEKNOCKOUT` callbacks; the race-setup builder switches on the type |
+| Help text 1157 (circuit): "the loser in each lap gets eliminated" → quick knockout is one circuit race, last car of each **lap** out | `FEStrings.csv` |
+| Help text 1158 (linear roads): "the loser after each track race gets eliminated" → knockout is a **series of races**, last car of each race out | `FEStrings.csv` |
+| `Game.NumKOOpponents` (the screens' own count, separate from `Game.NumOpponents`) is `N`, the number of opponents and the number of rounds | `FUN_004ddf30` (run start): total = N, round = 0, N+1 entrants all in |
+| Player counts as 1 car; in type 1 the grid is `N` opponents, in type 2 the grid is `total − round` opponents (so it shrinks each race) | grid builder `FUN_004ecf00` |
+| After a round, every entrant whose place is greater than `total − round` is out; since one car leaves per round that is exactly the last place. The player's place being past that value ends the run. The run ends after round N or when the player is out | `FUN_004de060` |
+| Knockout (type 2) has up to 7 races, each with its own `Track k`, `Direction`, `Laps`, `Traffic`; `MAKERANDOMKNOCKOUT` fills each from a random item of its list; `KNOCKOUTTRACKINC/DEC` step the visible track row | `FUN_0050d570`, `FUN_0050de00/40`, `FEdaTrack` |
+| No points and no tie rule exist in knockout: the running order is the only ranking (our `Race::order` breaks equal progress by grid slot). Tournament standings (with a POINTS column in the summary) belong to the career, not to these modes | no points state in the knockout state block; `hud.md` summary titles |
+| Between races the game shows the `knockoutraceinfo` layout (header + the next track) and then the normal summary (title 18129/18130); our version goes straight from the summary to the next loading screen | layout strings; **not built** |
+
+Our rules (the guesses are marked):
+- Quick knockout: `N` opponents, `N` laps. The last car to complete lap `k` (< N) is out at once
+  (`RaceEvent::Out`, its place is the number of cars then in). The first car over the last line
+  wins and every car still racing is out behind it, in running order. **Guess:** "last in each lap"
+  is judged by who completes the lap last, not by who is last at the moment the leader crosses.
+  Knocked-out opponents disappear from the road; a knocked-out player gets the summary.
+- Knockout: `N` races; race `k` has `N − k` opponents. The last place of the finished race is out
+  (running order when the player finished, so unfinished cars rank by progress) and the survivors
+  race the next track. The run ends when the player is last or after race `N`, in which case the
+  player has won. **Guess:** the 7 tracks are the chosen one plus random others (not limited to
+  linear tracks); direction and traffic repeat the screen's choice; opponents keep their cars.
+- How to run it: on the `quickknockout` / `knockout` screens RACE starts a run; for tests
+  `NFSPU_KNOCKOUT=quick|series[,opponents]` from any screen, `NFSPU_KO_TRACKS=a,b,c` for the series,
+  `NFSPU_KO_AUTO=1` to close the summaries by itself. Headless: `RACE_DRIVE_KNOCKOUT=quick|series
+  cargo run -p nfspu-game --example race_drive -- <track[,track...]> forward <laps> <opponents>`.

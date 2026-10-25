@@ -22,6 +22,7 @@ pub mod hud_pause;
 pub mod hud_plugin;
 pub mod hud_results;
 pub mod hud_render;
+pub mod knockout;
 pub mod loading;
 pub mod menu;
 pub mod menu_canvas;

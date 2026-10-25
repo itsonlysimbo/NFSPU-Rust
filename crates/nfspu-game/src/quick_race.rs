@@ -40,6 +40,8 @@ pub const TRAFFIC_KEY: &str = "Track1.Traffic";
 pub const LAPS: &str = "Track1.Laps";
 pub const OPPONENT_CAR: &str = "OpponentCar.Car";
 pub const OPPONENTS: &str = "Game.NumOpponents";
+/// The knockout screens' own opponent count, 1..=7 (the list starts at 1; not saved).
+pub const KO_OPPONENTS: &str = "Game.NumKOOpponents";
 pub const DIFFICULTY: &str = "Game.Difficutly";
 pub const TRANSMISSION: &str = "Car.Transmission";
 pub const ABS: &str = "Car.ABS";
@@ -85,6 +87,8 @@ pub struct QuickRace {
     pub laps: usize,
     pub traffic: usize,
     pub opponents: usize,
+    /// Dropdown position of the knockout opponent count (0 is one opponent).
+    pub ko_opponents: usize,
     pub opponent_car: usize,
     pub difficulty: usize,
     pub transmission: usize,
@@ -169,6 +173,7 @@ impl QuickRace {
         q.laps = saved(save, LAPS, 8, 1);
         q.traffic = saved(save, TRAFFIC_KEY, 4, 0);
         q.opponents = saved(save, OPPONENTS, 8, 4);
+        q.ko_opponents = 6;
         q.opponent_car = saved(save, OPPONENT_CAR, 5 + q.opponent_list.len(), 0);
         q.difficulty = saved(save, DIFFICULTY, 3, 1);
         q.transmission = saved(save, TRANSMISSION, 2, 1);
@@ -240,6 +245,7 @@ impl QuickRace {
             LAPS => &mut self.laps,
             OPPONENT_CAR => &mut self.opponent_car,
             OPPONENTS => &mut self.opponents,
+            KO_OPPONENTS => &mut self.ko_opponents,
             DIFFICULTY => &mut self.difficulty,
             TRANSMISSION => &mut self.transmission,
             ABS => &mut self.abs,
@@ -254,6 +260,11 @@ impl QuickRace {
     }
 
     /// The location arrows (`TRACK1INC` / `TRACK1DEC`) step through the tracks and wrap.
+    /// Opponents chosen on the knockout screens (1..=7).
+    pub fn knockout_opponents(&self) -> u32 {
+        self.ko_opponents as u32 + 1
+    }
+
     pub fn step_track(&mut self, delta: i32) {
         let n = self.track_list.len() as i32;
         if n > 0 {
@@ -325,6 +336,9 @@ impl QuickRace {
 
         let counts: Vec<Row> = (0..8).map(|n| Row::item(n.to_string())).collect();
         out.insert(OPPONENTS.to_string(), Choice { rows: counts, selected: self.opponents, closed: self.opponents.to_string(), closed_swatch: None });
+
+        let ko: Vec<Row> = (1..8).map(|n| Row::item(n.to_string())).collect();
+        out.insert(KO_OPPONENTS.to_string(), Choice { rows: ko, selected: self.ko_opponents, closed: (self.ko_opponents + 1).to_string(), closed_swatch: None });
 
         let difficulty: Vec<u32> = (DIFFICULTY_FIRST..DIFFICULTY_FIRST + 3).collect();
         out.insert(DIFFICULTY.to_string(), plain(&difficulty, self.difficulty, &difficulty));

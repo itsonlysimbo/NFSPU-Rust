@@ -47,6 +47,8 @@ pub struct RaceRequest {
     /// Road traffic (`Track1.Traffic`): 0 none, 1 light, 2 medium, 3 heavy. `NFSPU_TRAFFIC` sets it
     /// for a race started from the environment.
     pub traffic: u8,
+    /// Quick knockout: the last car over the line each lap is out (circuits only).
+    pub knockout: bool,
 }
 
 impl RaceRequest {
@@ -62,7 +64,7 @@ impl RaceRequest {
         let laps = parts.next().and_then(|l| l.parse().ok()).filter(|&l| l > 0).unwrap_or(2);
         let opponents: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0).min(7);
         let difficulty = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
-        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true, traffic: 0 })
+        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true, traffic: 0, knockout: false })
     }
 
     pub fn from_env() -> Option<Self> {
@@ -72,6 +74,11 @@ impl RaceRequest {
         }
         if let Some(t) = std::env::var("NFSPU_TRAFFIC").ok().and_then(|t| t.parse::<u8>().ok()) {
             r.traffic = t.min(3);
+        }
+        // `NFSPU_KNOCKOUT=1`: quick knockout rules (laps = opponents, last of each lap out)
+        if std::env::var("NFSPU_KNOCKOUT").as_deref() == Ok("1") {
+            r.knockout = true;
+            r.laps = (r.cars as u32 - 1).max(1);
         }
         Some(r)
     }
@@ -232,7 +239,10 @@ fn start_race(
     car.start_pos = start;
     car.start_yaw = spot.yaw;
     let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, req.direction)).collect();
-    let race = Race::new(RaceSetup { kind, laps: req.laps, cars }, &fractions);
+    let mut race = Race::new(RaceSetup { kind, laps: req.laps, cars }, &fractions);
+    if req.knockout {
+        race.set_knockout();
+    }
     race_log(&format!(
         "{} {:?}: {:?}, {} lap(s), {} slices in {} runs, lap {:.0} m, start slice {}, finish line {}",
         req.track,
@@ -323,7 +333,15 @@ fn start_race(
     let traffic = (req.traffic > 0).then(|| build_traffic(&mut commands, &mut meshes, &mut materials, &mut car_paints, &mut images, &game, &catalogue, req.traffic, seed)).flatten();
     // opponents that could not be set up drop out of the race
     let cars = 1 + racers.len();
-    let race = if cars == race.cars.len() { race } else { Race::new(RaceSetup { kind, laps: req.laps, cars }, &fractions[..cars]) };
+    let race = if cars == race.cars.len() {
+        race
+    } else {
+        let mut r = Race::new(RaceSetup { kind, laps: req.laps, cars }, &fractions[..cars]);
+        if req.knockout {
+            r.set_knockout();
+        }
+        r
+    };
     for (g, s) in spots.iter().take(cars).enumerate() {
         race_log(&format!("grid {g}: slice {} at ({:.1}, {:.1}, {:.1}) yaw {:.3}{}", s.slice, s.pos.x, s.pos.y, s.pos.z, s.yaw, if g == player { " (player)" } else { "" }));
     }
@@ -468,14 +486,16 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
     let held = run.race.held();
     let player_progress = run.race.cars[run.player].progress;
     let rate = ai::player_rate(player_progress - run.player_start, run.race.race_ticks());
-    let mut others: Vec<Other> = std::iter::once(Other::of(player)).chain(run.racers.iter().map(|r| Other::of(&r.car))).collect();
+    // a car knocked out of a quick knockout is no longer in anyone's way
+    let out: Vec<bool> = run.race.cars.iter().map(|c| c.state == race::CarState::Out).collect();
+    let mut others: Vec<Other> = std::iter::once(Other::of(player)).chain(run.racers.iter().enumerate().map(|(i, r)| if out[i + 1] { Other { pos: Vec3::splat(1.0e6), ..Other::of(&r.car) } } else { Other::of(&r.car) })).collect();
     // road traffic is in the way too (after the racers, so the racer indices below still hold)
     if let Some(tr) = &run.traffic {
         others.extend(tr.fleet.cars.iter().filter(|t| t.state == nfspu_game::traffic::State::Driving).map(|t| Other::of(&t.car)));
     }
     for i in 0..run.racers.len() {
         let race_car = i + 1;
-        let finished = run.race.cars[race_car].state == race::CarState::Finished;
+        let finished = run.race.cars[race_car].state != race::CarState::Racing;
         let lead = run.race.cars[race_car].progress - player_progress;
         let view = View { path: &run.track.path, routes: &run.track.routes, line: &run.line, dir, held, finished, difficulty: run.difficulty, lead, player_rate: rate };
         let near: Vec<Other> = others.iter().enumerate().filter(|(k, _)| *k != race_car).map(|(_, o)| *o).collect();
@@ -514,6 +534,9 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
     let tick = run.race.tick;
     let mut player_hit = 0.0f32;
     for i in 0..run.racers.len() {
+        if out[i + 1] {
+            continue;
+        }
         if let Some(hit) = car_mod::collide_cars(player, &mut run.racers[i].car) {
             player_hit = player_hit.max(hit);
             if hit >= 20.0 {
@@ -521,6 +544,9 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
             }
         }
         for j in i + 1..run.racers.len() {
+            if out[j + 1] {
+                continue;
+            }
             let (a, b) = run.racers.split_at_mut(j);
             if let Some(hit) = car_mod::collide_cars(&mut a[i].car, &mut b[0].car) {
                 if hit >= 20.0 {
@@ -538,10 +564,14 @@ fn road_lines(path: &race_path::RoadPath) -> Vec<Vec<[f32; 2]>> {
 }
 
 /// Puts the opponents' bodies where their cars are and shares their speed with the wheels.
-fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform, &mut AiBody), Without<crate::BodyLean>>, mut leans: Query<&mut Transform, (With<crate::BodyLean>, Without<AiBody>)>) {
+fn place_opponents(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform, &mut AiBody, &mut Visibility), Without<crate::BodyLean>>, mut leans: Query<&mut Transform, (With<crate::BodyLean>, Without<AiBody>)>) {
     let Some(run) = run else { return };
-    for r in &run.racers {
-        if let Ok((mut t, mut b)) = bodies.get_mut(r.body) {
+    for (i, r) in run.racers.iter().enumerate() {
+        if let Ok((mut t, mut b, mut vis)) = bodies.get_mut(r.body) {
+            // a car knocked out of a quick knockout leaves the road
+            if run.race.cars[i + 1].state == race::CarState::Out {
+                *vis = Visibility::Hidden;
+            }
             t.translation = r.car.draw_pos();
             // the chassis (road slope + tumble) carries the wheels; the body art leans over it
             let (pitch, roll) = r.car.chassis_tilt();
@@ -580,7 +610,7 @@ fn race_tick(
     let mut crossed = run.track.finish.map_or(false, |(a, b)| crosses(run.last_pos, pos, a, b));
     let velocity = if dt > 0.0 { (pos - run.last_pos) / dt } else { Vec3::ZERO };
     run.last_pos = pos;
-    let player_done = run.race.cars[run.player].state == race::CarState::Finished;
+    let player_done = run.race.cars[run.player].state != race::CarState::Racing;
     let wrong = !run.race.held() && !player_done && run.track.path.wrong_way(run.slice, velocity, dir);
     if wrong != run.wrong_way {
         run.wrong_way = wrong;
@@ -599,7 +629,7 @@ fn race_tick(
         samples[run.player] = CarSample { fraction, crossed_finish: crossed };
         crossed = false;
         bump = bump.max(drive_opponents(run, &mut car.car, step, &ground.0, &walls.0, &mut samples));
-        if !run.race.held() && run.race.cars[run.player].state != race::CarState::Finished {
+        if !run.race.held() && run.race.cars[run.player].state == race::CarState::Racing {
             if let Some(why) = run.watch.tick(&car.car, &run.track.path, run.slice, dir) {
                 let (p, yaw) = ai::reset_pose(&run.track.path, &run.line, run.slice, dir);
                 car.car = car.car.recover(p, yaw);
@@ -614,6 +644,7 @@ fn race_tick(
                 RaceEvent::Countdown(n) => race_log(&format!("tick {t}: countdown {n}")),
                 RaceEvent::Lap { car, lap, ticks } => race_log(&format!("tick {t}: car {car} ({}) lap {lap} in {}", name(&status.names, car), race::format_time(ticks))),
                 RaceEvent::LapOwed { car } => race_log(&format!("tick {t}: car {car} ({}) crossed the line backwards, lap owed", name(&status.names, car))),
+                RaceEvent::Out { car, position } => race_log(&format!("tick {t}: car {car} ({}) KNOCKED OUT in P{position}", name(&status.names, car))),
                 RaceEvent::Finished { car, position, ticks } => race_log(&format!("tick {t}: car {car} ({}) FINISHED P{position} in {}", name(&status.names, car), race::format_time(ticks))),
             }
         }
@@ -708,12 +739,17 @@ fn leave_results(
     run: Option<Res<RaceRun>>,
     keys: Res<ButtonInput<KeyCode>>,
     back: Res<crate::flow::ReturnToMenu>,
+    status: Res<RaceStatus>,
+    knock: Option<ResMut<crate::flow::KnockoutRun>>,
+    mut commands: Commands,
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if run.is_some_and(|r| r.results_shown) && keys.any_just_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::Escape]) {
+    // `NFSPU_KO_AUTO=1` closes the results by itself (knockout flow tests)
+    let auto = std::env::var_os("NFSPU_KO_AUTO").is_some() && run.as_ref().is_some_and(|r| r.finished_for > SUMMARY_DELAY + 1.0);
+    if run.is_some_and(|r| r.results_shown) && (auto || keys.any_just_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::Escape])) {
         race_log("results closed, leaving the race");
-        crate::flow::leave_race(&back, &mut next, &mut exit);
+        crate::flow::leave_results(knock.map(|k| k.into_inner()), &status, &mut commands, &back, &mut next, &mut exit);
     }
 }
 

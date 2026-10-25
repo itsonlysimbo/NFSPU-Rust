@@ -20,6 +20,8 @@ use nfspu_game::hud_plugin::HudFeed;
 use nfspu_game::race_setup::{self, RaceSetup as QuickRaceSetup};
 use std::{env, fs, path::PathBuf};
 
+use nfspu_game::knockout;
+
 use super::race_mode::{RaceHold, RaceRequest};
 use super::{log_line, log_path};
 
@@ -183,9 +185,64 @@ fn opponent_cars(setup: &QuickRaceSetup) -> Vec<u16> {
 }
 
 /// The menu's RACE: the race's resources go in place and the loading screen starts next frame.
+/// On a knockout screen (`knockout::set_pending`) this starts a knockout run instead.
 pub fn start_race_from_menu(setup: QuickRaceSetup, commands: &mut Commands, next: &mut NextState<AppState>) {
-    commands.queue(move |world: &mut World| RaceConfig::from_menu(setup).apply(world));
+    let pending = knockout::take_pending();
+    commands.queue(move |world: &mut World| {
+        world.remove_resource::<KnockoutRun>();
+        match pending {
+            Some(p) => start_knockout(world, p, setup),
+            None => RaceConfig::from_menu(setup).apply(world),
+        }
+    });
     next.set(AppState::Loading);
+}
+
+/// A knockout being played, and the menu setup its races are built from.
+#[derive(Resource)]
+pub struct KnockoutRun {
+    pub run: knockout::Run,
+    pub base: QuickRaceSetup,
+}
+
+/// The race for the run's next round: one lap per opponent with the last car of each lap out
+/// (quick knockout), or the next track of the series with the survivors.
+fn knockout_config(run: &knockout::Run, base: &QuickRaceSetup) -> RaceConfig {
+    use knockout::Mode;
+    let mut s = base.clone();
+    s.opponents = run.ko.opponents_left().min(7) as u8;
+    match run.ko.mode {
+        Mode::Quick => s.laps = run.quick_laps().clamp(1, 8) as u8,
+        Mode::Series => {
+            if let Some(t) = run.track() {
+                s.track = t.to_string();
+                s.track_name = t.to_string();
+            }
+        }
+    }
+    let mut config = RaceConfig::from_menu(s);
+    if let Some(r) = &mut config.race {
+        if run.ko.mode == Mode::Quick {
+            r.knockout = true;
+            r.laps = run.quick_laps();
+        }
+        if !run.cars.is_empty() {
+            r.opponent_cars = run.opponent_cars();
+        }
+    }
+    config
+}
+
+fn start_knockout(world: &mut World, p: knockout::Pending, base: QuickRaceSetup) {
+    let mut run = knockout::Run::new(p.mode, p.opponents, p.tracks);
+    let config = knockout_config(&run, &base);
+    run.cars = config.race.as_ref().map(|r| r.opponent_cars.clone()).unwrap_or_default();
+    log_line(&format!(
+        "knockout: {:?}, {} opponent(s), {} round(s), cars {:?}, tracks {:?}",
+        run.ko.mode, run.ko.total, run.ko.total, run.cars, run.tracks
+    ));
+    config.apply(world);
+    world.insert_resource(KnockoutRun { run, base });
 }
 
 /// Closes the race: back to the menu, or quits when there is no menu to go back to.
@@ -196,6 +253,40 @@ pub fn leave_race(back: &ReturnToMenu, next: &mut NextState<AppState>, exit: &mu
     } else {
         log_line("flow: race over, no menu to go back to, quitting");
         exit.write(AppExit::Success);
+    }
+}
+
+/// Closing the results: with a knockout going, the survivors race again (the next round) until
+/// the run is won or the player is out; otherwise as `leave_race`. A race left unfinished
+/// (pause menu) ends the run.
+pub fn leave_results(
+    knock: Option<&mut KnockoutRun>,
+    status: &nfspu_game::race::RaceStatus,
+    commands: &mut Commands,
+    back: &ReturnToMenu,
+    next: &mut NextState<AppState>,
+    exit: &mut MessageWriter<AppExit>,
+) {
+    let Some(k) = knock else { return leave_race(back, next, exit) };
+    if !status.finished {
+        log_line("knockout: race left unfinished, the run is over");
+        commands.remove_resource::<KnockoutRun>();
+        return leave_race(back, next, exit);
+    }
+    let step = k.run.after_race(&status.order);
+    log_line(&format!("knockout: round {} of {} over, order {:?} -> {step:?}", k.run.ko.round, k.run.ko.total, status.order));
+    if step == knockout::Step::Next {
+        let config = knockout_config(&k.run, &k.base);
+        log_line(&format!("knockout: next race on {} with {} opponent(s)", config.track, k.run.ko.opponents_left()));
+        commands.queue(move |world: &mut World| {
+            world.insert_resource(LastRace(config));
+            world.insert_resource(RestartRace);
+        });
+        next.set(AppState::Loading);
+    } else {
+        log_line(&format!("knockout: over ({})", if step == knockout::Step::Won { "the player won" } else { "the player is out" }));
+        commands.remove_resource::<KnockoutRun>();
+        leave_race(back, next, exit);
     }
 }
 
