@@ -494,9 +494,11 @@ pub fn pick_cars(rule: &OpponentCars, player: &catalog::Car, list: &[catalog::Ca
         })
         .collect();
     (0..n)
-        .map(|_| match rule {
+        .map(|i| match rule {
+            OpponentCars::Cars(ids) if !ids.is_empty() => ids[i % ids.len()],
             OpponentCars::SameCar => player.id,
             OpponentCars::Car { id, .. } => *id,
+            OpponentCars::Cars(_) => player.id,
             _ if matches.is_empty() => player.id,
             OpponentCars::Random => matches[rng.below(matches.len())].id,
             _ => matches[rng.below(list.len().max(1)) % matches.len()].id,
@@ -729,6 +731,7 @@ mod tests {
         assert!(pick_cars(&OpponentCars::SameEraAndClass, &player, &list, 5, &mut rng).iter().all(|&c| c == 1));
         let any = pick_cars(&OpponentCars::Random, &player, &list, 50, &mut rng);
         assert!(any.contains(&5) && any.contains(&2));
+        assert_eq!(pick_cars(&OpponentCars::Cars(vec![7, 8]), &player, &list, 5, &mut rng), vec![7, 8, 7, 8, 7]);
         let one = OpponentCars::Car { id: 4, model: "993".into() };
         assert_eq!(pick_cars(&one, &player, &list, 2, &mut rng), vec![4, 4]);
     }

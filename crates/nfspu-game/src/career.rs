@@ -127,6 +127,56 @@ pub fn era_of_year(year: i32) -> u32 {
     ERAS.iter().rev().find(|e| e.1 <= year).map_or(ERAS[0].0, |e| e.0)
 }
 
+/// Whether `car` meets a tournament's car rule, given the rule's English text (festrings
+/// `restriction`). Retail keeps the rule only as text on the screen; the matching below is our own
+/// reading of those texts against the catalogue (**guess** where a text is vague). Empty or
+/// unknown text lets every car in.
+pub fn car_allowed(rule: &str, car: &crate::catalog::Car) -> bool {
+    let r = rule.to_ascii_lowercase();
+    let name = car.name.to_ascii_lowercase();
+    let stem = car.model.to_ascii_lowercase();
+    // The name without its year prefix and spaces: `356B1600Cabriolet`.
+    let tight: String = name.split_whitespace().skip(1).collect();
+    if r.trim().is_empty() {
+        return true;
+    }
+    // Class rules: "Class 3 or Class 2", "Class 1 only".
+    if r.contains("class") {
+        let want = |n: u32, id: u32| r.contains(&format!("class {n}")) && car.class == id;
+        return want(3, 501) || want(2, 502) || want(1, 503);
+    }
+    // cc limit: "limited to 1600cc" (the engine size is in the car's name where it differs).
+    let cc_limit = r.split("limited to ").nth(1).and_then(|t| t.split("cc").next()).and_then(|n| n.trim().parse::<u32>().ok());
+    if let Some(limit) = cc_limit {
+        let cc = name.split_whitespace().filter_map(|w| w.parse::<u32>().ok()).find(|n| *n >= 1000 && *n <= 5000);
+        if cc.is_some_and(|c| c > limit) {
+            return false;
+        }
+    }
+    if r.contains("carrera rs") {
+        return name.contains("carrera rs");
+    }
+    if r.contains("turbo") && !r.contains("non-turbo") {
+        let base = if r.contains("996") || r.contains("2000") { "996" } else { "911" };
+        return name.contains("turbo") && (name.contains(base) || stem.starts_with(base));
+    }
+    if r.contains("non-turbo") {
+        let base = if r.contains("996") { "996" } else { "911" };
+        return !name.contains("turbo") && (name.contains(base) || stem.starts_with(base));
+    }
+    if r.contains("or 911") || r.contains("any 911") {
+        let base = r.contains("356b") && tight.starts_with("356b");
+        return base || name.contains("911");
+    }
+    let rt: String = r.split_whitespace().collect();
+    for key in ["550", "935", "911gt1", "944", "914", "boxster", "356a", "356b", "356"] {
+        if rt.contains(key) {
+            return tight.starts_with(key);
+        }
+    }
+    true
+}
+
 /// Money as the screens show it: `5,000`, no currency sign (retail footage; the control draws the
 /// digits with commas).
 pub fn money(amount: i64) -> String {
@@ -636,6 +686,27 @@ impl Career {
 
 #[cfg(test)]
 mod tests {
+    fn car(name: &str, class: u32) -> crate::catalog::Car {
+        crate::catalog::Car { name: name.into(), class, ..Default::default() }
+    }
+
+    #[test]
+    fn car_rules_match_the_catalogue_names() {
+        assert!(car_allowed("356 models only", &car("'50 356 1100 Cabriolet", 503)));
+        assert!(!car_allowed("356 models only", &car("'65 911 Coupé", 502)));
+        assert!(car_allowed("356 A models only", &car("'56 356 A 1300 Coupé", 503)));
+        assert!(!car_allowed("356 A models only", &car("'59 935/78", 501)));
+        assert!(car_allowed("356B, limited to 1600cc", &car("'60 356 B 1600 Roadster", 503)));
+        assert!(!car_allowed("356B, limited to 1600cc", &car("'62 356 B 2000 GS Carrera 2", 502)));
+        assert!(car_allowed("Non-turbo 911s", &car("'94 911 Carrera Coupé (993)", 502)));
+        assert!(!car_allowed("Non-turbo 911s", &car("'95 911 Turbo 3.6 Coupé (993)", 501)));
+        assert!(car_allowed("935s only", &car("'78 935/78 Coupe", 501)));
+        assert!(!car_allowed("935s only", &car("'59 356 A 1600 Convertible D", 503)));
+        assert!(car_allowed("911 GT1s only", &car("'98 911 GT1 race version", 501)));
+        assert!(car_allowed("Class 3 or Class 2", &car("x", 502)) && !car_allowed("Class 3 or Class 2", &car("x", 503)));
+        assert!(car_allowed("", &car("anything", 501)));
+    }
+
     use super::*;
 
     fn record(id: u32, era: u32, tracks: &[u16], first_prize: u32) -> Vec<u8> {

@@ -256,3 +256,6 @@ two cars show numbers. Judge the tab look (a stand-in) against retail.
 Record (retail, game sound on, cockpit view so the dials show): a standing start from idle in a GT1
 or 993 with the throttle down at GO and nothing else; a straight 100 km/h to 0 brake; a few seconds
 round a constant-speed corner. See `docs/provenance/physics.md` section 12.
+
+<!-- career-eras -->
+| 2026-10-25 | Career: enter a tournament with a car that breaks its rule (e.g. a 911 in "356 models only") | The race does not start (no message yet; logged); a matching car starts normally | `claude/career-eras` |

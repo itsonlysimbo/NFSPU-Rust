@@ -58,6 +58,8 @@ pub enum OpponentCars {
     Random,
     /// A specific catalogue car: its id and model file.
     Car { id: u16, model: String },
+    /// One catalogue car per opponent in turn (a career tournament's opponent list).
+    Cars(Vec<u16>),
 }
 
 impl Default for OpponentCars {
@@ -143,6 +145,7 @@ impl RaceSetup {
                 OpponentCars::SameEraAndClass => "same_era_class".to_string(),
                 OpponentCars::Random => "random".to_string(),
                 OpponentCars::Car { id, model } => format!("car {id} {model}"),
+                OpponentCars::Cars(ids) => format!("cars {}", ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")),
             },
         );
         line("car_id", self.car_id.to_string());
@@ -194,6 +197,7 @@ impl RaceSetup {
             other => {
                 let mut parts = other.split_whitespace();
                 match (parts.next(), parts.next(), parts.next()) {
+                    (Some("cars"), Some(ids), None) => OpponentCars::Cars(ids.split(',').map(|i| num("opponent_cars", i)).collect::<Result<_, _>>()?),
                     (Some("car"), Some(id), Some(model)) => OpponentCars::Car { id: num("opponent_cars", id)?, model: model.to_string() },
                     _ => return Err(format!("race setup: bad opponent_cars '{other}'")),
                 }
