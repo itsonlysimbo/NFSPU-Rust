@@ -316,6 +316,13 @@ impl FrontEnd {
         let track = self.quick.tracks.iter().find(|k| k.id == track_id)?.clone();
         let owned = c.cars.get(c.chosen_car.min(c.cars.len().saturating_sub(1)))?.clone();
         let car = self.quick.cars.iter().find(|k| k.id == owned.id)?.clone();
+        // The tournament's car rule (**guess**: retail blocks entry with a message; here the race
+        // simply does not start and the log says why).
+        let rule = self.locale.text(t.restriction, 0).unwrap_or_default();
+        if !career::car_allowed(&rule, &car) {
+            crate::log_line(&format!("career: '{}' does not meet the rule '{}' of tournament {}", car.name, rule.trim(), t.id));
+            return None;
+        }
         let mut setup = self.quick.setup(&self.locale, self.language);
         setup.track = track.file.clone();
         setup.track_id = track.id;

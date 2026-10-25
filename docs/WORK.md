@@ -29,7 +29,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
-| Career: later eras' events and prize tables, full era progression | Mid | `career.md` plan |
+| Career: later eras' events and prize tables, full era progression | Mid | Claude (career-eras) branch claude/career-eras, started 2026-10-25. Car rules (`career::car_allowed`) done and enforced at race start; next: era-by-era check of prizes/opponents. | `career.md` plan |
 | Save profiles: read retail .sav career progress (install read-only) | Mid | Our own format writes; never write to the install |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |

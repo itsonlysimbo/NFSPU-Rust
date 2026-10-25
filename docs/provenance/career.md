@@ -259,3 +259,24 @@ where it is.
 the screen (it is only logged), the race missions (opponents, minimum place), the mission cars with
 their parts, the prize cars, the spin-direction rule, the police of mission 5, snow in the Alps
 mission.
+
+## Tournament car rules (2026-10-25, branch `claude/career-eras`)
+
+Each record in `nfs5.trn` has a rule string id at `+0x2c` (shown by the screen's
+`Tournament.Tournament(CARRESTRICTION)` watch). Retail only ever shows the **text**; the 20 texts
+are matched against the catalogue by `career::car_allowed` (our reading, **guess** where a text is
+vague). `cargo run -p nfspu-game --example career_rules --release` lists each tournament with its
+fee, prize and the cars the rule accepts (`logs/career_rules.txt`).
+
+| Rule text | Reading | Cars accepted |
+|---|---|---|
+| 356 models only / 356 A / 356B limited to 1600cc | name after the year starts `356` / `356A` / `356B`, engine <= 1600 | 35 / 12 / 12 |
+| 2000cc 356B or 911 | any 356 B, or any name with 911 | 50 |
+| Any 911 / Non-turbo 911s / 911 turbos only | name contains 911 (without / with Turbo) | 37 / 30 / 7 |
+| 911 Carrera RS 2.7, 911 (996) non-turbos, 2000 911 turbos | name matches | 2 / 4 / 2 |
+| 944s, 914s, Boxsters, 550 A Spyders, 935s, 911 GT1s | model name | 5 / 3 / 3 / 1 / 1 / 1 |
+| Class 3 or 2 / Class N only | catalogue class 501 = 3, 502 = 2, 503 = 1 | 71 / 40, 31, 11 |
+
+Entry: `menu_mode::start_career_race` refuses a car that fails the rule (logged; **guess**: retail's
+refusal message was not found). Entry fee (`+0xdc`) and prizes (`+0xec`) were already wired.
+Not tested in the window; unit test `car_rules_match_the_catalogue_names`.
