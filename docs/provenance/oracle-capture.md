@@ -46,9 +46,20 @@ opponents dropdown (555, 128) then `0`, car dropdown (230, 55).
   shifts to gear 3 near tick 230. Our untuned 993 self-trace has 10.68 km/h and 1139 rpm at tick 64, close.
   These are one uncontrolled run, **not** a committed reference.
 
+## Captured (2026-10-25)
+`oracle/ref/sim_mission0_standing_start.csv` and `sim_mission0_accel_then_brake.csv` (512 ticks, every 64):
+retail, Factory Driver mission 0 on the flat skid pad, keyboard throttle from GO (brake from tick 320 in the
+second). The skid pad is not offered by quick race at all (track-list rule in `fe.md`), so the mission is the
+only flat start. The car is the mission's tuned Carrera (catalogue id 161, 13 parts), **not** a stock 993, so
+both cases are `pending = "true"` with loose tolerances until we know the tune. The trace is only valid for
+~512 ticks: the pad ends near tick 520. Two runs agreed to about 0.4 km/h (tick-sampling noise: the tick counter
+is read between frames and interpolated). Retail braking from 75 km/h took ~190 ticks to 3.5 km/h.
+Start frame: the stale heading snapshot is replaced by the first 192 ticks of travel, so these cases have no steer.
+The copy's `3Greg.sav` was edited once (career year; backup `3Greg.sav.bak`) and restored; running a mission to
+its end advances the copy's factory progress, so restore the backup before re-running mission 0.
+
 ## Next
-1. Find a flat stock-car start: unlock the skid pad in the copy's profile, or a track/car with a flat
-   first 640 ticks, and capture the existing cases' scripts (`0:1:0:0`; `0:1:0:0`, `640:0:1:0`).
+1. Identify the mission car's tune (id 161, 13 parts) so a stock-spec comparison is fair, or find a flat stock-car start; then flip the two cases to active.
 2. Find a live orientation (yaw) in the car struct for the steer case; the sim's steer is analog,
    retail keyboard steering ramps, so a retail steer case needs the same ramp in our input.
 3. Capture, review `oracle/ref/*.csv`, set `reference = "retail"` in the case and the tolerances; the
