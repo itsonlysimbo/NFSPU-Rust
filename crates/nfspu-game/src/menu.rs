@@ -445,6 +445,14 @@ pub fn load_templates(game_dir: &Path) -> BTreeMap<String, ControlTemplate> {
 /// The Options screen's panels (`Options.lay`), in tab order of the layout's sections.
 pub const OPTION_PANELS: [&str; 5] = ["ID_controllers_panel", "ID_graphics_panel", "ID_display_panel", "ID_audio_panel", "ID_cameras_panel"];
 
+/// The showcase screen's panels (`showcase.lay`); the general one shows first.
+pub const SHOWCASE_PANELS: [&str; 4] = ["ID_general_panel", "ID_chassis_panel", "ID_performance_panel", "ID_glancestats_panel"];
+
+/// The showcase panel the session shows: the chosen one, else the general panel.
+pub fn showcase_panel(chosen: &str) -> &'static str {
+    SHOWCASE_PANELS.iter().find(|p| p.eq_ignore_ascii_case(chosen)).copied().unwrap_or(SHOWCASE_PANELS[0])
+}
+
 /// Builds one screen. `name` is the layout's file stem (`singleplayer`, `quickrace`, ...).
 pub fn load_screen(
     game_dir: &Path,
@@ -1008,6 +1016,27 @@ fn append_control_with(
                 let (a, b) = (at(t0), at(t1));
                 screen.draw.push(Draw::Gradient { corners: [[x0, y], [x1, y], [x0, y + h], [x1, y + h]], colours: [a, b, a, b], when: Show::Always });
             }
+            true
+        }
+        // A showcase tab (`Tab Button.ctr`): its label centred over `width` at `pos`, yellow when
+        // its panel shows, white when not, on a faint dark plate. The retail look (glinty box,
+        // frame) is not traced, so this is a **stand-in**; it switches `session.panel` like the
+        // Options tabs.
+        "NFS5.TABBUTTON" => {
+            if hidden(&data) {
+                return true;
+            }
+            let panel = data.get("panel").map(|s| s.trim().to_string()).unwrap_or_default();
+            let Some(text) = label_text(block, locale, language) else { return false };
+            let font = "Univers8b.ffn".to_string();
+            let width = number("width").unwrap_or(162.0);
+            let selected = context.session.map(|s| showcase_panel(&s.panel).eq_ignore_ascii_case(&panel)).unwrap_or(false);
+            let colour = if selected { [1.0, 0.75, 0.1, 1.0] } else { [1.0; 4] };
+            let tx = x + (width - label_width(game_dir, &font, &text)) / 2.0;
+            let rect = [x, y, width, 18.0];
+            screen.draw.push(Draw::Gradient { corners: [[rect[0], rect[1]], [rect[0] + rect[2], rect[1]], [rect[0], rect[1] + rect[3]], [rect[0] + rect[2], rect[1] + rect[3]]], colours: [[0.0, 0.0, 0.0, 0.45]; 4], when: Show::Always });
+            screen.draw.push(Draw::Text { text, pos: [tx, y + 3.0], size: point_size(&font), colour, font });
+            screen.draw.push(Draw::Target { rect, hit: Hit::Tab(panel) });
             true
         }
         // An Options tab (`Graphic Tab Button.ctr`): its label at `pos` + `textoffset`, over the
@@ -2481,6 +2510,12 @@ mod tests {
         let mut screen = Screen::default();
         assert!(!append_control(&mut screen, &button_block(), &template, &Locale::default(), 0));
         assert!(screen.draw.is_empty());
+    }
+
+    #[test]
+    fn showcase_shows_the_chosen_panel_else_the_general_one() {
+        assert_eq!(showcase_panel("ID_chassis_panel"), "ID_chassis_panel");
+        assert_eq!(showcase_panel("ID_audio_panel"), "ID_general_panel");
     }
 
     #[test]

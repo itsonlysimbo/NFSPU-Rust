@@ -170,6 +170,9 @@ impl FrontEnd {
         let panel = self.session.panel.clone();
         self.session.hidden.extend(menu::OPTION_PANELS.iter().filter(|p| !p.eq_ignore_ascii_case(&panel)).map(|p| p.to_string()));
         self.session.hidden.push("ID_PLAYLISTPANEL".to_string());
+        // Showcase: only the chosen statistics panel shows (the general one first).
+        let shown = menu::showcase_panel(&panel);
+        self.session.hidden.extend(menu::SHOWCASE_PANELS.iter().filter(|p| **p != shown).map(|p| p.to_string()));
         for a in audio_settings::ACCESSORS {
             let level = self.audio.level(a).unwrap_or(audio_settings::MAX_LEVEL);
             self.session.levels.insert(a.to_string(), level);

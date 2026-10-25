@@ -237,3 +237,8 @@ Start: `NFSPU_PURSUIT=1` before launching (menu race or `NFSPU_RACE=canyon,forwa
   you ~3 s), "YOU ESCAPED!" at the finish;
 - a roadblock (two cop cars across the road) ~45 s into a chase.
 All rules are guesses (docs/provenance/pursuit.md).
+
+## Career showcase and car compare (2026-10-24, claude/career-screens)
+Garage or dealership > showcase: the four tabs switch the statistics panels and show the car's
+real numbers (weight, size, gears, power). Dealership > car compare: the five bars of the
+two cars show numbers. Judge the tab look (a stand-in) against retail.

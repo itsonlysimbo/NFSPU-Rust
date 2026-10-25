@@ -58,6 +58,9 @@ pub struct Car {
     pub open_top: bool,
     /// List price (`u32` at 0x208).
     pub price: u32,
+    /// The car compare bars: acceleration, top speed, braking, handling, overall (five `u16` at
+    /// 0x324; 30 / 40 / 56 / 30 / 41 for the '50 356 Cabriolet, as the retail screen shows).
+    pub compare: [u16; 5],
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -98,7 +101,14 @@ impl Car {
             style: r[0x1c0] as usize + 1,
             open_top: r[0x1bf] == 1,
             price: u32_at(r, 0x208),
+            compare: std::array::from_fn(|i| u16_at(r, 0x324 + 2 * i)),
         }
+    }
+
+    /// The file stem of this car's showcase text in `FEData/Locale` (`1950356Cabrio11` for the
+    /// '50 356 Cabriolet): the first model year and the simulation name; the file's case differs.
+    pub fn showcase_file(&self) -> String {
+        format!("{}{}", self.year_from, self.sim)
     }
 
     /// The list row: the two-digit year (`'50`) and the rest of the name. The retail list draws the
@@ -455,6 +465,19 @@ mod tests {
         assert_eq!(record_ticks(&data, 8), Some(10496));
         assert_eq!(format_ticks(10496), "01:22.00");
         assert_eq!(format_ticks(u32::MAX), "59:59.99");
+    }
+
+    #[test]
+    fn compare_bars_and_showcase_file_come_from_the_record() {
+        let mut r = vec![0u8; CAR_RECORD];
+        for (k, v) in [30u16, 40, 56, 30, 41].iter().enumerate() {
+            r[0x324 + 2 * k..0x326 + 2 * k].copy_from_slice(&v.to_le_bytes());
+        }
+        r[0xb1..0xb1 + 11].copy_from_slice(b"356cabrio11");
+        r[0x1f8..0x1fa].copy_from_slice(&1950i16.to_le_bytes());
+        let c = parse_cars(&r).remove(0);
+        assert_eq!(c.compare, [30, 40, 56, 30, 41]);
+        assert_eq!(c.showcase_file(), "1950356cabrio11");
     }
 
     #[test]
