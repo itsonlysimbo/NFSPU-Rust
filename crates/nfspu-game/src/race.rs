@@ -139,17 +139,6 @@ pub struct RaceStatus {
     pub best_lap: Option<f32>,
     /// Completed lap times of the player.
     pub lap_times: Vec<f32>,
-    /// Quick knockout rules (circuits only): the last car to complete each lap is out, and the
-    /// first over the last line wins and leaves the rest out. Retail's help text: "the loser in
-    /// each lap gets eliminated".
-    pub fn set_knockout(&mut self) {
-        self.knockout = self.setup.kind == Kind::Circuit;
-    }
-
-    pub fn is_knockout(&self) -> bool {
-        self.knockout
-    }
-
     /// 3, 2, 1 during the countdown, None otherwise (retail shows no GO graphic).
     pub countdown: Option<u8>,
     /// Cars are held on the grid (before GO).
@@ -236,6 +225,17 @@ impl Race {
             })
             .collect();
         Race { setup, tick: 0, cars, finished: 0, placed: 0, knockout: false, arrivals: Vec::new() }
+    }
+
+    /// Quick knockout rules (circuits only): the last car to complete each lap is out, and the
+    /// first over the last line wins and leaves the rest out. Retail's help text: "the loser in
+    /// each lap gets eliminated".
+    pub fn set_knockout(&mut self) {
+        self.knockout = self.setup.kind == Kind::Circuit;
+    }
+
+    pub fn is_knockout(&self) -> bool {
+        self.knockout
     }
 
     /// 3, 2, 1 during the countdown, else None (see `GO_SHOWN_TICKS`).

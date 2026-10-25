@@ -370,7 +370,7 @@ fn drive_ko(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty:
                 r.tick, p.segment_of(slice), p.fraction(slice, dir), car.pos.x, car.pos.y, car.pos.z, car.yaw, car.speed);
         }
         slice = p.track(slice, car.pos);
-        let lost = if r.held() { None } else { watch.tick(&car, p, slice, dir) };
+        let lost = if r.held() || r.cars[0].state == race::CarState::Out { None } else { watch.tick(&car, p, slice, dir) };
         if let Some(why) = lost {
             // the game's rule (nfspu_game::stuck): this must not happen on a clean drive
             lost_count += 1;
@@ -490,7 +490,14 @@ fn main() {
                 let grid = run.grid();
                 let _ = writeln!(out, "== knockout round {} of {}: {track}, entrants {grid:?}", run.ko.round + 1, run.ko.total);
                 ok &= drive_ko(&track, dir, laps, left as usize, difficulty, false, &mut out);
-                let order = LAST_ORDER.lock().unwrap().clone();
+                let mut order = LAST_ORDER.lock().unwrap().clone();
+                // RACE_DRIVE_KO_SAFE=1: the slow autopilot would be last at once; swap it with the
+                // car ahead so the whole series can be walked (test only)
+                if std::env::var("RACE_DRIVE_KO_SAFE").is_ok() && order.len() > 1 && order.last() == Some(&0) {
+                    let n = order.len();
+                    order.swap(n - 1, n - 2);
+                    let _ = writeln!(out, "== (test) player swapped up one place");
+                }
                 let last = *order.last().unwrap();
                 let expected_out = grid[last];
                 let step = run.after_race(&order);
