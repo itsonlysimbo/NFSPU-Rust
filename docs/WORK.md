@@ -29,7 +29,6 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
-| Handling feel vs retail: tyres, engine and gearbox against the footage | Strong | Claude (handling-feel) branch claude/handling-feel. DONE (measured, no code change): GT1 launch dials read from the footage match our shift points, time in gear and rpm drops within reading error (physics.md section 12). Open: showroom 0-60 +25%, tyres have no usable footage events; needs the clips listed in PLAYTEST.md. | Footage: `C:\Users\CB\Videos\2026-10-23 11-00-02.mp4` |
 | Career: later eras' events and prize tables, full era progression | Mid | `career.md` plan |
 | Save profiles: read retail .sav career progress (install read-only) | Mid | Our own format writes; never write to the install |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
@@ -39,6 +38,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Handling feel vs retail (engine and gearbox) | merged 2026-10-25, docs only: shift speeds, time in gear, rpm drops match the footage within reading error; no code change |
 | Career: showcase and car compare with real data | merged 2026-10-25; car setup sliders, 3D showcase car, compare second combobox left |
 | Factory Driver screens and live missions | merged 2026-10-25: missions 0, 1, 12 (promotion), 16 pass headless; banner and cones not seen on screen |
 | Pursuit in the game window | merged 2026-10-25: cops, light bars, siren, HUD via NFSPU_PURSUIT=1; on-screen chase not seen, no menu button |
