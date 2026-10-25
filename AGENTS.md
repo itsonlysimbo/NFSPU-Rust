@@ -87,6 +87,7 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
 - **Context upkeep (user, 2026-10-24):** sessions compact at 40% of their context
   (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `.claude/settings.json`), and the coordinator's hourly
   check-in tells each working session to re-read AGENTS.md and its board row.
+- **Discord (user, 2026-10-24):** every agent (Claude, OpenCode, Codex) posts to the project channel when it starts, finishes or gets blocked on a task: `python scripts/discord_bridge.py post "<agent> (<branch>): <one line>"`. The user's replies land in `logs/discord_inbox.md`; the coordinator reads and forwards them. WORK.md stays the durable record.
 - When Claude usage runs out, every task is left as a committed WIP with a Next step on the board
   so OpenCode can continue.
 

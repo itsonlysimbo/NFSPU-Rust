@@ -19,6 +19,7 @@
 !scripts/
 !scripts/cloud_setup.sh
 !scripts/merge_guard.sh
+!scripts/discord_bridge.py
 !scripts/protected.txt
 !oracle/**
 

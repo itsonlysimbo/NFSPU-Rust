@@ -152,3 +152,92 @@ race at Monaco, with a practice-run hint. The prize-car race (`VictoryRoom`, 3D 
   drivetrain, performance data from the car record), `car compare` bars, `car setup` sliders and the
   part inventory list, the garage CONDITION bar value, damage; retail's test-drive HUD; paint shop,
   parts and repair screens were not on the recording (ours come from slice 2).
+
+## Factory Driver (the second career; `factory.rs`)
+
+Retail's `SETTYPEFACTORYDRIVER` game type: the player is a Porsche test driver and plays 34
+missions in a fixed order, in three ranks. **Verified** = read from `nfs5.fac`, the scene files or
+the executable; **guess** = ours. Layouts: `factorydriver` (list/brief), `missionbrief`,
+`missionmap`, `factwelcome`, `factfirst`, `factdone`, `FactoryVictory`; art in `FEData/Factory`
+(`0M01.fsh`, `1M01.fsh`..`3M12.fsh`, one picture per mission) and `GameData/DashHud/FactoryPeople.fsh`
+(the narrators).
+
+### `nfs5.fac` (34 records of 0xf0 bytes, verified)
+| Offset | Field |
+|---|---|
+| 0 | `u32` briefing string id (3001..; `%s` is the player name) |
+| 8 | `u16` rank 1-3 (Junior Test Driver, Test Driver, Chief Test Driver) |
+| 0xc | `u32` promotion text shown after the rank's last mission (3191 / 3342 / 3495) |
+| 0x10 | `u32` rank-title code (221-223) |
+| 0x1c, 0x1e | `u16` file position, `u16` narrator (0 Billy, 1 Stephanie, 2 Dieter, 3 Frank, 4 Klaus, 5 Rolf; name is string 2500 + n) |
+| 0x20 | `i16` track id in `nfs5.trk` (32 skid pad, 12 autobahn, 8 coastal, 14 farmland, ...) |
+| 0x22 | `u16` route code of the race missions on circuits (2 or 3; 0 elsewhere) |
+| 0x24 | `u16` scene number: the scene file is `<track file>_st<n>.scn` (rank*10+k; 0 for the circuit missions) |
+| 0x3f | picture/script stem (`0M01`, `1M07`...) |
+| 0x58, 0x5c, 0x60 | pass-speech string ids (retail picks one at random; 0 = unused) |
+| 0x64, 0x68, 0x6c | fail-speech string ids |
+| 0x70, 0x72, 0x74 | car catalogue id, part count, part ids (the mission car comes tuned) |
+| 0xa0, 0xb0 | paint colours (bytes as stored) |
+| 0xc1 / 0xc2 | time limit enabled / seconds (checked against the five briefings that name a time: 26, 32, 28, 50, 58) |
+| 0xc4 / 0xc6 | damage rule enabled / limit (5 on the "don't scratch her" missions; other values unused) |
+| 0xc8, 0xca, 0xcc, 0xce | cone rule enabled, kind (0 limit, 1 penalty), limit, penalty (1, 2 or 4) |
+| 0xd0 / 0xd2 | race rule enabled / lowest passing place (1 in every race mission) |
+| 0xd4.. | five opponent slots: `u16` driver id, `u16` car id |
+| 0xe8..0xee | **runtime, saved in the profile**: 0xe8 passed flag, 0xea place, 0xec average damage, 0xee time |
+
+### Mission list (file order = play order, verified in the progress code)
+Retail's "current mission" is the first record whose 0xe8 is 0; `Factory.MissionCheat` jumps to
+number n by marking the n-1 before it done. A **pass** sets 0xe8 and stores place / damage / time; a
+**fail** leaves it 0, so the same mission is offered again.
+
+| # | Rank | Scene | What |
+|---|---|---|---|
+| 0 | 1 | skidpad st1 | Entrance test (Rolf): Boxster round the skid pad cones, 27 s |
+| 1-4 | 1 | skidpad st11, canyon st12, skidpad st13, autobahn st14 | Short slalom 26 s; S-curve 32 s in the Carrera RS; handbrake 360 spin, 15 s; highway slalom 28 s (Frank's bet) |
+| 5, 6 | 1 | coastal st16, farmland st15 | 911 Turbo delivery across Cote d'Azur (police on patrol, damage limit 5); extended slalom, old town to forest, 50 s |
+| 7-9 | 1 | skidpad st17, industrial st18, canyon st19 | Skid pad course 58 s; Boxster delivery to the docks (180 s, damage 5); rally cone hunt, 12 cones in order, 240 s |
+| 10-12 | 1 | skidpad st110, canyon st111, autobahn st112 | 993 Turbo handbrake spins 36 s; 996 demo through the canyons (240 s, damage 5); standard promotion course 59 s |
+| 13-22 | 2 | castle st21, alps st22, industrial st23, skidpad st24, foothills st25, skidpad st26, foothills st27, castle st28, skidpad st29, canyon st210 | Customer delivery; 4WD test in snow; warehouse parts run; show Billy the skid pad; **race Billy** (hill); skid pad stunt course; **race Billy again** (country roads); capture the flag in town (385 s); 180-slide stunt course; **race Frank** (canyon) |
+| 23-33 | 3 | industrial st31, industrial st32, forest st33, skidpad st34, alps st35, foothills st36, skidpad st37, then four Monaco missions without a scene | Shake-down course; drive Dieter to the train; back-road slalom; Stephanie's skid pad; Alps switchbacks (race Stephanie); evening race with Billy; commercial stunts (180 slides, reverse, 360); GT1 at Monaco, 3 laps, no damage (route 3); race-team test drive against four drivers (route 3); 996 Turbo break-in drive; final race against Stephanie (route 2) |
+
+Records 17, 19, 22 and 28 are races with opponents on the scene's road (start line, one finish
+gate); 30-33 run on Monaco circuits and have no scene file.
+
+### Scene files (`GameData/Track/<track>_st<n>.scn`, verified)
+Plain text like the other scene files. TRIGGER elements: kind 2 = the start (its last line gives the
+heading, `mode x y z`), kind 0 = waypoint gate, kind 1 = the finish ("End"); the 8th parameter number
+is the order in which gates must be passed (the file order is not the pass order: canyon st19 lists
+seq 12 before 11). A gate is a line (the two end points) plus a heading hint (`mode x y z` twice; the
+spin missions use it to demand a sideways pass: **not decoded**, we only check the crossing). GEOM
+elements tagged `CONE` (1162760003 read as little-endian text) are the cones, 2 to 39 per scene.
+Narrow gates (3 m) sit on one cone: the rally and cone-hunt missions. Scenes with a 20 m gate and
+few cones are the delivery runs.
+
+### Pass/fail (verified shape, guessed numbers)
+Judged when the finish gate is crossed (`HMissionSummary`): fail if the time (driving time plus
+cones * penalty) is over the limit; fail if the average of the ten car-zone damages is over the
+damage limit; fail if more cones than the cone limit fell; in a race, fail if the place is lower
+than the minimum. Else pass. **Guesses**: the penalty unit is seconds; the damage unit is percent of
+`car_damage` zone damage (0-100); a cone falls when the car centre passes within 1.3 m; we also fail
+the moment the clock passes the limit (retail may let the player finish); a gate counts when the car
+crosses its line extended by 1 m, narrow gates when the car is within 2.5 m.
+
+### Rewards and unlocks (verified text)
+No cash. Each rank-up shows its promotion text and hands over a company car (the `availability` = 3
+cars of `nfs5.car`, `FEFactoryDriverPrizeCarAccessor`): the custom 1973 911 Carrera RS (rank 2), a
+Boxster (rank 3) and, after the last mission, a 2000 996 Turbo ("you bumped Stephanie out of her spot
+as Ace Test Driver"). Ace is the end rank.
+
+### Progress (ours)
+Retail keeps it in the `.sav` `Missions` section (the 34 records with 0xe8-0xee). Ours is
+`settings/factory/<player>.txt`: `version`, `player`, `missions`, and `done = <index>,<place>,<damage>,<ticks>`
+lines. `Progress::current` is the first mission not done; only a pass is kept.
+
+### Built / not built
+Built (`factory.rs`, tests, `RACE_DRIVE_FACTORY=1 race_drive`): the table, scene reader, gate / cone /
+time / damage / place rules, progress file, a scripted driver that runs every scene mission and
+checks pass, slow-fail and the cone penalty (log `logs/factory_drive.txt`). **Not built**: the
+screens (`factorydriver`, `missionbrief`, `missionmap`, `factwelcome`, `factdone`, `FactoryVictory`),
+running a mission in the real race (cone objects the car can knock over, gate triggers fed from the
+live car, the start grid from the scene), the race missions, the mission cars with their parts, the
+prize cars, the spin-direction rule, the police of mission 5, snow in the Alps mission.

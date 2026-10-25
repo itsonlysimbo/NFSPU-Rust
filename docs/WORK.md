@@ -27,6 +27,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Tier | Notes |
 |---|---|---|
+| Factory Driver screens and live missions | Strong | Menus and in-race mission run for factory.rs (headless logic merged). Done: playable Factory Driver |
 | Quick knockout headless check fails | Mid | RACE_DRIVE_KNOCKOUT=quick ... canyon forward 0 3 gives 0 out, 39 stuck (also before pursuit merge, a193fe0). Check the right args and fix. Done: knockout run ALL OK |
 | Pursuit in the game window | Strong | Wire cop.rs/pursuit.rs into Bevy: menu entry, cop models, light bar, siren, HUD. Done: playable pursuit |
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
@@ -42,6 +43,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Factory Driver (logic, headless) | merged 2026-10-24: factory.rs, RACE_DRIVE_FACTORY=1 ALL OK; screens and live missions not built |
 | Pursuit (headless) | merge a193fe0: cop.rs, pursuit.rs, RACE_DRIVE_PURSUIT; rule values are guesses (pursuit.md) |
 | Oracle runner | merged 38aef6a: ORACLE PASS on 10 cases (6 format, 4 self-reference sim, not retail); ORACLE PASS is now a merge condition |
 | Knockout + quick knockout modes | merge 5e69472 |

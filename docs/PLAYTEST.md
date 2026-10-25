@@ -224,3 +224,6 @@ Not in the game window yet (no menu entry, cop models, lights, siren or HUD). To
 and read the `cop` / `PURSUIT` lines. `busted` and `time` should report ALL OK; `1` may report
 the autopilot getting busted (alps did) -- that is a result, not a bug yet. All values are guesses
 (see docs/provenance/pursuit.md).
+
+## Factory Driver (branch claude/factory-driver-c49da4)
+- Not playable yet: only the data, the pass/fail rules and a headless runner exist (RACE_DRIVE_FACTORY=1 with race_drive). Nothing to see in the game; screens and live missions are the next step (docs/WORK.md).
