@@ -259,3 +259,15 @@ where it is.
 the screen (it is only logged), the race missions (opponents, minimum place), the mission cars with
 their parts, the prize cars, the spin-direction rule, the police of mission 5, snow in the Alps
 mission.
+
+## Retail save (reading it into a career)
+
+`save_import.rs` reads, never writes, a `.sav`. Each section is `name ` followed by values.
+
+| Where | Value | Evidence |
+|---|---|---|
+| `Tournament ` +0, u32 | career year | blank 1950, played profile 1956 |
+| `PlayerInfo ` +4, u32 | account balance (**guess**) | blank 11000 (the first 356's price), played 0 after it bought that car |
+| `PlayerInfo` car copies | owned cars and paint | `catalog::owned_cars` |
+
+Not read yet: tournament and mission progress (`Missions` section, undecoded), parts, damage, used-car lot. When RACE-side "evolution..." finds no profile of ours but a retail save of that player exists, the career starts from these values. Not tested in the game window.

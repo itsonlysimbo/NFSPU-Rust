@@ -285,7 +285,15 @@ impl FrontEnd {
                 c
             }
             None => {
-                let c = career::Career::new(&player);
+                // a retail save of this player continues its year, cash and cars (read-only)
+                let retail = self.profiles.selected.and_then(|i| self.profiles.names.get(i)).and_then(|stem| std::fs::read(self.save_dir.join(format!("{stem}.sav"))).ok()).and_then(|b| nfspu_game::save_import::read(&b, &self.quick.cars));
+                let c = match &retail {
+                    Some(p) => {
+                        crate::log_line(&format!("career: continuing the retail save of '{player}': year {}, cash {}, {} car(s)", p.year, career::money(p.cash), p.cars.len()));
+                        career::Career::from_retail(&player, p, &self.quick.cars)
+                    }
+                    None => career::Career::new(&player),
+                };
                 match c.save_to(&dir) {
                     Ok(()) => crate::log_line(&format!("career: new profile '{player}' saved to {}", career::Career::path_in(&dir, &player).display())),
                     Err(e) => crate::log_line(&format!("career: could not save {}: {e}", dir.display())),
