@@ -107,6 +107,8 @@ impl RaceConfig {
             r.opponent_cars = opponents;
             r.damage = setup.damage;
             r.traffic = setup.traffic.min(3) as u8;
+            // pursuit has no retail menu screen in this install: NFSPU_PURSUIT=1 turns it on
+            r.pursuit = std::env::var("NFSPU_PURSUIT").as_deref() == Ok("1");
         }
         let options = setup.car_options();
         RaceConfig {

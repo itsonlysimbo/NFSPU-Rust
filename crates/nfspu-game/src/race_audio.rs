@@ -72,6 +72,8 @@ struct RaceSound {
     coll: Option<Vec<u8>>,
     coll_cache: HashMap<usize, Option<(Handle<AudioSource>, Pcm)>>,
     road: Option<Entity>,
+    /// Pursuit: the police siren loop (`siren_800.bnk` in `track.viv`), louder as a cop nears.
+    siren: Option<Entity>,
     /// Road noise on a wet road (the next surface sound up).
     road_wet: Option<Entity>,
     /// The rain loop and its key's rate factor.
@@ -263,6 +265,11 @@ fn start_sound(
     sound_log(&format!("speech archive: {}", speech.as_ref().map_or("missing".to_string(), |a| format!("{} entries", a.entries.len()))));
     let ambient: Vec<Ambient> = rs::ambient_file(&dir, &status.track).and_then(|p| std::fs::read_to_string(p).ok()).map(|t| rs::parse_ambient(&t)).unwrap_or_default();
     let track_sounds = rs::find_file(&rs::sounds_dir(&dir), "track.viv").and_then(|p| Archive::open(&p));
+    // the police siren, a loop that is only audible in a pursuit
+    let siren = track_sounds.as_ref().and_then(|a| a.get("siren_800.bnk")).and_then(|b| rs::decode(b, 0)).map(|p| {
+        sound_log(&format!("siren_800.bnk: {} samples at {} Hz", p.samples.len(), p.rate));
+        spawn_loop(&mut commands, add_pcm(&p, &mut assets), false)
+    });
     let steady = ambient.iter().filter(|a| a.steady()).count();
     sound_log(&format!(
         "track '{}': {} ambient sounds ({steady} steady loops, {} repeating), track.viv {} entries",
@@ -291,6 +298,7 @@ fn start_sound(
         coll,
         coll_cache,
         road,
+        siren,
         road_wet,
         rain,
         triggers: TriggerLog::default(),
@@ -414,6 +422,10 @@ fn run_sound(
             sound_log(&line);
         }
     }
+
+    // pursuit: the siren swells as the nearest chasing cop closes (guess: audible within 300 m)
+    let siren_gain = status.siren_dist.map_or(0.0, |d| (1.0 - d / 300.0).clamp(0.0, 1.0) * 0.6);
+    set_voice(s.siren, siren_gain * fx, 1.0, &mut sinks, &mut spatial);
 
     // hits: walls (m/s into the wall) and cars (collide_cars units, 80 = a big hit)
     let mut hit = |n: usize, impact: f32, s: &mut RaceSound, commands: &mut Commands| {

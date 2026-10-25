@@ -111,3 +111,26 @@ pursuit at all; they must be replaced when the retail tables are decoded:
   failed, because the cops ram the autopilot into walls. Normal races are unchanged and still fail
   on it. If the autopilot cannot escape retail-like cops, the escape case should report that
   (it prints the outcome and tickets) rather than be tuned until it passes.
+
+## In the game window (claude/pursuit-window)
+
+- **Cop cars:** the car catalogue (`nfs5.car`) marks police cars as **kind 2**: ids 131 `Cop930`,
+  218 `cop356`, 219 `cop993` (+ German variants 211, 217, 220), each with its own `.sim`
+  (`930Tcoupe30`, `356BcoupeGS20`, `993Tcoupe36`) and AI name. So cops do have their own physics:
+  each `.cop` record gets a random non-German police car and that car's `.sim`
+  (`cop.rs` variants, `race_mode::build_pursuit`). The German variants are skipped (guess: they
+  are the German-language-install skins).
+- **Menu entry:** this install has **no pursuit front-end layout** (`FEData/Layouts` has
+  `QuickRace`, `knockout`, `quickknockout`, `singleplayer`, ... but nothing for pursuit), and the
+  exe's mode table lists `Pursuit`/`HumanCop`/`SuperCop` only as names. So there is no retail
+  button to copy; `NFSPU_PURSUIT=1` turns pursuit on for a menu or `NFSPU_RACE` start. Guess: retail
+  reached it from a hidden/debug path.
+- **Light bar:** two blocks (red, blue) on each cop roof shown in turn by `pursuit::siren_light`
+  (guess: ~3 Hz alternate; retail lamp geometry/timing not read).
+- **Siren:** `siren_800.bnk` from `Sounds/track.viv` as a loop, volume rising from 0 at 300 m to 0.6
+  at the player (guess). Not checked against retail: that bank may be the ambient/emergency siren
+  rather than the cop one.
+- **HUD:** one Bevy text line at the top (`TIME m:ss  TICKETS n/3  COPS n`, then YOU ESCAPED / BUSTED /
+  TIME UP). Our layout, not retail's.
+- **Ending:** a lost pursuit marks the player finished so the usual race summary appears; the
+  verdict is the HUD line. (Guess.)

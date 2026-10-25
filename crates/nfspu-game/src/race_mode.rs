@@ -49,6 +49,8 @@ pub struct RaceRequest {
     pub traffic: u8,
     /// Quick knockout: the last car over the line each lap is out (circuits only).
     pub knockout: bool,
+    /// Pursuit: police chase the player (`cop.rs`, `pursuit.rs`). `NFSPU_PURSUIT=1` sets it.
+    pub pursuit: bool,
 }
 
 impl RaceRequest {
@@ -64,7 +66,7 @@ impl RaceRequest {
         let laps = parts.next().and_then(|l| l.parse().ok()).filter(|&l| l > 0).unwrap_or(2);
         let opponents: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0).min(7);
         let difficulty = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
-        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true, traffic: 0, knockout: false })
+        Some(RaceRequest { track, direction, mirrored, laps, cars: 1 + opponents, difficulty, opponent_cars: Vec::new(), damage: true, traffic: 0, knockout: false, pursuit: false })
     }
 
     pub fn from_env() -> Option<Self> {
@@ -74,6 +76,9 @@ impl RaceRequest {
         }
         if let Some(t) = std::env::var("NFSPU_TRAFFIC").ok().and_then(|t| t.parse::<u8>().ok()) {
             r.traffic = t.min(3);
+        }
+        if std::env::var("NFSPU_PURSUIT").as_deref() == Ok("1") {
+            r.pursuit = true;
         }
         // `NFSPU_KNOCKOUT=1`: quick knockout rules (laps = opponents, last of each lap out)
         if std::env::var("NFSPU_KNOCKOUT").as_deref() == Ok("1") {
@@ -109,6 +114,25 @@ struct TrafficRun {
     removals: u32,
 }
 
+/// The police of a pursuit and the entities that show them.
+struct PursuitRun {
+    squad: nfspu_game::cop::Squad,
+    rules: nfspu_game::pursuit::Pursuit,
+    /// Each cop's body entity and the lean node under it (roadblock cops are added as they appear).
+    bodies: Vec<(Entity, Entity)>,
+    /// The cop cars (catalogue kind 2, not the German ones): model stem and body style.
+    models: Vec<(String, usize)>,
+    logged: u32,
+}
+
+/// The flashing light bar on a cop's roof: shown while the siren phase is this colour.
+#[derive(Component)]
+struct LightBarHalf(u8);
+
+/// The pursuit HUD text.
+#[derive(Component)]
+struct PursuitHud;
+
 /// One opponent: its car, its driver and the entity that shows it.
 struct Racer {
     car: Car,
@@ -130,6 +154,7 @@ struct RaceRun {
     /// Opponents; racer `i` is race car `i + 1` (the player is car 0, on pole).
     racers: Vec<Racer>,
     traffic: Option<TrafficRun>,
+    pursuit: Option<PursuitRun>,
     line: Vec<Vec3>,
     rng: Rng,
     difficulty: u8,
@@ -155,7 +180,7 @@ impl Plugin for RacePlugin {
         // direct start) has run `setup`.
         app.add_systems(
             Update,
-            (start_race, race_tick, place_opponents, place_traffic, results_screen, leave_results)
+            (start_race, race_tick, place_opponents, place_traffic, place_cops, pursuit_hud, results_screen, leave_results)
                 .chain()
                 .after(crate::drive_car)
                 .run_if(crate::flow::in_race_scene)
@@ -198,6 +223,7 @@ fn start_race(
     tried: Option<Res<RaceTried>>,
     req: Res<RaceRequest>,
     car: Option<ResMut<crate::CarRes>>,
+    ground: Option<Res<crate::GroundRes>>,
     car_name: Res<crate::CarName>,
     player_paint: Res<crate::CarPaint>,
     mut status: ResMut<RaceStatus>,
@@ -331,6 +357,7 @@ fn start_race(
         racers.push(Racer { car: racer_car, brain: Opponent::new(spec, driver, spot.slice), body, lean, name, steer: 0.0, braking: false, resets: 0 });
     }
     let traffic = (req.traffic > 0).then(|| build_traffic(&mut commands, &mut meshes, &mut materials, &mut car_paints, &mut images, &game, &catalogue, req.traffic, seed)).flatten();
+    let pursuit = req.pursuit.then(|| build_pursuit(&game, &catalogue, &req, &track, ground.as_deref().map(|g| &g.0), seed)).flatten();
     // opponents that could not be set up drop out of the race
     let cars = 1 + racers.len();
     let race = if cars == race.cars.len() {
@@ -359,6 +386,7 @@ fn start_race(
         player,
         racers,
         traffic,
+        pursuit,
         line,
         rng,
         difficulty: req.difficulty,
@@ -479,6 +507,166 @@ fn place_traffic(run: Option<Res<RaceRun>>, mut bodies: Query<(&mut Transform, &
 }
 
 
+
+/// The police of a pursuit: one parked cop per record of `Track/Cops/<track>.cop`, driving the
+/// 993 physics, and the rules. The cop car is the catalogue `cop*` model when there is one.
+fn build_pursuit(game: &std::path::Path, catalogue: &[nfspu_game::catalog::Car], req: &RaceRequest, track: &race_path::TrackRace, ground: Option<&nfspu_game::ground::Ground>, seed: u32) -> Option<PursuitRun> {
+    let ground = ground?;
+    let spots = nfspu_game::cop::load_spots(game, &req.track);
+    // the catalogue lists the police cars as kind 2, each with its own .sim
+    let mut models = Vec::new();
+    let mut templates = Vec::new();
+    for c in catalogue.iter().filter(|c| c.kind == 2 && !c.model.to_ascii_lowercase().contains("german")) {
+        match car_load::load(game, Pick::Id(c.id), false) {
+            Ok(l) => {
+                models.push((c.model.clone(), c.style));
+                templates.push(Car::with_spec(Vec3::ZERO, 0.0, l.spec, Default::default()));
+            }
+            Err(e) => race_log(&format!("pursuit: cop car '{}' has no spec ({e}), left out", c.model)),
+        }
+    }
+    if templates.is_empty() {
+        race_log("pursuit: no police cars in the catalogue, pursuit off");
+        return None;
+    }
+    let squad = nfspu_game::cop::Squad::new(&spots, &track.path, ground, &templates, req.direction, seed);
+    let limit = nfspu_game::pursuit::time_limit(track.lap_metres(), req.laps);
+    race_log(&format!("pursuit: {} cop spots in the .cop file, {} placed, cop cars {models:?}, time limit {limit:.0} s", spots.len(), squad.cops.len()));
+    Some(PursuitRun { squad, rules: nfspu_game::pursuit::Pursuit::new(limit), bodies: Vec::new(), models, logged: 0 })
+}
+
+/// One 64 Hz tick of the police and the pursuit rules. Returns the hardest hit the player took.
+fn drive_cops(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet) -> f32 {
+    use nfspu_game::cop::Event;
+    let RaceRun { pursuit, track, slice, race, player: pi, .. } = run;
+    let Some(pu) = pursuit else { return 0.0 };
+    if race.held() || pu.rules.outcome.is_some() {
+        return 0.0;
+    }
+    let tick = race.tick;
+    let t = race.race_ticks();
+    let mut hit = 0.0f32;
+    let hold = pu.rules.holding(t);
+    for e in pu.squad.tick(&track.path, ground, walls, player, *slice, track.dir, hold, dt) {
+        match &e {
+            Event::Rammed { impact, .. } | Event::RoadblockHit { impact } => hit = hit.max(*impact),
+            _ => {}
+        }
+        pu.logged += 1;
+        if pu.logged <= 80 || matches!(e, Event::Roadblock { .. }) {
+            race_log(&format!("tick {tick}: cop {e:?}"));
+        }
+    }
+    let mut events = pu.rules.tick(t, pu.squad.nearest_chaser(player), player.speed);
+    if race.cars[*pi].state != race::CarState::Racing {
+        events.extend(pu.rules.finished());
+    }
+    for e in events {
+        race_log(&format!("tick {tick}: PURSUIT {e:?}"));
+        if let nfspu_game::pursuit::Event::Ended(o) = e {
+            if !o.won() {
+                // lost: the run ends here (the race summary shows how far the player got)
+                let n = race.cars.len();
+                let c = &mut race.cars[*pi];
+                if c.state == race::CarState::Racing {
+                    c.state = race::CarState::Finished;
+                    c.finish_time = Some(t);
+                    c.finish_position = Some(n);
+                }
+            }
+        }
+    }
+    hit
+}
+
+/// Gives every cop a body (roadblock cars appear during the race), places them, and flashes the
+/// light bars. The cop car model is read from the install; waiting cops stand at their spots.
+#[allow(clippy::too_many_arguments)]
+fn place_cops(
+    mut commands: Commands,
+    run: Option<ResMut<RaceRun>>,
+    status: Res<RaceStatus>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut car_paints: ResMut<Assets<nfspu_game::car_shine::CarPaint>>,
+    mut images: ResMut<Assets<Image>>,
+    mut bodies: Query<(&mut Transform, &mut AiBody, &mut Visibility), (Without<crate::BodyLean>, Without<LightBarHalf>)>,
+    mut leans: Query<&mut Transform, (With<crate::BodyLean>, Without<AiBody>, Without<LightBarHalf>)>,
+    mut bars: Query<(&LightBarHalf, &mut Visibility), (Without<AiBody>, Without<crate::BodyLean>)>,
+) {
+    let Some(mut run) = run else { return };
+    let Some(pu) = &mut run.pursuit else { return };
+    while pu.bodies.len() < pu.squad.cops.len() {
+        let (model, style) = pu.models[pu.squad.cops[pu.bodies.len()].variant.min(pu.models.len() - 1)].clone();
+        let options = CarOptions { style, ..Default::default() };
+        let body = commands.spawn((Transform::from_translation(Vec3::new(0.0, -1000.0, 0.0)), Visibility::Hidden, AiBody::default(), DespawnOnExit(AppState::Race))).id();
+        let (_, lean, _) = crate::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut car_paints, &mut images, body, &model, &options);
+        // the light bar: a red and a blue block on the roof, shown in turn by the siren phase
+        for (side, colour) in [(1u8, Color::srgb(1.0, 0.05, 0.05)), (2u8, Color::srgb(0.1, 0.2, 1.0))] {
+            let x = if side == 1 { -0.28 } else { 0.28 };
+            let bar = commands
+                .spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.4, 0.1, 0.18))),
+                    MeshMaterial3d(materials.add(StandardMaterial { base_color: colour, emissive: colour.to_linear() * 8.0, unlit: true, ..default() })),
+                    Transform::from_xyz(x, 1.42, 0.0),
+                    Visibility::Hidden,
+                    LightBarHalf(side),
+                ))
+                .id();
+            commands.entity(body).add_child(bar);
+        }
+        pu.bodies.push((body, lean));
+    }
+    let phase = nfspu_game::pursuit::siren_light(status.tick);
+    for (half, mut vis) in &mut bars {
+        let want = if half.0 == phase { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    for (c, &(body, lean)) in pu.squad.cops.iter().zip(&pu.bodies) {
+        let Ok((mut tf, mut ab, mut vis)) = bodies.get_mut(body) else { continue };
+        let want = if c.state == nfspu_game::cop::State::Out { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
+        }
+        tf.translation = c.car.draw_pos();
+        let (pitch, roll) = c.car.chassis_tilt();
+        tf.rotation = Quat::from_euler(EulerRot::YXZ, c.car.yaw, pitch, roll);
+        if let Ok(mut lt) = leans.get_mut(lean) {
+            let (lp, lr) = c.car.lean_tilt();
+            lt.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, lp, lr);
+        }
+        *ab = AiBody { speed: c.car.speed, steer: 0.0, braking: false, wheel_y: c.car.wheel_heights(), damage: c.car.sim.damage.zones };
+    }
+}
+
+/// The pursuit HUD line at the top of the screen (our layout: retail's was not found).
+fn pursuit_hud(mut commands: Commands, status: Res<RaceStatus>, run: Option<Res<RaceRun>>, mut text: Query<&mut Text, With<PursuitHud>>) {
+    let Some(run) = run else { return };
+    if run.pursuit.is_none() {
+        return;
+    }
+    let line = status.pursuit_text.clone().unwrap_or_default();
+    match text.single_mut() {
+        Ok(mut t) => {
+            if t.0 != line {
+                t.0 = line;
+            }
+        }
+        Err(_) => {
+            commands.spawn((
+                Text::new(line),
+                TextFont { font_size: FontSize::Px(22.0), ..default() },
+                TextColor(Color::srgb(1.0, 0.85, 0.2)),
+                Node { position_type: PositionType::Absolute, top: Val::Px(8.0), left: Val::Percent(30.0), ..default() },
+                PursuitHud,
+                DespawnOnExit(AppState::Race),
+            ));
+        }
+    }
+}
+
 /// One 64 Hz tick for every opponent: think, drive the car physics, follow it along the slices
 /// and fill its race sample. Cars stuck for long or fallen off the world go back on the road.
 fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_game::ground::Ground, walls: &nfspu_game::collision::WallSet, samples: &mut [CarSample]) -> f32 {
@@ -555,7 +743,7 @@ fn drive_opponents(run: &mut RaceRun, player: &mut Car, dt: f32, ground: &nfspu_
             }
         }
     }
-    player_hit.max(drive_traffic(run, player, dt, ground, walls))
+    player_hit.max(drive_traffic(run, player, dt, ground, walls)).max(drive_cops(run, player, dt, ground, walls))
 }
 
 /// The road's centre line as one (x, z) polyline per road run, for the HUD map.
@@ -669,6 +857,21 @@ fn race_tick(
     hold.0 = run.race.held();
     run.race.fill_status(run.player, &mut status);
     status.wrong_way = run.wrong_way;
+    if let Some(pu) = &run.pursuit {
+        let t = run.race.race_ticks();
+        let mut line = nfspu_game::pursuit::hud_line(&pu.rules, t, pu.squad.chasing());
+        match pu.rules.outcome {
+            Some(o) if o.won() => line = "YOU ESCAPED!".to_string(),
+            Some(nfspu_game::pursuit::Outcome::Busted) => line = "BUSTED!".to_string(),
+            Some(_) => line = "TIME UP".to_string(),
+            None => {}
+        }
+        status.pursuit_text = Some(line);
+        status.siren_dist = pu.squad.nearest_chaser(&car.car);
+    } else {
+        status.pursuit_text = None;
+        status.siren_dist = None;
+    }
     status.slice = run.slice;
     status.speed_kmh = car.car.speed.abs() * 3.6;
     status.rpm = Some(car.car.rpm());

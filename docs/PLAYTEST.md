@@ -224,3 +224,14 @@ Not in the game window yet (no menu entry, cop models, lights, siren or HUD). To
 and read the `cop` / `PURSUIT` lines. `busted` and `time` should report ALL OK; `1` may report
 the autopilot getting busted (alps did) -- that is a result, not a bug yet. All values are guesses
 (see docs/provenance/pursuit.md).
+
+## Pursuit in the game window (eyes and ears)
+Start: `NFSPU_PURSUIT=1` before launching (menu race or `NFSPU_RACE=canyon,forward,1,0,0`). Check:
+- cop cars (930 / 356 / 993) parked beside the road; they pull out and chase when you pass within
+  ~150 m, and ram you;
+- red/blue blocks flash on their roofs;
+- a siren loop that gets louder as a cop nears (it may be the wrong siren sound);
+- top-of-screen text: time left, tickets, cops; "BUSTED!" after three tickets (stop with a cop beside
+  you ~3 s), "YOU ESCAPED!" at the finish;
+- a roadblock (two cop cars across the road) ~45 s into a chase.
+All rules are guesses (docs/provenance/pursuit.md).

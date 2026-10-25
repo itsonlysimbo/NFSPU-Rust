@@ -28,7 +28,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Quick knockout headless check fails | Mid | RACE_DRIVE_KNOCKOUT=quick ... canyon forward 0 3 gives 0 out, 39 stuck (also before pursuit merge, a193fe0). Check the right args and fix. Done: knockout run ALL OK |
-| Pursuit in the game window | Strong | Wire cop.rs/pursuit.rs into Bevy: menu entry, cop models, light bar, siren, HUD. Done: playable pursuit |
+| Pursuit in the game window | Strong | Claude (pursuit-window) branch claude/pursuit-window; WIP: wired into race_mode (cops, light bars, siren, HUD text), builds; not seen on screen. Next: run NFSPU_PURSUIT=1 NFSPU_RACE=canyon,forward,1,0,0 and check logs/race.log for 'pursuit:' lines. | Wire cop.rs/pursuit.rs into Bevy: menu entry, cop models, light bar, siren, HUD. Done: playable pursuit |
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Career: showcase, car compare and car setup screens with real data | Mid | Left open by slice 3 (`career.md`) |
 | Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
