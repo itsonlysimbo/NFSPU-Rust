@@ -45,6 +45,7 @@ pub fn mission(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut transforms: Query<&mut Transform>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
+    mut test: Option<ResMut<crate::flow::FlowTest>>,
 ) {
     let Some(mut car) = car else { return };
     let Some(mut live) = live else {
