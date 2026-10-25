@@ -210,3 +210,4 @@ narrow Monaco streets while passing. Measured offline only (not seen in a window
 - Not matching: stripe decal on the garage and dealership cars (retail shows plain paint).
 
 - Stuck/fall recovery (collision session, 2026-10-23): wedge against a wall for 5 s, drive off a void edge (skidpad, forest) or fall off a track; the car should be put back on the road (log line "player stuck/fell/out of bounds, put back on the road"). Report any place you still had to restart.
+| 2026-10-23 | Cockpit hands and front wheels | Cockpit (C): the driver's sleeves and hands are now navy like retail (they were white). Tap left/right outside: the front wheels now sweep round at a limited rate instead of snapping. The forearm slab still swings widely with the wheel and looks large (eye position differs from retail); say if it still looks wrong | `claude/hands-wheels-39fd02` |
