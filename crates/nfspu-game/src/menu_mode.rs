@@ -555,7 +555,8 @@ impl FrontEnd {
         while tracks.len() < 7 && files.len() > 1 {
             seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
             let pick = &files[(seed >> 8) % files.len()];
-            if tracks.last() != Some(pick) {
+            // knockout races are on roads ("linear tracks"); circuits belong to quick knockout
+            if tracks.last() != Some(pick) && !knockout::is_circuit(pick) {
                 tracks.push(pick.clone());
             }
         }

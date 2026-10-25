@@ -80,6 +80,13 @@ impl Knockout {
     }
 }
 
+/// True for the six circuit tracks (the others are one-way roads): quick knockout needs laps, so
+/// it only runs on these. From `race_drive`'s track kinds (monaco1-5 and the skid pad).
+pub fn is_circuit(stem: &str) -> bool {
+    let s = stem.to_ascii_lowercase();
+    s == "skidpad" || (s.len() == 7 && s.starts_with("monaco") && matches!(s.as_bytes()[6], b'1'..=b'5'))
+}
+
 /// What the menu asked for, handed to the flow when RACE is pressed on a knockout screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pending {
@@ -215,6 +222,12 @@ mod tests {
         assert_eq!(run.after_race(&[0, 2, 1]), Step::Next);
         assert_eq!(run.opponent_cars(), vec!["y".to_string()]);
         assert_eq!(run.after_race(&[1, 0]), Step::PlayerOut(3));
+    }
+
+    #[test]
+    fn circuits_are_monaco_and_the_skid_pad() {
+        assert!(is_circuit("Monaco3") && is_circuit("skidpad"));
+        assert!(!is_circuit("canyon") && !is_circuit("monaco6") && !is_circuit("alps"));
     }
 
     #[test]
