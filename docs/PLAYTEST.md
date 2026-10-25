@@ -225,5 +225,12 @@ and read the `cop` / `PURSUIT` lines. `busted` and `time` should report ALL OK; 
 the autopilot getting busted (alps did) -- that is a result, not a bug yet. All values are guesses
 (see docs/provenance/pursuit.md).
 
-## Factory Driver (branch claude/factory-driver-c49da4)
-- Not playable yet: only the data, the pass/fail rules and a headless runner exist (RACE_DRIVE_FACTORY=1 with race_drive). Nothing to see in the game; screens and live missions are the next step (docs/WORK.md).
+## Factory Driver (branch claude/factory-screens)
+- Single player > Factory Driver opens the mission list for the selected profile (a new profile sees
+  the welcome screens first). RACE drives the current mission: the car starts on the scene's own
+  start line (not the road's start grid), orange cones stand on the pad and fall over when hit, and a
+  banner at the top of the screen shows `TIME n / limit  GATES n/total  CONES n`, then `MISSION
+  PASSED` or `MISSION FAILED (reason)` for 3.5 s before the menu comes back.
+- Judge against retail: where the car is put at the start, the cone size and colour, the banner's
+  place and size, and whether a pass moves the mission list on (it does in the log; the speech is
+  not drawn yet). Missions with opponents (the races) are not built: RACE falls back to a plain race.

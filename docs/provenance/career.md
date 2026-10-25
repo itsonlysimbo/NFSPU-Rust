@@ -236,8 +236,21 @@ lines. `Progress::current` is the first mission not done; only a pass is kept.
 ### Built / not built
 Built (`factory.rs`, tests, `RACE_DRIVE_FACTORY=1 race_drive`): the table, scene reader, gate / cone /
 time / damage / place rules, progress file, a scripted driver that runs every scene mission and
-checks pass, slow-fail and the cone penalty (log `logs/factory_drive.txt`). **Not built**: the
-screens (`factorydriver`, `missionbrief`, `missionmap`, `factwelcome`, `factdone`, `FactoryVictory`),
-running a mission in the real race (cone objects the car can knock over, gate triggers fed from the
-live car, the start grid from the scene), the race missions, the mission cars with their parts, the
-prize cars, the spin-direction rule, the police of mission 5, snow in the Alps mission.
+checks pass, slow-fail and the cone penalty (log `logs/factory_drive.txt`).
+
+Live in the game (2026-10-24, branch `claude/factory-screens`): `menu_factory.rs` (the
+`SETTYPEFACTORYDRIVER` entry, the `Factory.Data(...)` watches of the current mission, start and
+settle, the promotion screen `levelvictory`), `race_mission.rs` (the car placed at the scene's start
+pose, the scene's cones as cone objects that fall when hit, a banner with time / gates / cones, the
+verdict handed back through `factory_live.rs`), the progress file, and a flow-test hook.
+**Verified headless** (`NFSPU_MENU=factorydriver NFSPU_FACTORY_AUTO=40 NFSPU_FLOW_TEST=1,60`): mission
+0 drives on the skid pad, passes in 14.05 s with 1 cone, saves `done = 0,1,0,842`, logs the pass
+speech and returns to the mission list. **Found on the way**: a mission car must not be given the
+road's rules — the crash reset, the stuck / out-of-bounds watch and the wrong-way test put it back on
+the road every second on the skid pad, so no gate ever counted; with a mission active they are
+skipped (`race_mode::race_tick`) and the physics still rights the car where it is.
+
+**Not built**: the mission pictures and maps (`FACTORYPIC`, `FACTORYMAP`), the pass/fail speech on
+the screen (it is only logged), the race missions (opponents, minimum place), the mission cars with
+their parts, the prize cars, the spin-direction rule, the police of mission 5, snow in the Alps
+mission.
