@@ -217,3 +217,10 @@ Not tested by eye. Singleplayer > quick knockout (or knockout) > RACE:
 - Quick knockout: laps = opponents; the last car over the line each lap disappears from the road; you win by crossing the last line first; finishing a lap last shows the summary with you in last place.
 - Knockout: a race per opponent, one fewer opponent each time; the last place of each race is out; the next track loads after you close the summary. Check: opponent count drops, the same cars stay, the run ends at the menu after you win or finish last.
 - Guesses to judge against retail: who counts as "last" in a lap, tracks picked at random, no `knockoutraceinfo` screen between races.
+
+## Pursuit (police) mode, headless only so far
+Not in the game window yet (no menu entry, cop models, lights, siren or HUD). To check the rules:
+`RACE_DRIVE_PURSUIT=1|busted|time cargo run -p nfspu-game --example race_drive --release -- canyon forward 1 0 0`
+and read the `cop` / `PURSUIT` lines. `busted` and `time` should report ALL OK; `1` may report
+the autopilot getting busted (alps did) -- that is a result, not a bug yet. All values are guesses
+(see docs/provenance/pursuit.md).
