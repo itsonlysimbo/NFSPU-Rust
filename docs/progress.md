@@ -21,7 +21,7 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Race | Pursuit (police) mode | Not started | 0 |  |
 | Physics | Engine, gearbox, tyres, ABS/TC from .sim data | Partial | 70 | Handling feel vs retail |
 | Physics | Gravity, landings, body lean, wet grip | Done | 80 | Playtest |
-| Physics | Walls and car-vs-car collisions | Partial | 60 |  |
+| Physics | Walls and car-vs-car collisions, stuck recovery | Partial | 75 | Collision audit of all tracks; stuck/fell/out-of-bounds reset to the road; a few edge slivers left; not playtested |
 | Physics | Suspension, roll-overs | Partial | 60 | Spring suspension and roll-over reset with crash timer merged; not playtested |
 | Physics | Damage (visual and mechanical) | Partial | 55 | Damage zones, painted damage stamps and damage option merged; not playtested |
 | Graphics | Tracks: geometry, textures, objects | Done | 92 | Côte d'Azur water planes |
@@ -34,8 +34,8 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | HUD | Retail HUD, minimap, positions | Done | 90 |  |
 | Sound | Menu music | Done | 95 |  |
 | Sound | In-race sound: engine, announcer, skids, ambience | Partial | 75 | All channels merged; mix tuned to a retail recording (sound.md); needs an ear |
-| Career | Evolution career (eras, money, upgrades) | Partial | 35 | Slices 1-2 merged: profile, money, events, payout, buy/sell, parts and tuning raced; paint shop and later eras open; see career.md |
+| Career | Evolution career (eras, money, upgrades) | Partial | 50 | Slices 1-3 merged: profile, money, events, payout, buy/sell, tuning, test drive, era change; screens matched to retail footage |
 | Career | Factory Driver mode | Not started | 0 |  |
-| Career | Used cars, dealership, parts, paint shop | Partial | 50 | Dealership, used lot, parts and tuning merged with retail value formula; paint shop open |
+| Career | Used cars, dealership, parts, paint shop | Partial | 65 | Dealership, used lot, parts, tuning, paint shop and test drive merged; showcase and car compare data open |
 | Career | Save profiles (load/save .sav) | Partial | 35 | Career profile saved in our own format; retail .sav read for settings |
 | Online | Multiplayer (new netcode, no EA services) | Not started | 0 | Long-term; ask first |
