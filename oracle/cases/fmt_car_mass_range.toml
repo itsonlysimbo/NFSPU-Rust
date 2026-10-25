@@ -1,0 +1,7 @@
+name = "fmt_car_mass_range"
+kind = "format"
+check = "mass_range"
+expect = 550
+expect_max = 1620
+tol = 1
+source = "docs/provenance/physics.md: .sim 0x40 mass is 550..1620 kg"

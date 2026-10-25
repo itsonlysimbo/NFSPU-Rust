@@ -1,0 +1,11 @@
+name = "sim_993_steer_left"
+kind = "sim"
+reference = "self"
+car = "993"
+ticks = 1024
+sample_every = 64
+script = ["0:1:0:0", "512:1:0:-0.4"]
+tol_speed_kmh = 0.01
+tol_rpm = 1
+tol_pos = 0.01
+tol_yaw = 0.001

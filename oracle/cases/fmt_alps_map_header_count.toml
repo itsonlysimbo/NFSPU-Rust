@@ -1,0 +1,7 @@
+name = "fmt_alps_map_header_count"
+kind = "format"
+check = "map_header_count"
+track = "alps"
+expect = 39
+tol = 0
+source = "docs/provenance/formats.md: alps .map has 39 numbered sections"

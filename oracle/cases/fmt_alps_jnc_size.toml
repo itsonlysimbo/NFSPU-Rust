@@ -1,0 +1,7 @@
+name = "fmt_alps_jnc_size"
+kind = "format"
+check = "file_size"
+file = "GameData/Track/alps.jnc"
+expect = 216
+tol = 0
+source = "docs/provenance/formats.md: .jnc is 216 bytes of floats"

@@ -1,0 +1,11 @@
+# Cases that passed (ORACLE_UPDATE=1). A case leaving this list is a regression.
+fmt_959_front_weight
+fmt_alps_jnc_size
+fmt_alps_map_header_count
+fmt_alps_map_sections
+fmt_car_mass_range
+fmt_track_count
+sim_959_standing_start
+sim_993_accel_then_brake
+sim_993_standing_start
+sim_993_steer_left

@@ -35,3 +35,19 @@ reference taken from the decomp's reading of the same file.
 - Retail capture by reading the running game's memory (addresses from the decomp) in a copy of
   the install. If that needs an unsigned tool or a patch, the capture task stops and asks.
 - First tolerances: position 0.5 m, speed 1 km/h, rpm 100, gear exact, lap time 0.1 s.
+
+## Runner status (2026-10-24, claude/oracle-runner)
+`cargo run -p nfspu-game --example oracle` (NFSPU_GAME_DIR set) runs `oracle/cases/*.toml`, ends
+`ORACLE PASS` / `ORACLE FAIL`, and logs to `logs/oracle.txt`. Case keys are flat `key = value`
+lines. `kind = "format"` cases (`check` = `front_weight`, `mass_range`, `map_header_count`,
+`map_sections`, `file_size`, `track_count`) name the provenance note they come from in `source`.
+`kind = "sim"` cases drive `car` on flat ground with `script = ["from_tick:throttle:brake:steer", ...]`
+and compare with `oracle/ref/<name>.csv` (tick, speed km/h, rpm, gear, x, z, yaw); a case with
+`pending = "true"` is skipped. `ORACLE_RECORD=1` rewrites self-reference traces, `ORACLE_UPDATE=1`
+rewrites `oracle/verified.txt` (only when all cases pass).
+- The four sim traces so far are `reference = "self"`: our own numbers from this commit, a
+  regression guard and **not retail**. Replace each with a retail trace (`reference = "retail"`)
+  when the capture task delivers one; do not re-record to make a failing case pass.
+- Quirk seen in the traces: holding brake at standstill drives the car backwards (-80 km/h in
+  `sim_993_accel_then_brake`); check against retail once there is a trace.
+- Checked that a damaged reference gives `FAIL (REGRESSION)` and exit code 1.

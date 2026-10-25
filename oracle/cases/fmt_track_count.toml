@@ -1,0 +1,6 @@
+name = "fmt_track_count"
+kind = "format"
+check = "track_count"
+expect = 15
+tol = 0
+source = "docs/provenance/formats.md: 15 tracks"

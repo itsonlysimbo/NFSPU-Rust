@@ -1,0 +1,7 @@
+name = "fmt_959_front_weight"
+kind = "format"
+check = "front_weight"
+car = "959"
+expect = 0.4675
+tol = 0.00001
+source = "docs/provenance/physics.md: retail gives the 959 a 0.4675 front weight share"

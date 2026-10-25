@@ -1,0 +1,11 @@
+name = "sim_993_standing_start"
+kind = "sim"
+reference = "self"
+car = "993"
+ticks = 1536
+sample_every = 64
+script = ["0:1:0:0"]
+tol_speed_kmh = 0.01
+tol_rpm = 1
+tol_pos = 0.01
+tol_yaw = 0.001
