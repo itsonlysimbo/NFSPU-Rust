@@ -23,24 +23,17 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 | Career slice 3: footage comparison, paint shop, test drive, era progression | Strong | Claude (career-footage) | claude/career-footage-0cff4a | done, awaiting merge | Tests (`cargo test --workspace`) and `race_drive` ALL OK; test drive run headless (NFSPU_MENU=carsetup NFSPU_CAREER=1 NFSPU_CAREER_TESTDRIVE=1 NFSPU_FLOW_TEST=1,12). Captures in logs/ours_*.png vs logs/footage_*.png. Next: feed showcase/car compare/car setup data (footage in career.md), retail test-drive HUD, stripe decal on garage cars, bonus prize-car race (VictoryRoom), real tournament routes (guess in `assign_routes`) | screens match footage, slice 3 works headless |
 
 ## Up next (unclaimed)
-Pick from here, highest first. See `docs/progress.md` for the full feature list.
+Highest first. The coordinator hands these to finished sessions automatically (AGENTS.md, "Auto-continue").
 
 | Task | Tier | Notes |
 |---|---|---|
-| Career 2: new-career intro flow (`careerfirst`, `firstlicense`, missions) and `endofera` | Mid | Findings in `docs/provenance/career.md`; the first slice goes straight to `tournament` |
-| Career 3: garage, dealership, used cars (buy and sell; prices from `nfs5.car`) | Strong | Needs the account (`career.rs` cash) and `OwnedCars`/`DealerCar` accessors |
-| Career 4: parts, car setup, paint shop, repairs (upgrades) | Strong | After career 3 |
-| Career 5: car-rule matching, tournament standings and points, prize cars, real payout timing | Strong | Rules are guesses in `career.rs`; check against the decomp / footage |
-| Career 6: club events (Factory Driver, eras 524-526) | Mid | `nfs5.trn` records 20-34 |
-| Career 7: read a retail `.sav` into a career (owned cars, year) | Light | Owned cars already readable in `quick_race.rs` |
-| Car reflections: lamp glow and 'covered' glows | Mid | Sun highlight merged (845babe); lamp glow not seen by eye; trace the 'covered' flag (Monaco 3-5) and the sun direction |
-| Location screen header overlay (flags) | Mid | Track room merged (673c0b3); the header overlay isn't drawn yet |
+| Career: showcase, car compare and car setup screens with real data | Mid | Left open by slice 3 (`career.md`) |
+| Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
+| Handling feel vs retail: tyres, engine and gearbox against the footage | Strong | Footage: `C:\Users\CB\Videos\2026-10-23 11-00-02.mp4` |
+| Career: later eras' events and prize tables, full era progression | Mid | `career.md` plan |
+| Save profiles: read retail .sav career progress (install read-only) | Mid | Our own format writes; never write to the install |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
-| Menu button outline light + pause panel look | Mid | DONE (cloud, 2026-10-23): builds, `cargo test --workspace` passes, `race_drive` ALL OK; code checked against fe.md (pause footer strip 16 units per footage; decomp panel/button sizes kept). Left for coordinator: captures (need a window), merge. Earlier: done on claude/footage-menus-249798 (see fe.md); not merged. Left: build+test+race_drive (build was running, never verified), captures to logs/, pause squash-out (0.15 s), glint path after first edge. Branch pushed as WIP |
-| Body lean scale (`LEAN_LOOK`) | Mid | Sim already matches the decoded numbers; pick the scale from retail footage (user) |
-| Race sound fine-tuning against retail | Strong | DONE (cloud, 2026-10-23: tests pass, race_drive GT1 sound run ALL OK; numbers in sound.md). Engine+road+wind level and pitch matched to GT1 footage (MIX 0.7 to 0.6; branch claude/footage-sound-a19d43). Next: run `cargo test --workspace -j 2` and race_drive (not yet run; builds were slow); then skids, hits, opponents, ambience and countdown timing have no footage markers yet; a clip with a hard slide or wall hit would settle them |
-| Cockpit hand placement | Mid | Arms follow the wheel (45d5bec); retail placement not found in the decomp; compare with footage |
-| Playtest round (see `docs/PLAYTEST.md`) | User | Many merged items wait for eyes and ears |
+| Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 
 ## Done (recent)
 
