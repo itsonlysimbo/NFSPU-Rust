@@ -21,13 +21,14 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 | Cockpit hands colour + front wheel steer smoothing | Mid | Claude (hands-wheels) | claude/hands-wheels-39fd02 | done, awaiting merge | Hands/arm sleeve now navy like retail (page 9 is a white shirt texture; pale texels recoloured for arms+hands). Front wheels follow the sim steer angle at a capped rate (`WHEEL_STEER_RATE`). NOT DONE: the hand mesh includes a long forearm slab (z span 0.7) that swings with the wheel; retail keeps the arm pointing from the side; our cockpit eye sits lower/closer than retail (hub 0.86 vs 0.73 of height), so the slab looks bigger. Skin the hand forearm vertices like `skin_arms`. | merge |
 | Career 3+4 slice 2: buy/sell cars, used lot, parts, paint shop, era advance | Strong | Claude (career-2) | claude/dazzling-bun-be66c4 | WIP, stopped for cloud move | DONE+tested: economy (career_shop.rs: retail value formula, used lot, parts, tuning), career.rs buy/sell/fit, career_ui.rs, ListBox renderer, dealership/usedcars/garage/paintshop/parts screens captured to logs/ (NFSPU_CAREER=1 NFSPU_CAREER_DO=...). Unit tests pass for career/career_shop/career_ui. NOT DONE: race with tuned car end-to-end (try NFSPU_MENU=tournament NFSPU_FLOW_TEST=1,12 NFSPU_CAREER_PLACE=2, look for 'career parts tune the car' in logs/m0.log); full `cargo test --workspace -j 2`; race_drive ALL OK; docs/PLAYTEST.md and docs/provenance/career.md notes (value formula tables, prt layout 0x168, part effects are guesses); era-advance uses slice-1 guess; repairs not built; click hit-testing of parts list only by eye | player can earn, buy, upgrade, race |
 | Career slice 3: footage comparison, paint shop, test drive, era progression | Strong | Claude (career-footage) | claude/career-footage-0cff4a | done, awaiting merge | Tests (`cargo test --workspace`) and `race_drive` ALL OK; test drive run headless (NFSPU_MENU=carsetup NFSPU_CAREER=1 NFSPU_CAREER_TESTDRIVE=1 NFSPU_FLOW_TEST=1,12). Captures in logs/ours_*.png vs logs/footage_*.png. Next: feed showcase/car compare/car setup data (footage in career.md), retail test-drive HUD, stripe decal on garage cars, bonus prize-car race (VictoryRoom), real tournament routes (guess in `assign_routes`) | screens match footage, slice 3 works headless |
-| Pursuit (police) mode | Strong | Claude (pursuit) | claude/pursuit-710292 | done headless, awaiting merge | Headless: cop.rs, pursuit.rs, RACE_DRIVE_PURSUIT=1/busted/time (busted, time pass; escape: canyon escapes, alps busted). Tests + normal race_drive ALL OK. NOT DONE: Bevy wiring (cop993 models, light bar, siren, HUD, menu entry), decoding retail rule values (pursuit.md lists guesses), HumanCop mode. | headless pursuit with win/lose fires, tests + race_drive ALL OK |
 
 ## Up next (unclaimed)
 Highest first. The coordinator hands these to finished sessions automatically (AGENTS.md, "Auto-continue").
 
 | Task | Tier | Notes |
 |---|---|---|
+| Quick knockout headless check fails | Mid | RACE_DRIVE_KNOCKOUT=quick ... canyon forward 0 3 gives 0 out, 39 stuck (also before pursuit merge, a193fe0). Check the right args and fix. Done: knockout run ALL OK |
+| Pursuit in the game window | Strong | Wire cop.rs/pursuit.rs into Bevy: menu entry, cop models, light bar, siren, HUD. Done: playable pursuit |
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Career: showcase, car compare and car setup screens with real data | Mid | Left open by slice 3 (`career.md`) |
 | Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
@@ -41,6 +42,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Pursuit (headless) | merge a193fe0: cop.rs, pursuit.rs, RACE_DRIVE_PURSUIT; rule values are guesses (pursuit.md) |
 | Oracle runner | merged 38aef6a: ORACLE PASS on 10 cases (6 format, 4 self-reference sim, not retail); ORACLE PASS is now a merge condition |
 | Knockout + quick knockout modes | merge 5e69472 |
 | Cloud: race sound channels (rain, wet road, opponent skids/hits, Doppler, commentator) | `1695259` |
