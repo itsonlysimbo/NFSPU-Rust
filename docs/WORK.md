@@ -28,7 +28,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
+| Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Claude (claude/collision-edges): done, awaiting merge. `edge_walls.rs` adds wall strips on open outer edges inside `load_ground`; audit OPEN ~8000 -> 430 (autobahn 1568->63, skidpad 1398->0), check.sh passes. Residue: OPEN at fractions between slices (coastal 127), industrial PINCH 5 and STEP counts untouched. Not tested in the game |
 | Handling feel vs retail: tyres, engine and gearbox against the footage | Strong | Footage: `C:\Users\CB\Videos\2026-10-23 11-00-02.mp4` |
 | Career: later eras' events and prize tables, full era progression | Mid | `career.md` plan |
 | Save profiles: read retail .sav career progress (install read-only) | Mid | Our own format writes; never write to the install |
