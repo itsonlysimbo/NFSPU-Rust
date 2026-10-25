@@ -27,7 +27,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Tier | Notes |
 |---|---|---|
-| Factory Driver screens and live missions | Strong | Menus and in-race mission run for factory.rs (headless logic merged). Done: playable Factory Driver |
+| Factory Driver screens and live missions | Strong | Claude (factory-screens) | claude/factory-screens | WIP, stopped for usage | Built and compiling: menu_factory.rs (SETTYPEFACTORYDRIVER, watches, start/settle, promotion screen), race_mission.rs (car at scene start, cones, banner, verdict), factory_live.rs (menu<->race hand-over), flow-test hook. Live loop verified headless (NFSPU_MENU=factorydriver NFSPU_FACTORY_AUTO=40 NFSPU_FLOW_TEST=1,60 NFSPU_SETTINGS_DIR=<tmp>): mission starts, fails, speech logged, profile saved. BUG: gates_passed stays 0 live (verdict Failed(Time) with 0 gates). Last build added a per-second `mission: t=.. pos=..` log in race_mission.rs; run it and compare pos with the gate centres (suspect: stuck/out-of-bounds watch in race_tick moves the car, or coordinate mismatch). Then: rerun a pass, check progress file + promotion screen (NFSPU_FACTORY_MISSION=13), race missions (min_place) not built, FACTORYPIC/FACTORYMAP drawing not built, cargo test --workspace and race_drive | playable missions 0-16 |
 | Pursuit in the game window | Strong | Wire cop.rs/pursuit.rs into Bevy: menu entry, cop models, light bar, siren, HUD. Done: playable pursuit |
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Career: showcase, car compare and car setup screens with real data | Mid | Left open by slice 3 (`career.md`) |

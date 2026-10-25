@@ -98,6 +98,8 @@ struct FrontEnd {
     clock_ms: f64,
     /// The Evolution career (`nfspu_game::career`), when the player entered it.
     career: CareerMode,
+    /// Factory Driver (`crate::menu_factory`), when the player entered it.
+    factory: crate::menu_factory::FactoryMode,
 }
 
 /// Evolution career state of the front end.
@@ -177,6 +179,10 @@ impl FrontEnd {
             self.session.watch.insert(format!("{a}(PERCENT)"), format!("{}%", (level * 100 + 63) / 127));
         }
         self.session.career = self.career.on;
+        if self.factory.on {
+            let player = self.player_name();
+            self.session.watch.extend(self.factory.watches(&self.locale, self.language, &player));
+        }
         if let (true, Some(c)) = (self.career.on, &self.career.career) {
             self.session.choices.extend(c.choices(&self.career.data, &self.quick.cars, &self.quick.tracks, &self.locale, self.language));
             self.session.watch.extend(c.watches(&self.career.data, &self.quick.tracks, &self.locale, self.language));
@@ -231,6 +237,36 @@ impl FrontEnd {
         if let Some(c) = self.career.career.as_ref() {
             if let Err(e) = c.save_to(&self.career.dir) {
                 crate::log_line(&format!("career: could not save: {e}"));
+            }
+        }
+    }
+
+    /// The selected player's name.
+    fn player_name(&self) -> String {
+        self.profiles.selected.and_then(|i| self.profiles.names.get(i)).map(|n| menu::display_name(n).to_string()).unwrap_or_else(|| "Player".to_string())
+    }
+
+    /// Enters Factory Driver for the selected player; true for a new player (retail plays the
+    /// welcome screens first).
+    fn enter_factory(&mut self) -> bool {
+        let player = self.player_name();
+        self.career.on = false;
+        let new = self.factory.enter(&player);
+        self.sync_quick();
+        new
+    }
+
+    /// Back from a mission race: records the verdict, and opens the promotion screen on a rank-up.
+    fn settle_factory(&mut self, v: nfspu_game::factory_live::Verdict) {
+        let player = self.player_name();
+        let settled = self.factory.settle(&v, &self.locale, self.language, &player);
+        self.sync_quick();
+        if settled.promoted {
+            if let Some(next) = self.load("levelvictory") {
+                let snapshot = (self.page.clone(), self.popup.clone());
+                self.history.push(snapshot);
+                self.page = next;
+                self.popup = None;
             }
         }
     }
@@ -1024,6 +1060,7 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
         anim_key: Vec::new(),
         clock_ms: 0.0,
         career: CareerMode::load(&game_dir),
+        factory: crate::menu_factory::FactoryMode::load(&game_dir),
     };
     // Read the selected player's save first: screens built below show its settings, and the
     // start page (built before it) is rebuilt.
@@ -1031,6 +1068,11 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
     // The career screens can be started directly (tests and captures): `NFSPU_MENU=tournament`.
     // `NFSPU_CAREER=1` does the same for any page (the shop screens); `NFSPU_CAREER_CASH=n` and
     // `NFSPU_CAREER_YEAR=y` set the account and the year for such a test.
+    // The Factory Driver screens can be started directly: `NFSPU_MENU=factorydriver`.
+    if ["factorydriver", "missionbrief", "missionmap", "factfirst", "factwelcome"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) {
+        state.enter_factory();
+        state.reload();
+    }
     if ["tournament", "prerace"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) || std::env::var("NFSPU_CAREER").as_deref() == Ok("1") {
         state.enter_career();
         state.career.page = page_name.to_string();
@@ -1136,6 +1178,12 @@ fn enter_menu(
         window.title = TITLE.to_string();
     }
     commands.spawn((MenuVisual, node, ImageNode::default(), DespawnOnExit(AppState::Menu)));
+    // A Factory Driver mission that just ended is judged before the screens are rebuilt.
+    if let Some(v) = nfspu_game::factory_live::take_verdict() {
+        state.settle_factory(v);
+    } else {
+        nfspu_game::factory_live::set_active(None);
+    }
     // A career race that just ended is paid before the screens are rebuilt.
     if state.career.pending.is_some() {
         let place = std::mem::take(&mut result.place);
@@ -1226,7 +1274,7 @@ fn flow_test_menu(
         exit.write(AppExit::error());
         return;
     }
-    if test.done > 0 && !state.career.on {
+    if test.done > 0 && !state.career.on && !state.factory.on {
         state.quick.step_track(1);
         state.reload();
         state.stack();
@@ -1238,6 +1286,10 @@ fn flow_test_menu(
         state.start_test_drive(&page)
     } else if state.career.on {
         state.start_career_race()
+    } else if state.factory.on {
+        let player = state.player_name();
+        let st = &mut *state;
+        st.factory.start(&st.quick, &st.locale, st.language, &player)
     } else {
         None
     };
@@ -1451,6 +1503,7 @@ fn click(
             // behind `SETTYPEQUICKRACE` sets `zMergedList.Car` to 0).
             if ["quickrace", "knockout", "quickknockout"].iter().any(|n| name.eq_ignore_ascii_case(n)) {
                 state.career.on = false;
+                state.factory.on = false;
             }
             if name.eq_ignore_ascii_case("quickrace") && from.eq_ignore_ascii_case("singleplayer") {
                 state.quick.car = 0;
@@ -1562,7 +1615,17 @@ fn click(
             match name.as_str() {
                 "PLAYGAME" => {
                     crate::log_line("front end: leaving the menu for the race");
-                    let setup = if state.career.on {
+                    let setup = if state.factory.on {
+                        let player = state.player_name();
+                        let st = &mut *state;
+                        match st.factory.start(&st.quick, &st.locale, st.language, &player) {
+                            Some(setup) => Some(setup),
+                            None => {
+                                crate::log_line("factory: no mission started");
+                                return;
+                            }
+                        }
+                    } else if state.career.on {
                         match state.start_career_race() {
                             Some(setup) => Some(setup),
                             None => {
@@ -1578,7 +1641,17 @@ fn click(
                 }
                 // Evolution: load or start the player's career and open the tournament list (retail
                 // plays intro movies first for a new career; not built).
+                // Factory Driver: a new player sees the welcome screens first, others the mission list.
+                "SETTYPEFACTORYDRIVER" => {
+                    let new = state.enter_factory();
+                    let Some(next) = state.load(if new { "factfirst" } else { "factorydriver" }) else { return };
+                    let snapshot = (state.page.clone(), state.popup.clone());
+                    state.history.push(snapshot);
+                    state.page = next;
+                    state.popup = None;
+                }
                 "SETTYPECAREERMODE" => {
+                    state.factory.on = false;
                     state.enter_career();
                     let Some(next) = state.load("tournament") else { return };
                     let snapshot = (state.page.clone(), state.popup.clone());

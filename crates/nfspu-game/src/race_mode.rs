@@ -155,7 +155,7 @@ impl Plugin for RacePlugin {
         // direct start) has run `setup`.
         app.add_systems(
             Update,
-            (start_race, race_tick, place_opponents, place_traffic, results_screen, leave_results)
+            (start_race, race_tick, place_opponents, place_traffic, results_screen, leave_results, crate::race_mission::mission)
                 .chain()
                 .after(crate::drive_car)
                 .run_if(crate::flow::in_race_scene)
