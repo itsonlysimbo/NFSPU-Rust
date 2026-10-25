@@ -46,6 +46,8 @@ pub struct RaceSetup {
 pub enum CarState {
     Racing,
     Finished,
+    /// Knocked out of a quick knockout; the car is out of the race (its place is the one it left in).
+    Out,
 }
 
 /// What the game tells the race about one car each tick.
@@ -85,6 +87,8 @@ pub enum RaceEvent {
     /// A car crossed the line backwards and now owes a lap.
     LapOwed { car: usize },
     Finished { car: usize, position: usize, ticks: u32 },
+    /// Quick knockout: the car came last in its lap and is out, finishing in `position`.
+    Out { car: usize, position: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,7 +106,14 @@ pub struct Race {
     /// Sim ticks since the race loaded.
     pub tick: u32,
     pub cars: Vec<CarRace>,
+    /// Cars that finished or were knocked out.
     finished: usize,
+    /// Cars that crossed the line first-to-last, handing out finishing places.
+    placed: usize,
+    /// Quick knockout: the last car over the line each lap is out (`set_knockout`).
+    knockout: bool,
+    /// Cars that have completed lap `i + 1` (quick knockout).
+    arrivals: Vec<u32>,
 }
 
 /// Plain race numbers for the HUD, updated every frame while a race runs (all zero / None when
@@ -213,7 +224,18 @@ impl Race {
                 CarRace { state: CarState::Racing, laps: 0, owed: 0, fraction: f, progress: f, lap_start: GO_TICK, lap_times: Vec::new(), finish_time: None, finish_position: None }
             })
             .collect();
-        Race { setup, tick: 0, cars, finished: 0 }
+        Race { setup, tick: 0, cars, finished: 0, placed: 0, knockout: false, arrivals: Vec::new() }
+    }
+
+    /// Quick knockout rules (circuits only): the last car to complete each lap is out, and the
+    /// first over the last line wins and leaves the rest out. Retail's help text: "the loser in
+    /// each lap gets eliminated".
+    pub fn set_knockout(&mut self) {
+        self.knockout = self.setup.kind == Kind::Circuit;
+    }
+
+    pub fn is_knockout(&self) -> bool {
+        self.knockout
     }
 
     /// 3, 2, 1 during the countdown, else None (see `GO_SHOWN_TICKS`).
@@ -302,7 +324,7 @@ impl Race {
         st.lap_times = c.lap_times.iter().map(|&t| ticks_to_secs(t)).collect();
         st.countdown = self.countdown();
         st.held = self.held();
-        st.finished = c.state == CarState::Finished;
+        st.finished = c.state != CarState::Racing;
         st.progress = (c.progress / self.setup.laps as f32).clamp(0.0, 1.0);
         st.tick = self.tick;
         st.order = self.order();
@@ -327,12 +349,33 @@ impl Race {
 
     fn finish(&mut self, car: usize, events: &mut Vec<RaceEvent>) {
         self.finished += 1;
+        self.placed += 1;
         let ticks = self.race_ticks();
         let c = &mut self.cars[car];
         c.state = CarState::Finished;
         c.finish_time = Some(ticks);
-        c.finish_position = Some(self.finished);
-        events.push(RaceEvent::Finished { car, position: self.finished, ticks });
+        c.finish_position = Some(self.placed);
+        events.push(RaceEvent::Finished { car, position: self.placed, ticks });
+        if self.knockout {
+            // the winner ends the last round: whoever is still racing is out, running order first
+            let rest: Vec<usize> = self.order().into_iter().filter(|&i| self.cars[i].state == CarState::Racing).collect();
+            for (k, i) in rest.into_iter().enumerate() {
+                self.knock_out(i, self.placed + 1 + k, events);
+            }
+        }
+    }
+
+    fn knock_out(&mut self, car: usize, position: usize, events: &mut Vec<RaceEvent>) {
+        self.finished += 1;
+        let c = &mut self.cars[car];
+        c.state = CarState::Out;
+        c.finish_position = Some(position);
+        events.push(RaceEvent::Out { car, position });
+    }
+
+    /// Cars still in the race (not knocked out).
+    pub fn cars_in(&self) -> usize {
+        self.cars.iter().filter(|c| c.state != CarState::Out).count()
     }
 
     /// Advances one 64 Hz tick. `samples` has one entry per car.
@@ -376,8 +419,20 @@ impl Race {
                 c.lap_times.push(ticks);
                 c.lap_start = t;
                 events.push(RaceEvent::Lap { car, lap: c.laps, ticks });
-                if c.laps >= self.setup.laps {
+                let lap = c.laps;
+                if lap >= self.setup.laps {
                     self.finish(car, &mut events);
+                } else if self.knockout {
+                    let k = lap as usize - 1;
+                    if self.arrivals.len() <= k {
+                        self.arrivals.resize(k + 1, 0);
+                    }
+                    self.arrivals[k] += 1;
+                    // the last car in this lap: everyone still in has crossed it
+                    let in_race = self.cars_in();
+                    if self.arrivals[k] as usize == in_race {
+                        self.knock_out(car, in_race, &mut events);
+                    }
                 }
             }
         }
@@ -492,6 +547,44 @@ mod tests {
         run_to(&mut r, 500, 0.3);
         r.step(&[CarSample { fraction: 0.31, ..Default::default() }, CarSample { fraction: 0.5, ..Default::default() }, CarSample { fraction: 0.2, ..Default::default() }]);
         assert_eq!(r.order(), vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn quick_knockout_drops_the_last_car_each_lap() {
+        // 3 opponents, 3 laps: car 3 is slowest, then car 2, then car 1; the player (0) wins
+        let mut r = Race::new(RaceSetup { kind: Kind::Circuit, laps: 3, cars: 4 }, &[0.02; 4]);
+        r.set_knockout();
+        run_to(&mut r, 448, 0.02);
+        let mut out = Vec::new();
+        let mut finished = Vec::new();
+        // lap length in ticks per car: faster cars have smaller numbers
+        let lap = [1000u32, 1100, 1200, 1300];
+        for t in 449..6000u32 {
+            let samples: Vec<CarSample> = (0..4)
+                .map(|c| {
+                    if r.cars[c].state != CarState::Racing {
+                        return CarSample { fraction: r.cars[c].fraction, crossed_finish: false };
+                    }
+                    let f = ((t - 448) % lap[c]) as f32 / lap[c] as f32;
+                    CarSample { fraction: 0.02 + f * 0.96, crossed_finish: false }
+                })
+                .collect();
+            for e in r.step(&samples) {
+                match e {
+                    RaceEvent::Out { car, position } => out.push((car, position)),
+                    RaceEvent::Finished { car, position, .. } => finished.push((car, position)),
+                    _ => {}
+                }
+            }
+            if r.all_finished() {
+                break;
+            }
+        }
+        assert_eq!(out, vec![(3, 4), (2, 3), (1, 2)]);
+        assert_eq!(finished, vec![(0, 1)]);
+        assert_eq!(r.order(), vec![0, 1, 2, 3]);
+        assert!(r.all_finished());
+        assert_eq!(r.cars_in(), 1);
     }
 
     #[test]

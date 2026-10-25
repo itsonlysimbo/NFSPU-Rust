@@ -121,7 +121,14 @@ fn wrap(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
+/// The last race's running order (race cars first to last), for the knockout series.
+static LAST_ORDER: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
 fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8, out: &mut String) -> bool {
+    drive_ko(name, dir, laps, opponents, difficulty, false, out)
+}
+
+fn drive_ko(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8, knockout_quick: bool, out: &mut String) -> bool {
     let t = match race_path::load(name, dir) {
         Ok(t) => t,
         Err(e) => { let _ = writeln!(out, "{name}: {e}"); return false; }
@@ -147,6 +154,9 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     let mut slice = spot.slice;
     let fractions: Vec<f32> = spots.iter().map(|s| p.fraction(s.slice, dir)).collect();
     let mut r = Race::new(RaceSetup { kind, laps, cars }, &fractions);
+    if knockout_quick {
+        r.set_knockout();
+    }
     // opponents: retail drivers of the difficulty, all with the 993's tables
     let game = std::path::PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
     let seed = std::env::var("NFSPU_AI_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(12345u32);
@@ -360,7 +370,7 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 r.tick, p.segment_of(slice), p.fraction(slice, dir), car.pos.x, car.pos.y, car.pos.z, car.yaw, car.speed);
         }
         slice = p.track(slice, car.pos);
-        let lost = if r.held() { None } else { watch.tick(&car, p, slice, dir) };
+        let lost = if r.held() || r.cars[0].state == race::CarState::Out { None } else { watch.tick(&car, p, slice, dir) };
         if let Some(why) = lost {
             // the game's rule (nfspu_game::stuck): this must not happen on a clean drive
             lost_count += 1;
@@ -390,6 +400,7 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
                 RaceEvent::Countdown(n) => format!("   tick {:>5}: countdown {}", r.tick, if n == 0 { "GO".to_string() } else { n.to_string() }),
                 RaceEvent::Lap { car: c, lap, ticks } => format!("   tick {:>5}: {} lap {lap} in {}", r.tick, who(c, &racers), race::format_time(ticks)),
                 RaceEvent::LapOwed { car: c } => format!("   tick {:>5}: {} crossed the line backwards", r.tick, who(c, &racers)),
+                RaceEvent::Out { car: c, position } => format!("   tick {:>5}: {} KNOCKED OUT in P{position}", r.tick, who(c, &racers)),
                 RaceEvent::Finished { car: c, position, ticks } => format!("   tick {:>5}: {} FINISHED P{position} in {}, best lap {}", r.tick, who(c, &racers), race::format_time(ticks), r.best_lap(c).map_or("-".into(), race::format_time)),
             };
             let _ = writeln!(out, "{line}");
@@ -432,6 +443,17 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     if lost_count > 0 {
         let _ = writeln!(out, "   FAILED: the player car was stuck, fell through or left the world {lost_count} time(s)");
     }
+    *LAST_ORDER.lock().unwrap() = r.order();
+    if knockout_quick {
+        // exactly one car out per lap before the last, and the rest out when the winner finishes
+        let outs = r.cars.iter().filter(|c| c.state == race::CarState::Out).count();
+        let winners = r.cars.iter().filter(|c| c.state == race::CarState::Finished).count();
+        let _ = writeln!(out, "   knockout: {outs} out, {winners} finished, order {:?}", r.order());
+        if outs != opponents || winners != 1 {
+            let _ = writeln!(out, "   FAILED: a quick knockout leaves one winner and every other car out");
+            return false;
+        }
+    }
     !stuck && lost_count == 0 && moved_before_go < 0.5 && r.all_finished()
 }
 
@@ -448,6 +470,51 @@ fn main() {
     }
     let mut out = String::new();
     let mut ok = true;
+    // RACE_DRIVE_KNOCKOUT=quick <track> [dir] [_] <opponents>: one lap per opponent, last of each lap out.
+    // RACE_DRIVE_KNOCKOUT=series <track,track,...> [dir] [laps] <opponents>: a race per round, last out.
+    let ko = std::env::var("RACE_DRIVE_KNOCKOUT").unwrap_or_default();
+    if (ko == "quick" || ko == "series") && a.first().is_some() {
+        let dir = if a.get(1).map_or(false, |d| d.starts_with('b')) { Direction::Backward } else { Direction::Forward };
+        let laps: u32 = a.get(2).and_then(|l| l.parse().ok()).unwrap_or(1);
+        let opponents: u32 = a.get(3).and_then(|n| n.parse().ok()).unwrap_or(3u32).clamp(1, 7);
+        let difficulty = a.get(4).and_then(|d| d.parse().ok()).unwrap_or(0u8).min(2);
+        if ko == "quick" {
+            ok &= drive_ko(&a[0], dir, opponents, opponents as usize, difficulty, true, &mut out);
+        } else {
+            use nfspu_game::knockout::{Mode, Run, Step};
+            let tracks: Vec<String> = a[0].split(',').map(str::to_string).collect();
+            let mut run = Run::new(Mode::Series, opponents, tracks);
+            loop {
+                let left = run.ko.opponents_left();
+                let track = run.track().unwrap_or("alps").to_string();
+                let grid = run.grid();
+                let _ = writeln!(out, "== knockout round {} of {}: {track}, entrants {grid:?}", run.ko.round + 1, run.ko.total);
+                ok &= drive_ko(&track, dir, laps, left as usize, difficulty, false, &mut out);
+                let mut order = LAST_ORDER.lock().unwrap().clone();
+                // RACE_DRIVE_KO_SAFE=1: the slow autopilot would be last at once; swap it with the
+                // car ahead so the whole series can be walked (test only)
+                if std::env::var("RACE_DRIVE_KO_SAFE").is_ok() && order.len() > 1 && order.last() == Some(&0) {
+                    let n = order.len();
+                    order.swap(n - 1, n - 2);
+                    let _ = writeln!(out, "== (test) player swapped up one place");
+                }
+                let last = *order.last().unwrap();
+                let expected_out = grid[last];
+                let step = run.after_race(&order);
+                let alive = run.ko.alive_ids();
+                let good = !alive.contains(&expected_out) && alive.len() == grid.len() - 1;
+                let _ = writeln!(out, "== round over: order {order:?}, entrant {expected_out} out, {alive:?} still in -> {step:?}{}", if good { "" } else { "  FAILED: the wrong car went out" });
+                ok &= good;
+                if step != Step::Next {
+                    break;
+                }
+            }
+        }
+        print!("{out}");
+        let _ = std::fs::write(log_file().with_file_name("knockout_drive.txt"), &out);
+        println!("{}", if ok { "ALL OK" } else { "SOME FAILED" });
+        return;
+    }
     if let Some(name) = a.first() {
         let dir = if a.get(1).map_or(false, |d| d.starts_with('b')) { Direction::Backward } else { Direction::Forward };
         let laps = a.get(2).and_then(|l| l.parse().ok()).unwrap_or(2);

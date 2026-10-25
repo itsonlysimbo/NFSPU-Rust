@@ -521,6 +521,7 @@ impl FrontEnd {
     /// `logs/race_setup.txt`, a log only: the race gets the setup in memory).
     fn start_race(&self) -> nfspu_game::race_setup::RaceSetup {
         let setup = self.quick.setup(&self.locale, self.language);
+        self.note_knockout();
         let text = setup.to_text();
         crate::log_line(&format!("front end: RACE pressed, setup: {}", text.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("; ")));
         if let Some(path) = crate::log_path().parent().map(|d| d.join("race_setup.txt")) {
@@ -530,6 +531,39 @@ impl FrontEnd {
             }
         }
         setup
+    }
+
+    /// RACE on a knockout screen starts a knockout run: `knockout` (Series) or `quickknockout`
+    /// (Quick). `NFSPU_KNOCKOUT=quick|series[,opponents]` forces one from any screen (tests).
+    fn note_knockout(&self) {
+        use nfspu_game::knockout::{self, Mode, Pending};
+        let page = self.popup.as_ref().unwrap_or(&self.page).name.to_ascii_lowercase();
+        let env = std::env::var("NFSPU_KNOCKOUT").ok();
+        let mut env_parts = env.as_deref().unwrap_or("").split(',');
+        let mode = match (page.as_str(), env_parts.next().unwrap_or("")) {
+            ("quickknockout", _) | (_, "quick") => Some(Mode::Quick),
+            ("knockout", _) | (_, "series") => Some(Mode::Series),
+            _ => None,
+        };
+        let Some(mode) = mode else { return knockout::set_pending(None) };
+        let opponents = env_parts.next().and_then(|n| n.parse().ok()).unwrap_or_else(|| self.quick.knockout_opponents());
+        // Series: the chosen track first, then random others, each different from the last
+        // (the screen's "make random" fills the rest; the 7 are a guess).
+        let files: Vec<String> = self.quick.track_list.iter().map(|&i| self.quick.tracks[i].file.clone()).collect();
+        let mut tracks = vec![files.get(self.quick.track).cloned().unwrap_or_default()];
+        let mut seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(7, |d| d.subsec_nanos() as usize);
+        while tracks.len() < 7 && files.len() > 1 {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let pick = &files[(seed >> 8) % files.len()];
+            if tracks.last() != Some(pick) {
+                tracks.push(pick.clone());
+            }
+        }
+        if let Ok(list) = std::env::var("NFSPU_KO_TRACKS") {
+            tracks = list.split(',').map(|t| t.trim().to_string()).collect();
+        }
+        crate::log_line(&format!("front end: knockout {mode:?}, {opponents} opponent(s)"));
+        knockout::set_pending(Some(Pending { mode, opponents, tracks }));
     }
 
     /// The top screen offers RACE: the bottom bar is up and the screen allows playing.
