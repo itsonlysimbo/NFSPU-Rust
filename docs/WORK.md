@@ -38,9 +38,9 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 ## Done (recent)
 
-| Oracle runner | merged 38aef6a: ORACLE PASS on 10 cases (6 format, 4 self-reference sim, not retail); ORACLE PASS is now a merge condition |
 | Task | Merged as |
 |---|---|
+| Oracle runner | merged 38aef6a: ORACLE PASS on 10 cases (6 format, 4 self-reference sim, not retail); ORACLE PASS is now a merge condition |
 | Knockout + quick knockout modes | merge 5e69472 |
 | Cloud: race sound channels (rain, wet road, opponent skids/hits, Doppler, commentator) | `1695259` |
 | Cloud: opponents and autopilot pass and brake for traffic | `8edda25` |
