@@ -27,7 +27,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Tier | Notes |
 |---|---|---|
-| Factory Driver screens and live missions | Strong | Menus and in-race mission run for factory.rs (headless logic merged). Done: playable Factory Driver |
+| Factory Driver screens and live missions | Strong | **Merge pending:** `claude/pursuit-window` (eb79e79) passed its own checks; coordinator merges it when Claude is back. Menus and in-race mission run for factory.rs (headless logic merged). Done: playable Factory Driver |
 | Pursuit in the game window | Strong | Wire cop.rs/pursuit.rs into Bevy: menu entry, cop models, light bar, siren, HUD. Done: playable pursuit |
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Career: showcase, car compare and car setup screens with real data | Mid | Left open by slice 3 (`career.md`) |
