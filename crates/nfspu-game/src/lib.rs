@@ -38,6 +38,8 @@ pub mod sky;
 pub mod sky_fx;
 pub mod stuck;
 pub mod track;
+pub mod cop;
+pub mod pursuit;
 pub mod traffic;
 pub mod weather;
 pub mod weather_fx;

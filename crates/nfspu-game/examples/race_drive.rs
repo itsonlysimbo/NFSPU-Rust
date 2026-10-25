@@ -9,6 +9,10 @@
 //! `RACE_DRIVE_TRAFFIC=<0-3>` adds road traffic (none, light, medium, heavy; default 0). The
 //! autopilot passes and brakes for traffic like the opponents (`ai::avoid`); `RACE_DRIVE_NO_AVOID=1`
 //! turns that off to compare.
+//! `RACE_DRIVE_PURSUIT=1|busted|time` runs pursuit mode (`nfspu_game::cop`, `::pursuit`): police
+//! from the track's `.cop` file chase the autopilot. `1` expects the player to escape (cross the
+//! finish in time); `busted` makes the player stop when a cop is near, so it expects three tickets;
+//! `time` sets a 20 s limit and expects the clock to run out. Events go to the log.
 //! `RACE_DRIVE_CAR=<catalogue id>` drives that retail car (default: the made-up `Spec::generic`);
 //! opponents drive the 993's retail car.
 //! `RACE_DRIVE_SOUND=1` also runs the race-sound rules (`nfspu_game::race_sound`) with the
@@ -172,6 +176,20 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     if density > 0 {
         let _ = writeln!(out, "   traffic density {density}: {} cars", fleet.cars.len());
     }
+    // pursuit mode: police from Track/Cops/<track>.cop and the win/lose rules
+    let pmode = std::env::var("RACE_DRIVE_PURSUIT").ok();
+    let mut pursuit = None;
+    let mut squad = None;
+    let mut pursuit_log = 0u32;
+    if let Some(m) = &pmode {
+        let spots = nfspu_game::cop::load_spots(&game, name);
+        let lap_m: f32 = p.slices.windows(2).take(p.lap_slices.max(2) - 1).map(|w| w[0].pos.distance(w[1].pos)).sum();
+        let limit = if m == "time" { 20.0 } else { nfspu_game::pursuit::time_limit(lap_m, laps) * 2.0 };
+        let _ = writeln!(out, "   pursuit {m}: {} cop spots, lap {lap_m:.0} m, time limit {limit:.0} s", spots.len());
+        let template = Car::with_spec(bevy::math::Vec3::ZERO, 0.0, opp_spec.clone(), Default::default());
+        squad = Some(nfspu_game::cop::Squad::new(&spots, p, &ground, &template, dir, seed));
+        pursuit = Some(nfspu_game::pursuit::Pursuit::new(limit));
+    }
     let mut resets = vec![0u32; opponents];
     let mut taken = std::collections::BTreeMap::<(usize, usize), u32>::new();
     let mut choice_lines = 0u32;
@@ -221,6 +239,10 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             } else {
                 let mut near: Vec<Other> = racers.iter().map(|x| Other::of(&x.0)).collect();
                 near.extend(traffic_now.iter().copied());
+                if let Some(q) = &squad {
+                    // the autopilot also steers round roadblocks (not the chasing cops: braking for them would let them bust it)
+                    near.extend(q.cops.iter().filter(|c| c.state == nfspu_game::cop::State::Block).map(|c| Other::of(&c.car)));
+                }
                 ai::avoid(&car, &near, p, slice, dir)
             };
             let to = a.offset.map_or(route_target, |o| ai::aim_at_offset(route_target, p, route, dir, o)) - car.pos;
@@ -241,7 +263,10 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             // while sliding, or full lock plus full throttle spins a rear-drive car
             let sliding = car.sim.lateral_speed(car.yaw).abs() > 3.0;
             let steer = (diff * 2.5 - 0.25 * car.sim.yaw_rate).clamp(-1.0, 1.0);
-            if backing > 0.0 {
+            let cop_close = pmode.as_deref() == Some("busted") && squad.as_ref().and_then(|q| q.nearest_chaser(&car)).is_some_and(|d| d < 30.0);
+            if cop_close {
+                Input { brake: true, ..Default::default() }
+            } else if backing > 0.0 {
                 backing -= dt;
                 Input { brake: true, steer: -(diff * 2.5).clamp(-1.0, 1.0), ..Default::default() }
             } else {
@@ -344,6 +369,29 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
             }
             traffic_max = traffic_max.max(fleet.driving());
         }
+        if let (Some(q), Some(pu)) = (&mut squad, &mut pursuit) {
+            if !r.held() && pu.outcome.is_none() {
+                let hold = pu.holding(r.race_ticks());
+                for e in q.tick(p, &ground, &walls, &mut car, slice, dir, hold, dt) {
+                    pursuit_log += 1;
+                    if pursuit_log <= 40 || matches!(e, nfspu_game::cop::Event::Roadblock { .. }) {
+                        let _ = writeln!(out, "      tick {:>5}: cop {e:?}", r.tick);
+                    }
+                }
+                let near = q.nearest_chaser(&car);
+                for e in pu.tick(r.race_ticks(), near, car.speed) {
+                    let _ = writeln!(out, "   tick {:>5}: PURSUIT {e:?} ({})", r.tick, nfspu_game::pursuit::hud_line(pu, r.race_ticks(), q.chasing()));
+                }
+                if r.cars[0].state == race::CarState::Finished {
+                    for e in pu.finished() {
+                        let _ = writeln!(out, "   tick {:>5}: PURSUIT {e:?}", r.tick);
+                    }
+                }
+            }
+        }
+        if pursuit.as_ref().is_some_and(|pu| pu.outcome.is_some_and(|o| !o.won())) {
+            break;
+        }
         if r.held() {
             let d = car.pos - start_pos;
             moved_before_go = moved_before_go.max((d.x * d.x + d.z * d.z).sqrt());
@@ -422,6 +470,25 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     if !fleet.cars.is_empty() {
         let _ = writeln!(out, "   traffic: {traffic_spawns} spawns, {traffic_removed} removals, up to {traffic_max} driving at once, {traffic_hits} hits of impact 20+, {traffic_honks} honks");
     }
+    let mut pursuit_ok = true;
+    if let Some(pu) = &mut pursuit {
+        // the finish is seen in the last tick, after the pursuit step ran
+        if r.cars[0].state == race::CarState::Finished {
+            for e in pu.finished() {
+                let _ = writeln!(out, "   PURSUIT {e:?}");
+            }
+        }
+    }
+    if let (Some(q), Some(pu), Some(m)) = (&squad, &pursuit, &pmode) {
+        let want = match m.as_str() { "busted" => nfspu_game::pursuit::Outcome::Busted, "time" => nfspu_game::pursuit::Outcome::TimeUp, _ => nfspu_game::pursuit::Outcome::Escaped };
+        pursuit_ok = pu.outcome == Some(want);
+        let woke = q.cops.iter().filter(|c| c.state != nfspu_game::cop::State::Waiting).count();
+        let _ = writeln!(out, "   pursuit: outcome {:?} (expected {want:?}), {} tickets, {} cops woke of {}, {} rams, {} roadblocks{}", pu.outcome, pu.tickets, woke, q.cops.len(), q.rams, q.roadblocks, if pursuit_ok { "" } else { " -> FAILED" });
+        if woke == 0 {
+            pursuit_ok = false;
+            let _ = writeln!(out, "   FAILED: no cop ever chased");
+        }
+    }
     if let Some(snd) = sound.take() {
         let path = log_file().with_file_name("race_sound.log");
         let _ = writeln!(out, "   sound: {} hits logged, log {}", snd.hits, path.display());
@@ -429,10 +496,16 @@ fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8
     }
     let _ = writeln!(out, "   held before GO: moved {moved_before_go:.2} m sideways; wrong-way ticks {wrong_ticks}; spins {spins}; final progress {:.3}; {}",
         r.cars[0].progress, if stuck { "GAVE UP (stuck or too slow)" } else { "ok" });
+    // in a pursuit the cops ram the player into walls: the stuck rule putting it back is expected
+    if lost_count > 0 && pmode.is_some() {
+        let _ = writeln!(out, "   pursuit: the stuck/recover rule fired {lost_count} time(s) (expected with ramming)");
+        lost_count = 0;
+    }
     if lost_count > 0 {
         let _ = writeln!(out, "   FAILED: the player car was stuck, fell through or left the world {lost_count} time(s)");
     }
-    !stuck && lost_count == 0 && moved_before_go < 0.5 && r.all_finished()
+    let pursuit_cut = pursuit.as_ref().is_some_and(|pu| pu.outcome.is_some_and(|o| !o.won()));
+    pursuit_ok && !(stuck && !pursuit_cut) && lost_count == 0 && moved_before_go < 0.5 && (r.all_finished() || pursuit_cut)
 }
 
 fn log_file() -> std::path::PathBuf {

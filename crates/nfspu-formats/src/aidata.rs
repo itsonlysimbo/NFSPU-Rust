@@ -82,6 +82,42 @@ pub fn parse_jnc(d: &[u8]) -> Vec<[f32; JNC_ROUTES]> {
         .collect()
 }
 
+/// One cop placement from a track's `Cops/<track>.cop` file.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CopSpot {
+    /// First field of the record (always 1 in the shipped files; meaning not decoded).
+    pub kind: i32,
+    /// Road slice the cop waits at.
+    pub slice: u32,
+    /// Third field: 0 on most tracks, 1 on skidpad and a few end records (not decoded).
+    pub extra: i32,
+    /// Fourth field: -1, 0 or 1; read as the side of the road / facing (guess).
+    pub side: i32,
+    /// Fifth field: 0 or 1 (not decoded).
+    pub flag: i32,
+}
+
+/// Size of one `.cop` record: five little-endian 32-bit values after the u32 record count.
+pub const COP_RECORD: usize = 20;
+
+/// Reads a `.cop` file. The count in the header is larger than the data on the Monaco files, so
+/// only complete records that are present are returned.
+pub fn parse_cop(d: &[u8]) -> Vec<CopSpot> {
+    let n = u32_at(d, 0).unwrap_or(0) as usize;
+    (0..n)
+        .map_while(|i| {
+            let at = 4 + i * COP_RECORD;
+            Some(CopSpot {
+                kind: u32_at(d, at)? as i32,
+                slice: u32_at(d, at + 4)?,
+                extra: u32_at(d, at + 8)? as i32,
+                side: u32_at(d, at + 12)? as i32,
+                flag: u32_at(d, at + 16)? as i32,
+            })
+        })
+        .collect()
+}
+
 pub const PER_RECORD: usize = 44;
 
 /// Which part of the road a skill value applies to.
@@ -170,5 +206,17 @@ mod tests {
         let j = parse_jnc(&jnc);
         assert_eq!(j.len(), 2);
         assert_eq!(&j[1][..3], &[0.85, 0.15, 0.0]);
+    }
+
+    #[test]
+    fn cop_records() {
+        let mut d = 3u32.to_le_bytes().to_vec();
+        for v in [1i32, 100, 0, 1, 1, 1, 300, 0, -1, 0] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        let c = parse_cop(&d);
+        // the header says 3 but only two records are present
+        assert_eq!(c.len(), 2);
+        assert_eq!((c[1].slice, c[1].side, c[1].flag), (300, -1, 0));
     }
 }
