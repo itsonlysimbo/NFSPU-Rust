@@ -60,6 +60,11 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
 - Keep 3 sessions running. When one finishes, merge it and start the next task from `docs/WORK.md`,
   highest first, without asking.
 - Sessions commit to their own branch freely and run in auto permission mode.
+- **Auto-continue (user, 2026-10-24):** the app refuses new sessions from automated turns, so when
+  a session's branch is merged, the coordinator sends that same session the next unclaimed task
+  from `docs/WORK.md` "Up next". The session then, in its own worktree only:
+  `git fetch` (worktrees share the repo), `git checkout -b claude/<task> master`, claims the row
+  and works as usual.
 - New sessions use Sonnet or lower (user, 2026-10-22): Sonnet for Strong and Mid tasks, Haiku for
   Light ones. Only the coordinator runs on Opus.
 - Delete `target/`, finished worktrees and merged branches after merging, without asking. Only
