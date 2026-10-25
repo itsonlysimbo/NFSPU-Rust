@@ -88,6 +88,9 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
   (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `.claude/settings.json`), and the coordinator's hourly
   check-in tells each working session to re-read AGENTS.md and its board row.
 - **Discord (user, 2026-10-24):** every agent (Claude, OpenCode, Codex) posts to the project channel when it starts, finishes or gets blocked on a task: `python scripts/discord_bridge.py post "<agent> (<branch>): <one line>"`. The user's replies land in `logs/discord_inbox.md`; the coordinator reads and forwards them. WORK.md stays the durable record.
+  Agents also read the channel (each other's posts and the user's) with `python scripts/discord_bridge.py read [n]`, at task start and when blocked.
+- **Issues (user, 2026-10-24):** every board task has a GitHub issue, labelled `tier:*`, `state:active`/`state:up-next`, and `priority:high` for the top three Up next. The coordinator runs `python scripts/sync_issues.py` after each board change (the board is the record; issues follow it, Done rows close them). Sessions comment progress on their task's issue: `gh issue comment <n> -b "<one line>"`.
+- **CI (user, 2026-10-24):** `bash scripts/check.sh <branch>` is the merge check (tests, ORACLE PASS, race_drive ALL OK) and posts any failure to Discord. GitHub Actions (`.github/workflows/ci.yml`) builds and runs the game-free tests on each push to master and posts failures through the `DISCORD_WEBHOOK` repo secret.
 - When Claude usage runs out, every task is left as a committed WIP with a Next step on the board
   so OpenCode can continue.
 

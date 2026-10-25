@@ -1,6 +1,7 @@
 """Discord bridge for the agents' channel.
 
   python scripts/discord_bridge.py post "<agent>: <text>"   post one message (any agent can call this)
+  python scripts/discord_bridge.py read [n]                 print the last n messages (default 20), oldest first
   python scripts/discord_bridge.py listen                    run the bot; the user's messages go to the inbox
 
 The token comes only from the DISCORD_BOT_TOKEN user environment variable (never the repo).
@@ -35,16 +36,27 @@ def token():
     return t.strip()
 
 
+def api(path, data=None):
+    req = urllib.request.Request(
+        f"https://discord.com/api/v10/channels/{CHANNEL_ID}/{path}",
+        data=json.dumps(data).encode() if data is not None else None,
+        headers={"Authorization": f"Bot {token()}", "Content-Type": "application/json",
+                 "User-Agent": "nfspu-bridge (local, 1.0)"},
+    )
+    return json.loads(urllib.request.urlopen(req, timeout=20).read() or b"null")
+
+
+def read(n):
+    # every agent posts through the same bot and signs its name, so print the text as written
+    for m in reversed(api(f"messages?limit={min(n, 100)}")):
+        who = "user" if int(m["author"]["id"]) == OWNER_ID else "agent"
+        print(f"[{m['timestamp'][:16].replace('T', ' ')}] {who}: {m['content']}")
+
+
 def post(text):
     # plain REST call, no gateway needed; Discord caps a message at 2000 characters
     for i in range(0, len(text), 1900):
-        req = urllib.request.Request(
-            f"https://discord.com/api/v10/channels/{CHANNEL_ID}/messages",
-            data=json.dumps({"content": text[i:i + 1900], "allowed_mentions": {"parse": []}}).encode(),
-            headers={"Authorization": f"Bot {token()}", "Content-Type": "application/json",
-                     "User-Agent": "nfspu-bridge (local, 1.0)"},
-        )
-        urllib.request.urlopen(req, timeout=20).read()
+        api("messages", {"content": text[i:i + 1900], "allowed_mentions": {"parse": []}})
 
 
 def listen():
@@ -73,6 +85,8 @@ def listen():
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "post":
         post(" ".join(sys.argv[2:]))
+    elif sys.argv[1:2] == ["read"]:
+        read(int(sys.argv[2]) if len(sys.argv) > 2 else 20)
     elif sys.argv[1:] == ["listen"]:
         listen()
     else:

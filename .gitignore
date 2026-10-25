@@ -21,6 +21,11 @@
 !scripts/merge_guard.sh
 !scripts/discord_bridge.py
 !scripts/protected.txt
+!scripts/check.sh
+!scripts/sync_issues.py
+!.github/
+!.github/workflows/
+!.github/workflows/ci.yml
 !oracle/**
 
 # Always ignored, even though they match the allow rules above
