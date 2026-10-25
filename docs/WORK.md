@@ -28,7 +28,6 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
 | Career: later eras' events and prize tables, full era progression | Mid | `career.md` plan |
 | Save profiles: read retail .sav career progress (install read-only) | Mid | Our own format writes; never write to the install |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge |
@@ -38,6 +37,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Collision: close edge slivers and open edges | merged 2026-10-25; edge_walls.rs wall strips, audit OPEN ~8000 -> 430; residue: coastal slice fractions, industrial PINCH; not tested in game |
 | Handling feel vs retail (engine and gearbox) | merged 2026-10-25, docs only: shift speeds, time in gear, rpm drops match the footage within reading error; no code change |
 | Career: showcase and car compare with real data | merged 2026-10-25; car setup sliders, 3D showcase car, compare second combobox left |
 | Factory Driver screens and live missions | merged 2026-10-25: missions 0, 1, 12 (promotion), 16 pass headless; banner and cones not seen on screen |

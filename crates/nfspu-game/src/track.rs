@@ -242,6 +242,11 @@ pub fn load_ground(track: &str) -> Result<GroundData, String> {
     };
 
     let centerline: Vec<Vec3> = pieces.iter().map(|p| centroid(p)).collect();
+    // keep cars from driving off road edges that drop into void
+    if let Ok(race) = crate::race_path::load(track, crate::race_path::Direction::Forward) {
+        let edge = crate::edge_walls::open_edge_walls(&race.path, &crate::ground::Ground::new(tris.clone(), 4.0), &crate::collision::WallSet::new(walls.clone(), 4.0));
+        walls.extend(edge);
+    }
     Ok(GroundData { tris, road_triangles: road, terrain_triangles: terrain, road_carriers: carriers, walls, ceilings, start_pos, start_yaw, centerline, start_note })
 }
 

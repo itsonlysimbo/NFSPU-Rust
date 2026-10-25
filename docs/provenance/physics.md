@@ -453,3 +453,4 @@ gear times or rpm drops from retail. Tyres (grip, slip, skids) have no usable ev
 footage: the clip has no hard slide or brake-to-stop with a readable speed. A clip with a standing
 start from idle, a straight-line 100-0 braking, and a constant-speed circle would settle the
 remaining numbers (showroom 0-60 +25% and the launch). Added to `docs/PLAYTEST.md`.
+`edge_walls.rs` (2026-10-25): where the audit's OPEN test fails at a slice, a 4.5 m tall wall strip is generated 0.4 m outside the road edge and added to the track's walls in `load_ground`. OPEN runs dropped from about 8000 to 430 over 15 tracks; the rest sit between slices or beside short road stubs. Not tested in the game.
