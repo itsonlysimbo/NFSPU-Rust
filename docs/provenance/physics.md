@@ -408,3 +408,48 @@ per-car scale is needed or known to exist in retail. Drawn roll in steady corner
 ## 11. Collision audit and stuck recovery (2026-10-24)
 
 `collision_audit` sweeps every road slice across its width plus 3 m shoulders and uses the car's own support tiers. Result: no real holes on the road; leftovers are slivers at the nominal road edge beside void (4 spots), slice/mesh offsets on unused side stubs, and open edges (skidpad, forest, autobahn) where a car can drive off into void. Steps over 0.6 m near edges are kerbs and rails. Two industrial spots block the whole road width for the wall test (not looked into). Instead of patching per spot, the player now gets retail's reset rules (`stuck.rs`): stuck 320 ticks, 35 m past the edge, over 115 m/s, plus our own fell 30 m or airborne 4 s. The out-of-bounds test also checks the nearest slice anywhere, because the tracked slice can sit on a side stub. `race_drive` fails if any of these fire. Not tested in the game window.
+
+## 12. Engine and gearbox against the retail GT1 launch (2026-10-25)
+
+Footage: `2026-10-23 11-00-02.mp4` (GT1, id 170, automatic, cockpit view), launch at video 180-190 s.
+The race clock reads 00:06.53 at 185.0 s, so GO was at about 178.5 s; the throttle went down about
+2 s later (the rev needle leaves idle between 180.5 and 181.0 s). Dials read by eye from 0.5 s crops
+of the 1080p frames (speedo +-10 km/h, tach +-0.3k rpm, times +-0.25 s; frames kept outside the repo).
+
+| Video time (s) | Gear | Speed (km/h) | rpm (k) |
+|---|---|---|---|
+| 181.0 | 1 | 15 | 1.8 |
+| 182.0 | 1 | 35 | 3.3 |
+| 183.0 | 1 | 60 | 4.8 |
+| 184.0 | 1 | 85 | 6.1 |
+| 184.5 | 1 | 100 | 6.9 |
+| 185.0 | 2 | 105 | 6.2 (just shifted) |
+| 186.5 | 2 | 140 | 7.0 |
+| 187.0 | 3 | 150 | 6.1 (just shifted) |
+| 189.0 | 3 | 185 | 6.9 |
+| 189.5 to 195 | 4 | 190-200 | 6.5-7.0 |
+
+Ours (`NFSPU_TRACE=1 physics_check 170`, automatic, full throttle from the moment the brake is
+released): 1st to 93 km/h at 4.0 s, 2nd to 142 km/h at 6.3 s (2.3 s in gear), 3rd to 184 km/h at
+9.0 s (2.7 s in gear), 4th from 184 km/h reaching 200 at 10.25 s.
+
+Compared (same throttle-down start):
+- **Shift speeds**: 1-2 ours 93 against about 102 (retail), 2-3 142 against 140-145, 3-4 184
+  against about 188. Ours shifts at 90-100% of the redline at random (decoded), the single retail
+  1-2 shift read was near 7.0k: inside the random band. Not a mismatch beyond the reading error.
+- **Time in gear**: 1st 4.0 s against about 4.0 s, 2nd 2.3 against about 2.0, 3rd 2.7 against
+  about 2.5: all within the +-0.25 s reading error.
+- **0-100 km/h**: ours 4.4 s (+ showroom claims 0-60 mph 3.4 s, ours 4.27, +25%, already known);
+  retail footage about 3.8-4.2 s from the first needle movement. A real gap, but the start of
+  the needle movement is uncertain by 0.3 s, so it is **not** a number to fit to.
+- **rpm after a shift**: ours 5.2k after 1-2, 5.8k after 2-3, 6.2k after 3-4; retail about 5.5-6.2k,
+  6.1k, about 6.3k: matches.
+- **Launch rpm**: our test revs the engine in neutral on the grid (7350) and drops to 3.9k on
+  release; retail starts from idle (needle at 1.1k) and the rpm climbs with the car. This is the
+  start procedure, not the engine curve; not compared.
+
+**Decision: no change to engine or gearbox.** Nothing measurable by eye separates our shift points,
+gear times or rpm drops from retail. Tyres (grip, slip, skids) have no usable event in this
+footage: the clip has no hard slide or brake-to-stop with a readable speed. A clip with a standing
+start from idle, a straight-line 100-0 braking, and a constant-speed circle would settle the
+remaining numbers (showroom 0-60 +25% and the launch). Added to `docs/PLAYTEST.md`.

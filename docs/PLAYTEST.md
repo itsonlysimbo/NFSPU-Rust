@@ -251,3 +251,8 @@ two cars show numbers. Judge the tab look (a stand-in) against retail.
 - Judge against retail: where the car is put at the start, the cone size and colour, the banner's
   place and size, and whether a pass moves the mission list on (it does in the log; the speech is
   not drawn yet). Missions with opponents (the races) are not built: RACE falls back to a plain race.
+
+## Handling feel: clips that would settle tyres and the launch (2026-10-25)
+Record (retail, game sound on, cockpit view so the dials show): a standing start from idle in a GT1
+or 993 with the throttle down at GO and nothing else; a straight 100 km/h to 0 brake; a few seconds
+round a constant-speed corner. See `docs/provenance/physics.md` section 12.
