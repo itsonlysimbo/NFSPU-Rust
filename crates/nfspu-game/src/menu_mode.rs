@@ -1069,7 +1069,7 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
     // `NFSPU_CAREER=1` does the same for any page (the shop screens); `NFSPU_CAREER_CASH=n` and
     // `NFSPU_CAREER_YEAR=y` set the account and the year for such a test.
     // The Factory Driver screens can be started directly: `NFSPU_MENU=factorydriver`.
-    if ["factorydriver", "missionbrief", "missionmap", "factfirst", "factwelcome"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) {
+    if ["factorydriver", "missionbrief", "missionmap", "factfirst", "factwelcome", "levelvictory"].iter().any(|n| page_name.eq_ignore_ascii_case(n)) {
         state.enter_factory();
         state.reload();
     }
