@@ -293,3 +293,15 @@ block's car; now `OpponentCars::Cars` hands them out in turn (`ai::pick_cars`). 
 (`finish_race`: the next era opens when all its regular tournaments are complete, the bonus
 trophy opens after them) was already in place and is unchanged. Per-race payout (prize / races) stays
 a **guess**. Not tested in the window.
+
+## Retail save (reading it into a career)
+
+`save_import.rs` reads, never writes, a `.sav`. Each section is `name ` followed by values.
+
+| Where | Value | Evidence |
+|---|---|---|
+| `Tournament ` +0, u32 | career year | blank 1950, played profile 1956 |
+| `PlayerInfo ` +4, u32 | account balance (**guess**) | blank 11000 (the first 356's price), played 0 after it bought that car |
+| `PlayerInfo` car copies | owned cars and paint | `catalog::owned_cars` |
+
+Not read yet: tournament and mission progress (`Missions` section, undecoded), parts, damage, used-car lot. When RACE-side "evolution..." finds no profile of ours but a retail save of that player exists, the career starts from these values. Not tested in the game window.
