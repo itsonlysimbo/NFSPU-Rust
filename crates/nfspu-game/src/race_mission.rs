@@ -88,6 +88,14 @@ pub fn mission(
     if let Some(t) = live.ended_for.as_mut() {
         *t += dt;
         if *t >= VERDICT_SECONDS {
+            // A scripted run counts a mission as one of its races: the mission leaves the race by
+            // itself as soon as it is judged, before `flow_test_race`'s timer.
+            if let Some(test) = test.as_mut() {
+                if test.on() {
+                    test.done += 1;
+                    crate::log_line(&format!("flow test: mission race {} of {} judged", test.done, test.races));
+                }
+            }
             crate::flow::leave_race(&back, &mut next, &mut exit);
         }
         return;
