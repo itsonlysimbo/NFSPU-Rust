@@ -1,0 +1,6 @@
+# Paths only an "oracle" task may change; the coordinator reviews such diffs by hand.
+oracle/
+crates/nfspu-game/examples/oracle.rs
+crates/nfspu-game/examples/race_drive.rs
+scripts/protected.txt
+scripts/merge_guard.sh

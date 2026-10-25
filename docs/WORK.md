@@ -27,6 +27,8 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Tier | Notes |
 |---|---|---|
+| Oracle runner: `oracle.rs`, case format, `verified.txt`, first cases from formats and our own sim (self-reference) | Strong | *oracle* task: may touch protected files. `docs/ORACLE.md` |
+| Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Career: showcase, car compare and car setup screens with real data | Mid | Left open by slice 3 (`career.md`) |
 | Collision: close the remaining edge slivers and open edges from `logs/collision_audit.log` | Mid | Collision audit merged |
 | Handling feel vs retail: tyres, engine and gearbox against the footage | Strong | Footage: `C:\Users\CB\Videos\2026-10-23 11-00-02.mp4` |

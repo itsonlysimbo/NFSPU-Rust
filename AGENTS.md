@@ -79,6 +79,14 @@ These override "ask first" items above where they overlap. Hard rules 1, 2, 4-8 
 - After each major milestone (user, 2026-10-23): update `docs/progress.md`, rerun the progress tool,
   and refresh the "NFSPU rewrite progress" dashboard
   (https://claude.ai/artifact/84fMsfSDpfdvNn4PCQapD1) from that table.
+- **Oracle (user, 2026-10-24):** `docs/ORACLE.md`. Before every merge the coordinator runs
+  `bash scripts/merge_guard.sh <branch>`; a branch changing protected checker files (list in
+  `scripts/protected.txt`) is merged only after the coordinator reads that diff
+  (`--allow-oracle`). Once `oracle.rs` exists, `ORACLE PASS` joins tests and `race_drive` as a
+  merge condition. Never loosen a tolerance or edit a reference trace to pass.
+- **Context upkeep (user, 2026-10-24):** sessions compact at 40% of their context
+  (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `.claude/settings.json`), and the coordinator's hourly
+  check-in tells each working session to re-read AGENTS.md and its board row.
 - When Claude usage runs out, every task is left as a committed WIP with a Next step on the board
   so OpenCode can continue.
 

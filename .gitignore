@@ -18,6 +18,9 @@
 !*.md
 !scripts/
 !scripts/cloud_setup.sh
+!scripts/merge_guard.sh
+!scripts/protected.txt
+!oracle/**
 
 # Always ignored, even though they match the allow rules above
 reference/
