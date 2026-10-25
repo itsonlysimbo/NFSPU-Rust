@@ -13,6 +13,7 @@ pub mod car_sim;
 pub mod car_model;
 pub mod car_shine;
 pub mod collision;
+pub mod factory;
 pub mod garage;
 pub mod ground;
 pub mod catalog;

@@ -448,6 +448,17 @@ fn main() {
     }
     let mut out = String::new();
     let mut ok = true;
+    if std::env::var("RACE_DRIVE_FACTORY").as_deref() == Ok("1") {
+        // Factory Driver missions, headless (nfspu_game::factory::drive_all)
+        let game = std::path::PathBuf::from(std::env::var("NFSPU_GAME_DIR").unwrap_or_default());
+        let missions = nfspu_game::factory::load_missions(&game);
+        let tracks = std::fs::read(game.join("FEData").join("Data").join("nfs5.trk")).map(|d| nfspu_game::catalog::parse_tracks(&d)).unwrap_or_default();
+        let r = nfspu_game::factory::drive_all(&game, &missions, &tracks);
+        let _ = std::fs::write(log_file().with_file_name("factory_drive.txt"), &r.text);
+        print!("{}", r.text);
+        println!("{}", if r.ok && !missions.is_empty() { "ALL OK" } else { "SOME FAILED" });
+        return;
+    }
     if let Some(name) = a.first() {
         let dir = if a.get(1).map_or(false, |d| d.starts_with('b')) { Direction::Backward } else { Direction::Forward };
         let laps = a.get(2).and_then(|l| l.parse().ok()).unwrap_or(2);
