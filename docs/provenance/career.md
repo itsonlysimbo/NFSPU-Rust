@@ -245,10 +245,15 @@ pose, the scene's cones as cone objects that fall when hit, a banner with time /
 verdict handed back through `factory_live.rs`), the progress file, and a flow-test hook.
 **Verified headless** (`NFSPU_MENU=factorydriver NFSPU_FACTORY_AUTO=40 NFSPU_FLOW_TEST=1,60`): mission
 0 drives on the skid pad, passes in 14.05 s with 1 cone, saves `done = 0,1,0,842`, logs the pass
-speech and returns to the mission list. **Found on the way**: a mission car must not be given the
-road's rules — the crash reset, the stuck / out-of-bounds watch and the wrong-way test put it back on
-the road every second on the skid pad, so no gate ever counted; with a mission active they are
-skipped (`race_mode::race_tick`) and the physics still rights the car where it is.
+speech and returns to the mission list; mission 1 passes in 16.02 s (10 gates), mission 12 in 28.59 s
+(19 gates, autobahn) and mission 16 in 21.42 s (9 gates). Passing mission 12 (the last of rank 1)
+logs "Congratulations on your earned promotion to Test Driver" and opens `levelvictory`
+(`NFSPU_MENU=levelvictory NFSPU_FACTORY_MISSION=13 NFSPU_MENU_CAPTURE=1` saves
+`logs/menu_levelvictory.png`: Rolf's portrait, the promotion text, `done`). **Found on the way**: a
+mission car must not be given the road's rules — the crash reset, the stuck / out-of-bounds watch and
+the wrong-way test put it back on the road every second on the skid pad, so no gate ever counted;
+with a mission active they are skipped (`race_mode::race_tick`) and the physics still rights the car
+where it is.
 
 **Not built**: the mission pictures and maps (`FACTORYPIC`, `FACTORYMAP`), the pass/fail speech on
 the screen (it is only logged), the race missions (opponents, minimum place), the mission cars with
