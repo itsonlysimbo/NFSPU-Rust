@@ -280,3 +280,16 @@ fee, prize and the cars the rule accepts (`logs/career_rules.txt`).
 Entry: `menu_mode::start_career_race` refuses a car that fails the rule (logged; **guess**: retail's
 refusal message was not found). Entry fee (`+0xdc`) and prizes (`+0xec`) were already wired.
 Not tested in the window; unit test `car_rules_match_the_catalogue_names`.
+
+## Prizes and opponents by era (2026-10-25)
+
+Read from `nfs5.trn` for all 20 career records: prizes at `+0xec` (1st..8th) and fee at `+0xdc`
+rise with the era (classic 1st place 5,000-12,000 and fees 0-1,000; golden 15,000-60,000 and
+3,500-20,000; modern 100,000-200,000 and 25,000-50,000; the three prize-car trophies pay 0 and
+cost 0). The seven opponent blocks (`+0x118`, 0x58 apart, car id at +2) give **each opponent its
+own car**: e.g. Mixed Class Challenge uses 124-128, 911 Anniversary Cup 162-165, single-car
+tournaments repeat one id seven times. Before, the game gave all seven opponents the first
+block's car; now `OpponentCars::Cars` hands them out in turn (`ai::pick_cars`). Era progression
+(`finish_race`: the next era opens when all its regular tournaments are complete, the bonus
+trophy opens after them) was already in place and is unchanged. Per-race payout (prize / races) stays
+a **guess**. Not tested in the window.

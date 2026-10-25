@@ -330,12 +330,8 @@ impl FrontEnd {
         setup.direction = nfspu_game::race_setup::Direction::Forward;
         setup.laps = career::CAREER_LAPS;
         setup.opponents = 7;
-        setup.opponent_cars = t
-            .opponent_cars
-            .first()
-            .and_then(|id| self.quick.cars.iter().find(|k| k.id == *id))
-            .map(|k| nfspu_game::race_setup::OpponentCars::Car { id: k.id, model: k.model.clone() })
-            .unwrap_or_default();
+        // Each opponent has its own car in the tournament record (seven slots).
+        setup.opponent_cars = if t.opponent_cars.is_empty() { Default::default() } else { nfspu_game::race_setup::OpponentCars::Cars(t.opponent_cars.clone()) };
         setup.car_id = car.id;
         setup.car_model = car.model.clone();
         setup.car_name = car.name.clone();
