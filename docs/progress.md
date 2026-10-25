@@ -17,11 +17,11 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | Race | In-race pause menu (resume, restart, quit) | Done | 80 | Restyled to match retail footage; not playtested |
 | Race | Opponents: racing lines, retail drivers | Partial | 75 | Route choice at junctions verified on 7 tracks; not playtested |
 | Race | Traffic | Partial | 50 | Retail spawn, cull and lane driving; opponents and autopilot avoid it; not playtested |
-| Race | Knockout / tournament modes | Not started | 0 |  |
-| Race | Pursuit (police) mode | Not started | 0 |  |
-| Physics | Engine, gearbox, tyres, ABS/TC from .sim data | Partial | 70 | Handling feel vs retail |
+| Race | Knockout / tournament modes | Partial | 70 | Knockout and quick knockout merged (rounds, eliminations, run chaining; headless-verified); tournaments run through the career; not playtested |
+| Race | Pursuit (police) mode | Partial | 40 | Pursuit window and cops merged and run in the game window; not playtested |
+| Physics | Engine, gearbox, tyres, ABS/TC from .sim data | Partial | 72 | GT1 launch measured against footage (no engine change needed); feel still open |
 | Physics | Gravity, landings, body lean, wet grip | Done | 80 | Playtest |
-| Physics | Walls and car-vs-car collisions, stuck recovery | Partial | 75 | Collision audit of all tracks; stuck/fell/out-of-bounds reset to the road; a few edge slivers left; not playtested |
+| Physics | Walls and car-vs-car collisions, stuck recovery | Partial | 75 | Collision audit of all tracks; stuck/fell/out-of-bounds reset to the road; road edges that drop into void now get wall strips (audit open edges ~8000 to 430); not playtested |
 | Physics | Suspension, roll-overs | Partial | 60 | Spring suspension and roll-over reset with crash timer merged; not playtested |
 | Physics | Damage (visual and mechanical) | Partial | 55 | Damage zones, painted damage stamps and damage option merged; not playtested |
 | Graphics | Tracks: geometry, textures, objects | Done | 92 | Côte d'Azur water planes |
@@ -34,8 +34,8 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | HUD | Retail HUD, minimap, positions | Done | 90 |  |
 | Sound | Menu music | Done | 95 |  |
 | Sound | In-race sound: engine, announcer, skids, ambience | Partial | 75 | All channels merged; mix tuned to a retail recording (sound.md); needs an ear |
-| Career | Evolution career (eras, money, upgrades) | Partial | 50 | Slices 1-3 merged: profile, money, events, payout, buy/sell, tuning, test drive, era change; screens matched to retail footage |
-| Career | Factory Driver mode | Not started | 0 |  |
-| Career | Used cars, dealership, parts, paint shop | Partial | 65 | Dealership, used lot, parts, tuning, paint shop and test drive merged; showcase and car compare data open |
-| Career | Save profiles (load/save .sav) | Partial | 35 | Career profile saved in our own format; retail .sav read for settings |
+| Career | Evolution career (eras, money, upgrades) | Partial | 58 | Slices 1-3 plus later eras: car rules enforced at race start, opponents drive the tournament car, era prize notes; not playtested |
+| Career | Factory Driver mode | Partial | 35 | Screens and live missions merged (missions 0, 1, 12 with promotion, 16 verified headless); not playtested |
+| Career | Used cars, dealership, parts, paint shop | Partial | 65 | Dealership, used lot, parts, tuning, paint shop and test drive merged; showcase texts and car compare bars use real data; car setup sliders and gear bars open |
+| Career | Save profiles (load/save .sav) | Partial | 50 | Our own career format; a retail .sav starts a career from its year, cash and cars (read-only); tournament progress still undecoded |
 | Online | Multiplayer (new netcode, no EA services) | Not started | 0 | Long-term; ask first |
