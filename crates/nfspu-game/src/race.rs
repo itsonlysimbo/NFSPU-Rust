@@ -186,6 +186,10 @@ pub struct RaceStatus {
     pub road: std::sync::Arc<Vec<Vec<[f32; 2]>>>,
     /// Length of one lap in metres.
     pub lap_metres: f32,
+    /// Pursuit mode: the HUD line (time, tickets, cops) and, once it is over, the verdict.
+    pub pursuit_text: Option<String>,
+    /// Pursuit mode: distance to the nearest chasing cop, for the siren's volume.
+    pub siren_dist: Option<f32>,
 }
 
 /// One line of the results table.

@@ -227,3 +227,13 @@ the autopilot getting busted (alps did) -- that is a result, not a bug yet. All 
 
 ## Factory Driver (branch claude/factory-driver-c49da4)
 - Not playable yet: only the data, the pass/fail rules and a headless runner exist (RACE_DRIVE_FACTORY=1 with race_drive). Nothing to see in the game; screens and live missions are the next step (docs/WORK.md).
+## Pursuit in the game window (eyes and ears)
+Start: `NFSPU_PURSUIT=1` before launching (menu race or `NFSPU_RACE=canyon,forward,1,0,0`). Check:
+- cop cars (930 / 356 / 993) parked beside the road; they pull out and chase when you pass within
+  ~150 m, and ram you;
+- red/blue blocks flash on their roofs;
+- a siren loop that gets louder as a cop nears (it may be the wrong siren sound);
+- top-of-screen text: time left, tickets, cops; "BUSTED!" after three tickets (stop with a cop beside
+  you ~3 s), "YOU ESCAPED!" at the finish;
+- a roadblock (two cop cars across the road) ~45 s into a chase.
+All rules are guesses (docs/provenance/pursuit.md).

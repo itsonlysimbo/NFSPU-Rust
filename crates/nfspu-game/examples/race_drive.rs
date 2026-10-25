@@ -201,7 +201,7 @@ fn drive_ko(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty:
         let limit = if m == "time" { 20.0 } else { nfspu_game::pursuit::time_limit(lap_m, laps) * 2.0 };
         let _ = writeln!(out, "   pursuit {m}: {} cop spots, lap {lap_m:.0} m, time limit {limit:.0} s", spots.len());
         let template = Car::with_spec(bevy::math::Vec3::ZERO, 0.0, opp_spec.clone(), Default::default());
-        squad = Some(nfspu_game::cop::Squad::new(&spots, p, &ground, &template, dir, seed));
+        squad = Some(nfspu_game::cop::Squad::new(&spots, p, &ground, &[template], dir, seed));
         pursuit = Some(nfspu_game::pursuit::Pursuit::new(limit));
     }
     let mut resets = vec![0u32; opponents];

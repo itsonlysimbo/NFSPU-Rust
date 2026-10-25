@@ -55,6 +55,8 @@ pub struct Cop {
     pub car: Car,
     pub state: State,
     pub slice: usize,
+    /// Which cop car (index into the templates given to `Squad::new`).
+    pub variant: usize,
     pub rams: u32,
     still: u32,
     reverse: u32,
@@ -97,7 +99,8 @@ fn road_point(path: &RoadPath, slice: usize, frac: f32) -> Vec3 {
 impl Squad {
     /// One parked cop per spot, on the right of the road for side 1 and the left for side -1
     /// (side 0: right), facing along the race direction.
-    pub fn new(spots: &[CopSpot], path: &RoadPath, ground: &Ground, template: &Car, dir: Direction, seed: u32) -> Self {
+    pub fn new(spots: &[CopSpot], path: &RoadPath, ground: &Ground, templates: &[Car], dir: Direction, seed: u32) -> Self {
+        let mut rng = Rng::new(seed ^ 0xc0b5_0001);
         let mut cops = Vec::new();
         for sp in spots {
             let slice = (sp.slice as usize).min(path.slices.len().saturating_sub(1));
@@ -108,9 +111,11 @@ impl Squad {
                 continue;
             }
             let yaw = yaw_of(path.slices[slice].forward * dir.sign());
-            cops.push(Cop { car: template.reset(Vec3::new(p.x, h + 1.0, p.z), yaw), state: State::Waiting, slice, rams: 0, still: 0, reverse: 0 });
+            let variant = rng.below(templates.len().max(1));
+            let Some(template) = templates.get(variant) else { continue };
+            cops.push(Cop { car: template.reset(Vec3::new(p.x, h + 1.0, p.z), yaw), state: State::Waiting, slice, variant, rams: 0, still: 0, reverse: 0 });
         }
-        Squad { cops, rng: Rng::new(seed ^ 0xc0b5_0001), chase_ticks: 0, last_block: None, roadblocks: 0, rams: 0 }
+        Squad { cops, rng, chase_ticks: 0, last_block: None, roadblocks: 0, rams: 0 }
     }
 
     pub fn chasing(&self) -> usize {
@@ -211,7 +216,7 @@ impl Squad {
             let frac = side * ((room - 2.5).max(0.0) / (room - 1.5).max(0.1));
             let p = road_point(path, slice, frac);
             let Some(h) = ground.height_at(p.x, p.z, p.y + 2.0, 0.0) else { continue };
-            self.cops.push(Cop { car: template.reset(Vec3::new(p.x, h + 1.0, p.z), yaw), state: State::Block, slice, rams: 0, still: 0, reverse: 0 });
+            self.cops.push(Cop { car: template.reset(Vec3::new(p.x, h + 1.0, p.z), yaw), state: State::Block, slice, variant: 0, rams: 0, still: 0, reverse: 0 });
             cars += 1;
         }
         if cars == 0 {
