@@ -600,8 +600,13 @@ fn race_tick(
     let dt = time.delta_secs();
     let pos = car.car.pos;
     let dir = run.track.dir;
+    // A Factory Driver mission is driven against its own scene's gates, and retail puts them off the
+    // road (the skidpad): the road's crash reset, stuck/out-of-bounds watch and wrong-way test do not
+    // apply, or the car is put back on the road before it can reach the first gate. A car left alone
+    // is set upright where it is by the physics.
+    let mission = nfspu_game::factory_live::active().is_some();
     run.slice = run.track.path.track(run.slice, pos);
-    if car.car.wants_recover {
+    if car.car.wants_recover && !mission {
         let (p, yaw) = ai::reset_pose(&run.track.path, &run.line, run.slice, run.track.dir);
         car.car = car.car.recover(p, yaw);
         let d = &car.car.sim.damage.zones;
@@ -611,7 +616,7 @@ fn race_tick(
     let velocity = if dt > 0.0 { (pos - run.last_pos) / dt } else { Vec3::ZERO };
     run.last_pos = pos;
     let player_done = run.race.cars[run.player].state != race::CarState::Racing;
-    let wrong = !run.race.held() && !player_done && run.track.path.wrong_way(run.slice, velocity, dir);
+    let wrong = !mission && !run.race.held() && !player_done && run.track.path.wrong_way(run.slice, velocity, dir);
     if wrong != run.wrong_way {
         run.wrong_way = wrong;
         race_log(&format!("tick {}: wrong way {}", run.race.tick, if wrong { "ON" } else { "off" }));
@@ -629,7 +634,7 @@ fn race_tick(
         samples[run.player] = CarSample { fraction, crossed_finish: crossed };
         crossed = false;
         bump = bump.max(drive_opponents(run, &mut car.car, step, &ground.0, &walls.0, &mut samples));
-        if !run.race.held() && run.race.cars[run.player].state == race::CarState::Racing {
+        if !mission && !run.race.held() && run.race.cars[run.player].state == race::CarState::Racing {
             if let Some(why) = run.watch.tick(&car.car, &run.track.path, run.slice, dir) {
                 let (p, yaw) = ai::reset_pose(&run.track.path, &run.line, run.slice, dir);
                 car.car = car.car.recover(p, yaw);

@@ -470,6 +470,18 @@ fn flow_test_race(
     if !test.on() {
         return;
     }
+    // Factory missions leave the race as soon as their verdict banner has been shown. Count that
+    // as the flow-test race so the menu hook can finish instead of pressing RACE for the next
+    // mission while the requested race count is still outstanding.
+    if test.done < test.races
+        && nfspu_game::factory_live::active().is_some()
+        && nfspu_game::factory_live::verdict_pending()
+    {
+        test.done += 1;
+        test.since = None;
+        log_line(&format!("flow test: Factory Driver verdict completed race {} of {}", test.done, test.races));
+        return;
+    }
     let now = time.elapsed_secs();
     let since = *test.since.get_or_insert(now);
     if now - since < test.race_secs {

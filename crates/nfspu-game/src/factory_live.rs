@@ -40,3 +40,8 @@ pub fn set_verdict(v: Verdict) {
 pub fn take_verdict() -> Option<Verdict> {
     VERDICT.lock().unwrap().take()
 }
+
+/// Whether a race has finished a mission and is waiting for the menu to settle it.
+pub fn verdict_pending() -> bool {
+    VERDICT.lock().unwrap().is_some()
+}
