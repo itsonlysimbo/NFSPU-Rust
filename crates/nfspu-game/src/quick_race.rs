@@ -34,6 +34,8 @@ const MANUAL_AUTOMATIC: [u32; 2] = [560, 561];
 /// Accessor names as the layouts write them (without a `(SHORT)` suffix).
 pub const CAR: &str = "zMergedList.Car";
 pub const COLOUR: &str = "GenericCar.Colour";
+/// The second car of the car compare screen (same list as `CAR`).
+pub const CAR2: &str = "GenericCar2.Car";
 pub const TRACK: &str = "Track1.Track";
 pub const DIRECTION_KEY: &str = "Track1.Direction";
 pub const TRAFFIC_KEY: &str = "Track1.Traffic";
@@ -81,6 +83,8 @@ pub struct QuickRace {
     pub showcase: Option<(usize, usize)>,
     // Choices, as dropdown positions.
     pub car: usize,
+    /// Dropdown position of the car compare screen's second car.
+    pub car2: usize,
     pub colour: usize,
     pub track: usize,
     pub direction: usize,
@@ -167,6 +171,7 @@ impl QuickRace {
         // race" button's game-type routine sets `zMergedList.Car` to 0), so the saved value is not
         // used. The others come from the save as the accessors load them.
         q.car = 0;
+        q.car2 = 1;
         q.colour = saved(save, COLOUR, usize::MAX, 0);
         q.track = saved(save, TRACK, q.track_list.len(), 0);
         q.direction = saved(save, DIRECTION_KEY, 4, 0);
@@ -187,10 +192,15 @@ impl QuickRace {
 
     /// The chosen car: (catalogue index, owned).
     pub fn chosen_car(&self) -> Option<(usize, bool)> {
-        if self.car < self.owned.len() {
-            Some((self.owned[self.car], true))
+        self.nth_car(self.car)
+    }
+
+    /// The car at a position of the car dropdown (owned cars first, then factory stock).
+    fn nth_car(&self, n: usize) -> Option<(usize, bool)> {
+        if n < self.owned.len() {
+            Some((self.owned[n], true))
         } else {
-            self.factory.get(self.car - self.owned.len()).map(|i| (*i, false))
+            self.factory.get(n - self.owned.len()).map(|i| (*i, false))
         }
     }
 
@@ -238,6 +248,7 @@ impl QuickRace {
     pub fn pick(&mut self, accessor: &str, item: usize) -> bool {
         let slot = match accessor {
             CAR => &mut self.car,
+            CAR2 => &mut self.car2,
             COLOUR => &mut self.colour,
             TRACK => &mut self.track,
             DIRECTION_KEY => &mut self.direction,
@@ -308,6 +319,9 @@ impl QuickRace {
             }
         }
         let closed = self.chosen_car().map(|(i, _)| self.cars[i].short.clone()).unwrap_or_default();
+        // The compare screen's second car: the same list, its own choice.
+        let closed2 = self.nth_car(self.car2).map(|(i, _)| self.cars[i].short.clone()).unwrap_or_default();
+        out.insert(CAR2.to_string(), Choice { rows: rows.clone(), selected: self.car2, closed: closed2, closed_swatch: None });
         out.insert(CAR.to_string(), Choice { rows, selected: self.car, closed, closed_swatch: None });
 
         // Paint: one swatch per `.clr` section, then the custom palette under its own title.
@@ -365,7 +379,30 @@ impl QuickRace {
                 out.insert(format!("{prefix}(RECORDTIME)"), record.clone());
             }
         }
+        // The showcase texts of the shown car (`Showcase.Text(N)` is string N of the car's own
+        // `FEData/Locale/<year><sim>.loc`) and the car compare bars of both cars.
+        let shown = self.showcase.map(|(i, _)| i).filter(|i| *i < self.cars.len()).or_else(|| self.chosen_car().map(|(i, _)| i));
+        if let Some(car) = shown.map(|i| &self.cars[i]) {
+            out.extend(self.showcase_texts(car, language));
+            for (k, v) in car.compare.iter().enumerate() {
+                out.insert(format!("CarCompare.Data({k}CarCompareCar1)"), v.to_string());
+            }
+        }
+        if let Some((i, _)) = self.nth_car(self.car2) {
+            for (k, v) in self.cars[i].compare.iter().enumerate() {
+                out.insert(format!("CarCompare.Data({k}CarCompareCar2)"), v.to_string());
+            }
+        }
         out
+    }
+
+    /// `Showcase.Text(N)` for every string N in the car's showcase `.loc` (none when it has none).
+    fn showcase_texts(&self, car: &Car, language: u8) -> BTreeMap<String, String> {
+        let dir = self.game_dir.join("FEData").join("Locale");
+        let want = format!("{}.loc", car.showcase_file()).to_ascii_lowercase();
+        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase() == want))) else { return BTreeMap::new() };
+        let Some(strings) = std::fs::read(&path).ok().and_then(|data| nfspu_formats::loc::parse(&data, language as usize)) else { return BTreeMap::new() };
+        strings.into_iter().map(|(id, text)| (format!("Showcase.Text({id})"), text.trim().to_string())).collect()
     }
 
     /// How the chosen car looks: (model file, `.clr` paint section, `.tpg` body style). The garage

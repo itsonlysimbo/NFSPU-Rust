@@ -241,3 +241,19 @@ screens (`factorydriver`, `missionbrief`, `missionmap`, `factwelcome`, `factdone
 running a mission in the real race (cone objects the car can knock over, gate triggers fed from the
 live car, the start grid from the scene), the race missions, the mission cars with their parts, the
 prize cars, the spin-direction rule, the police of mission 5, snow in the Alps mission.
+
+### Showcase and car compare data (2026-10-24, claude/career-screens)
+- `Showcase.Text(N)` on `general`, `chassis`, `performance` and `glancestats` is string N of the
+  car's own `FEData/Locale/<first model year><sim name>.loc` (`1950356Cabrio11.loc` for the '50 356
+  Cabriolet; the `.loc` language columns are those of `festrings`). **Verified** against the
+  footage values (790 Kg, 3950 / 1660 / 1300 / 2100 mm, gears 3.09 / 1.765 / 1.227 / 0.96, final
+  4.428:1, 40 bhp @ 4200, 23.5 s).
+- Car compare bars (acceleration, top speed, braking, handling, overall) are five `u16` at 0x324 of
+  the `nfs5.car` record (**verified**: 30 / 40 / 56 / 30 / 41 for the Cabriolet and 30 / 40 / 56 / 33
+  / 42 for the Coupe Ferdinand, as in the footage). The values print as the bars' numbers; the
+  second car is `GenericCar2.Car` (default: the next car in the list, **guess**).
+- The showcase tabs (`NFS5.TABBUTTON`: general, chassis and drivetrain, performance data,
+  statistics) switch the visible panel; the general panel shows first. The tab look is a
+  **stand-in** (plate + centred label, yellow when selected). Not built: the 3D car and the
+  picture frames on the panels, the second combobox of car compare, and the car setup sliders,
+  gear-ratio bars and part inventory (still open).

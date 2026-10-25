@@ -227,3 +227,8 @@ the autopilot getting busted (alps did) -- that is a result, not a bug yet. All 
 
 ## Factory Driver (branch claude/factory-driver-c49da4)
 - Not playable yet: only the data, the pass/fail rules and a headless runner exist (RACE_DRIVE_FACTORY=1 with race_drive). Nothing to see in the game; screens and live missions are the next step (docs/WORK.md).
+
+## Career showcase and car compare (2026-10-24, claude/career-screens)
+Garage or dealership > showcase: the four tabs switch the statistics panels and show the car's
+real numbers (weight, size, gears, power). Dealership > car compare: the five bars of the
+two cars show numbers. Judge the tab look (a stand-in) against retail.
