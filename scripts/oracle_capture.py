@@ -21,7 +21,11 @@ PLAYER_IDX = 0x65741C   # which entry of the car table is the player
 CAR_TABLE = 0x5E8E2C    # car pointers
 GO_TICK = 448           # tick at which the race clock starts (measured, matches our GO_TICK)
 OFF_TICK, OFF_SPEED, OFF_RPM, OFF_GEAR = 0x88, 0xEC4, 0xDB4, 0xD82
-OFF_POS, OFF_FWD = 0x7F8, 0x3D0  # 0x7f8: live body position; 0x3d0: heading, only refreshed now and then (used at standstill)
+# 0x7f8 + 0xc4 * i: world position of wheel i (the loop at 0x49ab60 copies the four wheel positions
+# there; wheels 0 and 1 are the front axle, 2 and 3 the rear, checked live 2026-10-27: the rectangle is
+# 1.46 m wide and 2.43 m long and travels along the wheels' own forward vector). The car's position is
+# the wheel centre, the heading the vector from the rear axle's midpoint to the front axle's.
+OFF_POS, WHEEL_STRIDE = 0x7F8, 0xC4
 
 
 def read_state(p, car):
@@ -32,8 +36,9 @@ def read_state(p, car):
     speed = struct.unpack_from("<f", b, OFF_SPEED)[0]
     rpm = struct.unpack_from("<f", b, OFF_RPM)[0]
     gear = b[OFF_GEAR]
-    pos = struct.unpack_from("<3f", b, OFF_POS)
-    fwd = struct.unpack_from("<3f", b, OFF_FWD)
+    w = [struct.unpack_from("<3f", b, OFF_POS + WHEEL_STRIDE * i) for i in range(4)]
+    pos = tuple(sum(v[k] for v in w) / 4 for k in range(3))
+    fwd = tuple((w[0][k] + w[1][k] - w[2][k] - w[3][k]) / 2 for k in range(3))
     return tick, speed, rpm, gear, pos, fwd
 
 
@@ -121,25 +126,16 @@ def main():
         return (t, mix(a[1], b[1]), mix(a[2], b[2]), a[3], tuple(mix(u, v) for u, v in zip(a[4], b[4])),
                 tuple(mix(u, v) for u, v in zip(a[5], b[5])))
 
-    if not any(abs(sc[3]) > 0.5 and sc[0] < 192 for sc in script):
-        a0, a1 = sample(0), sample(192)
-        if a0 and a1 and math.hypot(a1[4][0] - a0[4][0], a1[4][2] - a0[4][2]) > 5:
-            ddx, ddz = a1[4][0] - a0[4][0], a1[4][2] - a0[4][2]
-            n2 = math.hypot(ddx, ddz)
-            fx, fz = ddx / n2, ddz / n2
-            yaw0 = math.atan2(fx, -fz)
-            x0, z0 = a0[4][0], a0[4][2]
+    a0 = sample(0)
+    if a0:
+        x0, z0 = a0[4][0], a0[4][2]
 
     def course(t):
-        """Heading as the direction of travel over the last 16 ticks (start heading until it moves 0.5 m)."""
+        """The car's own heading (wheel axes), not the direction of travel."""
         r = sample(t)
-        q = sample(max(t - 16, 0))
-        if r is None or q is None:
+        if r is None or math.hypot(r[5][0], r[5][2]) < 0.1:
             return yaw0
-        dx, dz = r[4][0] - q[4][0], r[4][2] - q[4][2]
-        if math.hypot(dx, dz) < 0.5 or r[1] < 1.0:
-            return yaw0
-        return math.atan2(dx, -dz)
+        return math.atan2(r[5][0], -r[5][2])
 
     os.makedirs("oracle/ref", exist_ok=True)
     with open(f"oracle/ref/{name}.csv", "w") as f:
@@ -153,7 +149,7 @@ def main():
             fwd_d = dx * fx + dz * fz           # metres along the start heading
             lat = dx * -fz + dz * fx            # metres to the left of the start heading (retail frame)
             fwd2 = course(r[0])
-            f.write("%d,%.4f,%.2f,%d,%.4f,%.4f,%.5f\n" % (t, r[1] * 3.6, r[2], r[3], -lat, -fwd_d, (fwd2 - yaw0 + math.pi) % (2 * math.pi) - math.pi))
+            f.write("%d,%.4f,%.2f,%d,%.4f,%.4f,%.5f\n" % (t, r[1] * 3.6, r[2], r[3], lat, -fwd_d, -((fwd2 - yaw0 + math.pi) % (2 * math.pi) - math.pi)))
     print("wrote oracle/ref/%s.csv from %d ticks" % (name, len(rows)))
 
 

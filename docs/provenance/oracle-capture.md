@@ -93,3 +93,23 @@ Retail test copy (user, 2026-10-27): `C:/Users/CB/Downloads/NFS5 - Oracle`, copi
 SaveData; the game may be launched from it and may write settings and saves there. The capture scripts
 (`scripts/oracle_capture.py`, `oracle_capture_lib.py`, our own stdlib Python) are now committed. Not run again
 this session: no capture target is open until the Boxster launch gap (above) is understood or a yaw offset is found.
+
+## Live orientation found (2026-10-27)
+The "live body position" at `0x7f8` is really **wheel 0's** world position: the routine at `0x49ab60` copies the
+four wheel positions to `car + 0x7ec + 0xc4 * i` (the position is the second triple, so `0x7f8 + 0xc4 * i`).
+Checked live on the Boxster in the Oracle copy: the four points form a 1.46 m x 2.43 m rectangle that moves with the
+car; wheels 0 and 1 are the front axle (they lead in the direction of travel), 2 and 3 the rear. So the car's own
+heading is the vector from the rear axle's midpoint to the front axle's: no separate yaw field is needed.
+`scripts/oracle_capture.py` now uses the wheel centre as the position and that vector as the yaw (not the direction
+of travel), so a steer case can have a real yaw. Sign check against the sim's convention (left steer: x positive,
+yaw negative): a held right key gave x negative and yaw positive (a run in the Oracle copy: x -0.39 m and yaw +0.24 rad at
+tick 96, then a wall). The old script wrote `x = -lat` and the opposite yaw sign; no committed trace is affected
+(all have x = 0, yaw = 0).
+Also seen: the Greg profile in the Oracle copy is now on a later mission (Dieter's Boxster dock job, industrial
+track, not the flat skid pad), where the same Boxster read 8.58 km/h at tick 64 (skid-pad mission 0 read 10.40;
+ours 9.12): so the launch gap may include the surface (the pad vs a road) or the throttle ramp. **Not tested further.**
+A steer case needs a flat start: mission 0 on the skid pad is the only one known; the profile there needs its
+factory progress reset (back up `SaveData` first, in the Oracle copy).
+Next: reset the Oracle copy's `3Greg.sav` factory progress (backup first), capture mission 0 with steer
+(`"0:1:0:0" "512:..."` is too long for the pad: use steer from tick ~192 for ~300 ticks), add the retail steer case,
+and re-run the mission-0 launch twice to see whether 10.40 km/h at tick 64 repeats.
