@@ -141,3 +141,8 @@ mission-0 standing start, speed km/h / rpm / our gear at ticks 64, 128, 192, 256
 - Next: capture the same stock Boxster in a quick race (Oracle copy, no mission parts) and compare 0-100 with the mission
   car: equal means a player-car factor in the loader (look at the decomp's player record setup next to the manual x1.05),
   different means a mission/part effect.
+Decomp read for the candidates (`FUN` near `0x49d6xx` in `porsche_00490000.c`): the per-gear drive force is
+`rpm-per-m/s / mass x 0.1 x scale` (scale = file `0x58` x 0.01 = 0.9 for the Boxster), then x1.2 for the cheat name
+and x1.05 when the player record's flag at `+0xc` is 0; the part loop adds each part's mass delta and divides the top
+speed by `1 + part_0x58 / 100`. Nothing there gives x1.11 for a stock car, so the missing factor sits elsewhere
+(per-tick force application, or a loader step not yet read). Still open.
