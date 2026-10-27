@@ -203,10 +203,14 @@ fn sim_case(case: &Case, record: bool) -> Outcome {
     }
     let tol = [0.0, case.num("tol_speed_kmh").unwrap_or(1.0), case.num("tol_rpm").unwrap_or(100.0), 0.0, case.num("tol_pos").unwrap_or(0.5), case.num("tol_pos").unwrap_or(0.5), case.num("tol_yaw").unwrap_or(0.02)];
     let names = ["tick", "speed_kmh", "rpm", "gear", "x", "z", "yaw"];
+    // `ref_gear_offset`: the retail trace holds the raw HUD gear byte (2 = first), our sim counts
+    // 1 = first, so a retail case sets the difference (1) instead of editing the trace.
+    let gear_offset = case.num("ref_gear_offset").unwrap_or(0.0);
     for (r, w) in rows.iter().zip(&want) {
         for c in 1..7 {
-            if (r[c] - w[c]).abs() > tol[c] {
-                return Err(format!("tick {}: {} is {:.3} but the reference has {:.3} (tolerance {})", r[0], names[c], r[c], w[c], tol[c]));
+            let w_c = if c == 3 { w[c] - gear_offset } else { w[c] };
+            if (r[c] - w_c).abs() > tol[c] {
+                return Err(format!("tick {}: {} is {:.3} but the reference has {:.3} (tolerance {})", r[0], names[c], r[c], w_c, tol[c]));
             }
         }
     }

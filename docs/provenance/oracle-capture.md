@@ -68,3 +68,23 @@ its end advances the copy's factory progress, so restore the backup before re-ru
 Run: `python scripts/oracle_capture.py <name> <ticks> <sample_every> "0:1:0:0" ...` from the repo
 root with the copy already inside a race and in the foreground (it presses Esc, picks `race again`,
 then drives the script and writes `oracle/ref/<name>.csv` and `logs/oracle_capture_<name>_raw.csv`).
+
+## Update 2026-10-27 (claude/oracle-capture-2): the mission car is a stock Boxster
+
+Mission 0's record in `nfs5.fac` names car 161 = `'97 Boxster` (sim `Boxster25`) and 13 part ids. All 13
+are stock parts (2.5 L Engine, Body, Standard Brake Package, Standard 5 Speed Transmission, Standard Road
+Springs, Standard Shocks, Standard Manifold, Standard ECU, Standard Flywheel, Standard Fuel Injectors, Standard
+Exhaust System, Stock Tires, Rims Style 1), so the "tuned Carrera" reading above was wrong: the retail
+trace is a **stock Boxster**. The two cases now use `car = "Boxster"` (they used `993`).
+
+Retail's raw HUD gear byte is 2 for first; the case key `ref_gear_offset = 1` (runner change in
+`oracle.rs`) compares it with our 1 = first, so the trace itself is unedited.
+
+With that, gear matches at every sample but speed does not: ours 9.1 / 24.6 / 42.9 / 56.7 / 68.1 /
+79.5 / 88.3 / 95.6 km/h against retail 10.4 / 27.3 / 48.4 / 62.8 / 75.2 / 87.8 / 99.9 / 107.1 at ticks
+64..512 (about 10-12 % slower from tick 64; rpm at tick 64 989 vs 1108). A tick offset cannot explain
+it (the gap grows to 12 km/h at tick 512). The cases stay `pending = "true"` with a note rather than
+fail every merge; the tolerances were **not** loosened. Next: find why the Boxster launches slower
+(final drive / tyre radius / torque curve / the throttle model) and activate the cases when they pass.
+Warning: `ORACLE_RECORD=1` rewrites every self **and retail** reference file; never run it with retail
+traces present (use `git checkout -- oracle/ref` after).

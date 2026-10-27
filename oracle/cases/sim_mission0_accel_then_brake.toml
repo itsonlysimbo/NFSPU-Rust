@@ -1,8 +1,10 @@
 name = "sim_mission0_accel_then_brake"
 kind = "sim"
 reference = "retail"
+car = "Boxster"
+ref_gear_offset = 1
 pending = "true"
-car = "993"
+note = "retail is ~10-12% faster than our Boxster from tick 64; a real sim gap, not a tolerance issue. Remove pending when the physics matches."
 ticks = 512
 sample_every = 64
 script = ["0:1:0:0", "320:0:1:0"]
