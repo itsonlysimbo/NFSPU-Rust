@@ -49,6 +49,15 @@ pub fn part_value(price: i64, years_old: i32) -> i64 {
     price * (100 + growth) / 100
 }
 
+/// What selling a part back pays, in percent of its buying price. Footage (2026-10-24): the Medium
+/// Performance Carbs cost 259 in the parts shop and the parts inventory offered 207 for them.
+pub const PART_RESALE_PCT: i64 = 80;
+
+/// The sale price of a part bought for `price`.
+pub fn part_resale(price: i64) -> i64 {
+    price * PART_RESALE_PCT / 100
+}
+
 /// What a car is worth: the base price, less the mileage and damage steps, plus its extras and the
 /// value of its installed parts; never below 5% of the price.
 pub fn car_value(base: i64, mileage: u32, extras_pct: u32, damage: u32, parts: i64) -> i64 {

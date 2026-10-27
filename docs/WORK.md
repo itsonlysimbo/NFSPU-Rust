@@ -28,7 +28,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Evolution shops vs retail footage: repair, sell car, paint shop, parts shop | Mid | Footage: `C:/Users/CB/Videos/2026-10-24 20-55-17.mp4` (user, 2026-10-27). Compare screens, prices, flow; fix gaps |
+| Evolution shops vs retail footage: repair, sell car, paint shop, parts shop | Mid | Claude (evo-shops) branch claude/evo-shops, started 2026-10-27. Footage: `C:/Users/CB/Videos/2026-10-24 20-55-17.mp4` (user, 2026-10-27). Compare screens, prices, flow; fix gaps. Done: part resale 80% (verified); gaps listed in career.md (sell-car offer listing, repair, paint trims/decal, parts inventory/transaction list, car-setup table). |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 

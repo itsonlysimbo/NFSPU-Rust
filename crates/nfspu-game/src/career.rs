@@ -553,7 +553,7 @@ impl Career {
             parts.retain(|old| {
                 let same = slot(*old).as_ref() == Some(&s);
                 if same {
-                    refund += self.installed_value(shop, *old);
+                    refund += career_shop::part_resale(self.installed_value(shop, *old));
                 }
                 !same
             });
@@ -570,7 +570,7 @@ impl Career {
 
     /// Takes part `id` off car `i` and pays its value.
     pub fn sell_part(&mut self, i: usize, id: u32, shop: &Shop) -> Result<i64, ShopError> {
-        let value = self.installed_value(shop, id);
+        let value = career_shop::part_resale(self.installed_value(shop, id));
         let car = self.cars.get_mut(i).ok_or(ShopError::UnknownItem)?;
         let before = car.parts.len();
         car.parts.retain(|p| *p != id);
@@ -863,15 +863,15 @@ mod tests {
         let low = c.tuning_of(0, &shop);
         assert!(low.power > 1.0 && low.brake > 1.0);
         // the dearer turbo replaces the cheaper one, which is sold back
-        assert_eq!(c.fit_parts(0, &[2], &shop), Ok(400));
+        assert_eq!(c.fit_parts(0, &[2], &shop), Ok(500));
         assert_eq!(c.cars[0].parts.len(), 2);
         assert!(c.tuning_of(0, &shop).power > low.power);
-        assert_eq!(c.cash, 2_000 - 800 - 400);
+        assert_eq!(c.cash, 2_000 - 800 - 500);
         assert_eq!(c.fit_parts(0, &[2], &shop), Ok(0), "already fitted");
         c.cash = 0;
-        assert_eq!(c.sell_part(0, 3, &shop), Ok(300));
-        assert_eq!(c.cash, 300);
-        assert_eq!(c.fit_parts(0, &[1], &shop), Ok(-400), "swapping back to the cheaper part pays the difference");
+        assert_eq!(c.sell_part(0, 3, &shop), Ok(240), "80% of 300");
+        assert_eq!(c.cash, 240);
+        assert_eq!(c.fit_parts(0, &[1], &shop), Ok(-220), "swapping back: 500 for the cheaper part, 720 back for the dearer");
     }
 
     #[test]

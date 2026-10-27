@@ -305,3 +305,43 @@ a **guess**. Not tested in the window.
 | `PlayerInfo` car copies | owned cars and paint | `catalog::owned_cars` |
 
 Not read yet: tournament and mission progress (`Missions` section, undecoded), parts, damage, used-car lot. When RACE-side "evolution..." finds no profile of ours but a retail save of that player exists, the career starts from these values. Not tested in the game window.
+
+## Evolution shops against the footage (2026-10-27, `2026-10-24 20-55-17.mp4`, branch `claude/evo-shops`)
+
+Frames read at 1 per 4 s (`extracted/evo/`, untracked). `cargo run -p nfspu-game --example shop_check
+--release` prints the parts list our shop builds for the '50 356 1100 Cabriolet in 1956.
+
+**Matches retail (verified against the footage):**
+- Parts shop list prices for the 356 in 1956 are identical to ours (the table-driven `part_value`):
+  flywheel 172, lightened flywheel 219, carbs 178 / medium 259, exhaust 327 / low-restriction 463,
+  standard engine 336, the engine upgrades 1,090 / 1,184 / 1,284 / 1,522, brakes 204 / 273 / 341,
+  gearbox 491, springs 163 / 190 / 218, shocks 191 / 231, hood 110, quarter panels 150, sway bar 109,
+  tyres 134 / 179. Buying subtracts the price from the account (4,388 -> 4,129 for the 259 carbs).
+- The 356 1100 Cabriolet is shown as purchase price 11,000 (= catalogue price).
+
+**Fixed:** a part sold back pays **80 %** of its buying price, not 100 %: the carbs bought for 259
+were offered at 207 in the parts inventory (259 x 0.8 = 207.2). `career_shop::part_resale`, used by
+`sell_part` and by the refund when a fitted part is replaced (the replacement refund is a **guess**
+that it uses the same rate).
+
+**Gaps seen, not built (screens or flow we lack or do differently):**
+- *Sell car:* retail asks "Please enter the offer price for the car:" (pre-filled with the current
+  value, e.g. 12,028) and lists the car on the market; the garage menu then shows "remove from
+  market" in place of "sell", and the car stays owned. We sell instantly at the value. When a listed
+  car sells was not in the footage.
+- *Garage header:* "purchase price 11,000 / current value 9,890" for a worn car; our `car_value`
+  rule (mileage -10 %, damage -1 %) gives 9,790 for the same inputs, so the footage's value uses
+  something else (damage % from the repair table, **not decoded**).
+- *Repair:* an "advanced" panel with condition %, repair cost and a fix tick per part (engine,
+  brakes, transmission, suspension, shocks, weight reduction, sway bars, tyres, bodywork, overall);
+  we have no repair screen (cars have no condition).
+- *Paint shop:* trim package (none, package 1-7), trim 1 and trim 2 colour lists, a custom colour
+  editor, a decal number prompt ("Please enter decal number", race number shown on the doors); we
+  only offer exterior colour.
+- *Parts shop:* the screen has a description popup per part (`parts description`, text from the part's
+  string), a transaction list with `accept` / `clear list` / `remove item`, and a parts inventory
+  section listing owned parts at their resale price with a `sell` button; ours marks owned parts
+  with `*` in the one list.
+- *Car setup:* the part-inventory table with INSTALLED / UNINSTALLED per part and `uninstall part`;
+  the sliders (ride height, stiffness, travel, toe-in, brake balance, downforce, tyre pressure, gear
+  ratios) with `test drive`, `save`, `load`, `default`.
