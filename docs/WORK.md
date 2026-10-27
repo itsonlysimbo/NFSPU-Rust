@@ -16,6 +16,7 @@ on, by whom, and exactly where it stopped. Read `AGENTS.md` first, then this fil
 
 | Task | Tier | Agent | Branch | State | Next step | Done when |
 |---|---|---|---|---|---|---|
+| Oracle retail capture | Strong | Claude (oracle-capture) | claude/oracle-capture | done, awaiting merge (coordinator reads protected diff) | Two retail traces + pending cases on the mission-0 skid pad (tuned Carrera); method, offsets, menu clicks in `docs/provenance/oracle-capture.md`. Next: decode the mission car's tune so the cases can go active; find live yaw for steer cases. | traces committed, method documented |
 | Collision audit + stuck recovery | Mid | Claude (collision) | claude/collision-f04eb2 | done, awaiting merge (race_drive ALL OK 15 tracks, workspace tests pass) | `collision_audit` example (logs/collision_audit.log) and `stuck.rs` (player stuck 320 ticks / fell / 35 m out / airborne 4 s resets, wired in race_mode and race_drive). Audit residue: a few edge slivers, OPEN edges with void (skidpad etc., now recovered by the fall rule). Not tested in the game. | Run race_drive on all 15 tracks and `cargo test --workspace -j 2`; then look at OPEN runs (add edge walls?) |
 | Car lamp glow + 'covered'; location header flags | Mid | Claude (glow-flags) | claude/glow-flags-e70b14 | done, awaiting merge | Glow on screen not seen (car starts on a slice with no glow section; needs a slice-jump hook). Flag overlay only unit-tested (2D map box hides the wall face). | merge |
 | Cockpit hands colour + front wheel steer smoothing | Mid | Claude (hands-wheels) | claude/hands-wheels-39fd02 | done, awaiting merge | Hands/arm sleeve now navy like retail (page 9 is a white shirt texture; pale texels recoloured for arms+hands). Front wheels follow the sim steer angle at a capped rate (`WHEEL_STEER_RATE`). NOT DONE: the hand mesh includes a long forearm slab (z span 0.7) that swings with the wheel; retail keeps the arm pointing from the side; our cockpit eye sits lower/closer than retail (hub 0.86 vs 0.73 of height), so the slab looks bigger. Skin the hand forearm vertices like `skin_arms`. | merge |
@@ -27,7 +28,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Tier | Notes |
 |---|---|---|
-| Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
+| Oracle retail capture: record reference traces from retail in a copy of the install | Strong | Claude (oracle-capture-2) branch claude/oracle-capture-2, started 2026-10-27; builds on 60a5461. *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 

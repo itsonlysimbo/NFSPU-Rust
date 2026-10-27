@@ -1,0 +1,12 @@
+name = "sim_mission0_standing_start"
+kind = "sim"
+reference = "retail"
+pending = "true"
+car = "993"
+ticks = 512
+sample_every = 64
+script = ["0:1:0:0"]
+tol_speed_kmh = 2
+tol_rpm = 150
+tol_pos = 1
+tol_yaw = 0.05
