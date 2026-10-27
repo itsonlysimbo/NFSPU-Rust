@@ -28,7 +28,6 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Evolution shops vs retail footage: repair, sell car, paint shop, parts shop | Mid | Claude (evo-shops) branch claude/evo-shops, started 2026-10-27. Footage: `C:/Users/CB/Videos/2026-10-24 20-55-17.mp4` (user, 2026-10-27). Compare screens, prices, flow; fix gaps. Done: part resale 80% (verified); gaps listed in career.md (sell-car offer listing, repair, paint trims/decal, parts inventory/transaction list, car-setup table). |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 
@@ -38,6 +37,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 |---|---|
 | Collision: close edge slivers and open edges | merged 2026-10-25; edge_walls.rs wall strips, audit OPEN ~8000 -> 430; residue: coastal slice fractions, industrial PINCH; not tested in game |
 | Career: later eras, prize tables, era progression | merged 2026-10-25; car rules enforced at race start, era-by-era prize/opponent check; not tested in game |
+| Evolution shops vs retail footage (part resale 80%; other gaps listed in career.md) | 108c4e1 |
 | Save profiles: read retail .sav career progress | merged 2026-10-25; save_import.rs starts a career from retail year, cash, cars (read-only); tournament progress not decoded; not tested in game |
 | Handling feel vs retail (engine and gearbox) | merged 2026-10-25, docs only: shift speeds, time in gear, rpm drops match the footage within reading error; no code change |
 | Career: showcase and car compare with real data | merged 2026-10-25; car setup sliders, 3D showcase car, compare second combobox left |
