@@ -88,3 +88,8 @@ fail every merge; the tolerances were **not** loosened. Next: find why the Boxst
 (final drive / tyre radius / torque curve / the throttle model) and activate the cases when they pass.
 Warning: `ORACLE_RECORD=1` rewrites every self **and retail** reference file; never run it with retail
 traces present (use `git checkout -- oracle/ref` after).
+
+Retail test copy (user, 2026-10-27): `C:/Users/CB/Downloads/NFS5 - Oracle`, copied from "NFS5 - Copy" with its
+SaveData; the game may be launched from it and may write settings and saves there. The capture scripts
+(`scripts/oracle_capture.py`, `oracle_capture_lib.py`, our own stdlib Python) are now committed. Not run again
+this session: no capture target is open until the Boxster launch gap (above) is understood or a yaw offset is found.
