@@ -23,6 +23,8 @@
 !scripts/protected.txt
 !scripts/check.sh
 !scripts/sync_issues.py
+!scripts/oracle_capture.py
+!scripts/oracle_capture_lib.py
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml
