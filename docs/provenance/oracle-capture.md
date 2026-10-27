@@ -113,3 +113,31 @@ factory progress reset (back up `SaveData` first, in the Oracle copy).
 Next: reset the Oracle copy's `3Greg.sav` factory progress (backup first), capture mission 0 with steer
 (`"0:1:0:0" "512:..."` is too long for the pad: use steer from tick ~192 for ~300 ticks), add the retail steer case,
 and re-run the mission-0 launch twice to see whether 10.40 km/h at tick 64 repeats.
+
+## Why our Boxster launches slower than the retail mission car (2026-10-27, claude/oracle-capture-3)
+Method: temporary env override of the drive-force scale (not committed) and a temporary per-tick dump from the runner,
+mission-0 standing start, speed km/h / rpm / our gear at ticks 64, 128, 192, 256, 320, 384, 448, 512:
+
+| Run | 64 | 128 | 192 | 256 | 320 | 384 | 448 | 512 |
+|---|---|---|---|---|---|---|---|---|
+| retail (raw gear -1) | 10.4 | 27.3 | 48.4 | 62.8 | 75.2 | 87.8 | 99.9 | 107.1 |
+| ours, file scale 90 % | 9.12 | 24.6 | 42.9 | 56.7 | 68.1 | 79.5 | 88.3 | 95.6 |
+| ours, scale 97 % | 9.98 | 27.1 | 47.0 | 59.9 | 72.3 | 84.2 | 92.1 | 100.3 |
+| ours, scale 100 % | 10.35 | 28.1 | 48.7 | 61.1 | 73.8 | 85.9 | 93.7 | 102.2 |
+
+- The shortfall is a **drive-force factor of about 1.10 to 1.13** (a time offset cannot make it: the lag grows from 6 to 21
+  ticks). With the scale at 100 % the first 190 ticks match within 0.8 km/h; later retail is still 2-3 % ahead and, at ticks
+  448-512, a gear ahead (our automatic shifts at a random 90-100 % of the redline; retail's draw differs, so speeds after the
+  1-2 shift cannot be pinned to 1 km/h by any constant).
+- `boxster25.sim` has scale 90 %, gear ratios and final drive identical to the `Standard 5 Speed Transmission` part (3.5 / 2.12 /
+  1.43 / 1.03 / 0.79, final 3.89), so ratios, final drive, tyre (255/40 R17), mass 1252 kg and torque are not the cause. The mission car's
+  13 parts are all stock; no part record has a power field beyond price and a 100.0 at `0x60` (the same in every part).
+- Not a global factor: scales in the `.sim` files are 90 for almost every car, 120 for the 959, 70 for the GT1 and 65 for the
+  935; a global x1.11 would make the 959 (already faster than its showroom 0-60) far too quick. It would fit the GT1
+  footage (retail 0-100 about 8 % faster than ours).
+- Open candidates: the player's drive force is multiplied by something the loader sets for the mission/quick-race car (a
+  difficulty or "player record" value, like the manual x1.05); the decomp's `0.1` constant vs 2 pi / 60 (x1.047, explains
+  a part); the part list's `2.5 L Engine`. **None tested.** The cases stay pending; nothing in the sim was changed.
+- Next: capture the same stock Boxster in a quick race (Oracle copy, no mission parts) and compare 0-100 with the mission
+  car: equal means a player-car factor in the loader (look at the decomp's player record setup next to the manual x1.05),
+  different means a mission/part effect.
