@@ -107,6 +107,12 @@ impl ShopUi {
         catalog::load_paints(&self.game_dir, &car.model)
     }
 
+    /// The trim colour choices: the car's own body colours, then the custom palette (ours; retail's
+    /// custom colour editor is not rebuilt, the swatch grid stands in for it).
+    fn trim_colours(&self, car: &Car) -> Vec<[u8; 3]> {
+        self.swatches(car).iter().map(|p| p.body).chain(crate::quick_race::custom_palette()).collect()
+    }
+
     fn lot(&self, c: &Career, cars: &[Car]) -> Vec<(usize, UsedCar)> {
         c.market(&Shop { cars, parts: &self.parts }, &|car| self.paint_sections(car))
     }
@@ -204,8 +210,9 @@ impl ShopUi {
                 let pkg_closed = if pkg == 0 { "none".to_string() } else { format!("package {pkg}") };
                 v.choices.insert("OwnedCar.PackageNum".into(), Choice { rows: pkg_rows, selected: pkg, closed: pkg_closed, closed_swatch: None });
                 for (k, key) in ["OwnedCar.S1Colour", "OwnedCar.S2Colour"].iter().enumerate() {
-                    let at = owned.tweak.trim[k].and_then(|t| paints.iter().position(|p| p.body == t)).unwrap_or(0);
-                    v.choices.insert((*key).into(), Choice { rows: paints.iter().map(|p| swatch(p.body)).collect(), selected: at, closed: String::new(), closed_swatch: owned.tweak.trim[k].or_else(|| paints.get(at).map(|p| p.body)) });
+                    let trims = self.trim_colours(car);
+                    let at = owned.tweak.trim[k].and_then(|t| trims.iter().position(|&p| p == t)).unwrap_or(0);
+                    v.choices.insert((*key).into(), Choice { rows: trims.iter().map(|&p| swatch(p)).collect(), selected: at, closed: String::new(), closed_swatch: owned.tweak.trim[k].or_else(|| trims.get(at).copied()) });
                 }
 
                 // Parts: everything that fits the car and exists now; fitted parts carry a star.
@@ -330,8 +337,8 @@ impl ShopUi {
             "OwnedCar.S1Colour" | "OwnedCar.S2Colour" => {
                 let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
                 if let Some(car) = c.cars.get(at).and_then(|o| cars.iter().find(|k| k.id == o.id)) {
-                    if let Some(p) = self.swatches(car).get(index) {
-                        c.cars[at].tweak.trim[usize::from(accessor == "OwnedCar.S2Colour")] = Some(p.body);
+                    if let Some(p) = self.trim_colours(car).get(index) {
+                        c.cars[at].tweak.trim[usize::from(accessor == "OwnedCar.S2Colour")] = Some(*p);
                     }
                 }
             }
