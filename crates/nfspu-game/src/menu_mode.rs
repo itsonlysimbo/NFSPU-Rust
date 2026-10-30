@@ -290,7 +290,10 @@ impl FrontEnd {
                 let c = match &retail {
                     Some(p) => {
                         crate::log_line(&format!("career: continuing the retail save of '{player}': year {}, cash {}, {} car(s)", p.year, career::money(p.cash), p.cars.len()));
-                        career::Career::from_retail(&player, p, &self.quick.cars)
+                        let mut c = career::Career::from_retail(&player, p, &self.quick.cars);
+                        c.apply_retail_progress(p, &self.career.data);
+                        crate::log_line(&format!("career: retail progress: {} tournament(s) finished, {} mission record(s) done", p.tournaments_done, p.missions.iter().filter(|m| m.done).count()));
+                        c
                     }
                     None => career::Career::new(&player),
                 };
