@@ -364,3 +364,16 @@ starts a race without its saved damage (only the race's own damage is kept); the
 car still differs from our rule (9,790 for -10 % mileage, -1 % damage), so the value's damage step is **not** settled.
 Not tested in the window. Still not built: sell-car offers (instant sale remains), paint trims/decals/custom colour, parts
 inventory with resale list and transaction list, car setup sliders.
+
+## Parts screen: inventory and descriptions (2026-10-30, `claude/evo-shops-2`)
+Built: `Parts.AllParts` now lists the parts that fit the car, then an `INVENTORY` block with the fitted parts at their
+resale price (80 % of the buying price, footage: 259 -> 207); the sell button only sells inventory rows (an available row does
+nothing); the buy button only adds available rows to the shopping list (the transaction list, accept / clear / remove were
+already there). `partsdesc` gets `Parts.AllParts` (the part's name) and `Parts.AllParts(DESC)`: the description string id is the
+**name id + 500** (checked: standard carbs 5085 -> 5585, medium carbs 5086 -> 5586, lightened flywheel 5102 -> 5602, all the footage's texts).
+Guess: the inventory is a block at the end of the one list (retail shows it as a section with its own header row after
+`PARTS AVAILABLE FOR ...`); owned parts keep their `*` in the available block too.
+Not built: paint trims (package, trim 1 / 2, custom colour, race number) and sell-car offers. Paint needs a per-car colour scheme
+(`PaintScheme.stripe_package` plus four colours) carried from `OwnedCar` through the showcase and `RaceSetup` into
+`car_model` (today only a section number or one custom body colour travels), and a door-number decal; the 3D preview in the
+paint shop depends on the same path. Sell offers need evidence of when a listed car sells.
