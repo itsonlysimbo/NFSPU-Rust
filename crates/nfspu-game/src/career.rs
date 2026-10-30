@@ -214,12 +214,16 @@ pub struct OwnedCar {
     pub damage: [u8; crate::car_damage::ZONES],
     /// The paint shop's stripe package and trim colours.
     pub tweak: crate::car_model::PaintTweak,
+    /// Listed for sale at this asking price (the used-car market in the garage).
+    pub asking: Option<i64>,
+    /// A buyer's pending offer for the listed car.
+    pub offer: Option<i64>,
 }
 
 impl OwnedCar {
     /// A car with nothing on it yet.
     pub fn stock(id: u16, paint: usize, bought_for: i64) -> OwnedCar {
-        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new(), damage: [0; crate::car_damage::ZONES], tweak: Default::default() }
+        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new(), damage: [0; crate::car_damage::ZONES], tweak: Default::default(), asking: None, offer: None }
     }
 }
 
@@ -327,7 +331,8 @@ impl Career {
             let damage: Vec<String> = c.damage.iter().map(u8::to_string).collect();
             let rgb = |t: Option<[u8; 3]>| t.map_or("-".to_string(), |[r, g, b]| format!("{r:02x}{g:02x}{b:02x}"));
             let tweak = format!("{};{};{}", c.tweak.package.map_or("-".to_string(), |p| p.to_string()), rgb(c.tweak.trim[0]), rgb(c.tweak.trim[1]));
-            t += &format!("car = {},{},{},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"), damage.join(";"), tweak);
+            let listing = format!("{};{}", c.asking.map_or("-".to_string(), |a| a.to_string()), c.offer.map_or("-".to_string(), |a| a.to_string()));
+            t += &format!("car = {},{},{},{},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"), damage.join(";"), tweak, listing);
         }
         t += &format!("market = {}\n", self.market_round);
         if !self.taken.is_empty() {
@@ -382,6 +387,8 @@ impl Career {
                                 z
                             },
                             tweak: fields.get(7).map(|t| Self::parse_tweak(t)).unwrap_or_default(),
+                            asking: fields.get(8).and_then(|l| l.split(';').next()).and_then(|v| v.trim().parse().ok()),
+                            offer: fields.get(8).and_then(|l| l.split(';').nth(1)).and_then(|v| v.trim().parse().ok()),
                         });
                     }
                 }
@@ -465,6 +472,7 @@ impl Career {
         }
         self.market_round += 1;
         self.taken.clear();
+        self.roll_offers();
         let p = self.progress.entry(t.id).or_default();
         p.best_place = if p.best_place == 0 { place.min(255) as u8 } else { p.best_place.min(place.min(255) as u8) };
         p.races_done += 1;
@@ -595,6 +603,53 @@ impl Career {
         self.taken.push(lot_index);
         self.chosen_car = self.cars.len() - 1;
         Ok(used.price)
+    }
+
+    /// After a race every listed car without an offer gets one. Retail rolls a chance from the car's
+    /// age/mileage tables: a hit offers the full asking price, a miss a random lower bid (guess:
+    /// 70-95% of asking here, and the chance is a flat 40%; the retail tables are not read yet).
+    pub fn roll_offers(&mut self) {
+        let base = (self.player.bytes().fold(11u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64))) ^ ((self.market_round as u64) << 24);
+        for (i, c) in self.cars.iter_mut().enumerate() {
+            let Some(ask) = c.asking else { continue };
+            if c.offer.is_some() {
+                continue;
+            }
+            let mut h = base ^ ((i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            h ^= h >> 29;
+            h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 32;
+            let offer = if h % 100 < 40 { ask } else { ask * (70 + (h >> 8) as i64 % 26) / 100 };
+            c.offer = Some(offer);
+        }
+    }
+
+    /// Lists owned car `i` at an asking price (retail: the owner's own price, dialog 800).
+    pub fn list_car(&mut self, i: usize, asking: i64) -> Result<(), ShopError> {
+        let c = self.cars.get_mut(i).ok_or(ShopError::UnknownItem)?;
+        c.asking = Some(asking.max(0));
+        c.offer = None;
+        Ok(())
+    }
+
+    /// Takes the car off the market.
+    pub fn unlist_car(&mut self, i: usize) {
+        if let Some(c) = self.cars.get_mut(i) {
+            c.asking = None;
+            c.offer = None;
+        }
+    }
+
+    /// Accepts the pending offer on car `i`: the car goes and the money arrives. The last car stays.
+    pub fn accept_offer(&mut self, i: usize) -> Result<i64, ShopError> {
+        if self.cars.len() <= 1 {
+            return Err(ShopError::LastCar);
+        }
+        let offer = self.cars.get(i).and_then(|c| c.offer).ok_or(ShopError::UnknownItem)?;
+        self.cars.remove(i);
+        self.cash += offer;
+        self.chosen_car = self.chosen_car.min(self.cars.len() - 1);
+        Ok(offer)
     }
 
     /// Sells owned car `i` for its value. The last car cannot be sold.
@@ -953,6 +1008,7 @@ mod tests {
         let back = Career::parse(&c.to_text()).unwrap();
         assert_eq!(back.cars[0].damage, c.cars[0].damage);
         assert_eq!(back.cars[0].tweak, c.cars[0].tweak);
+        assert_eq!((back.cars[0].asking, back.cars[0].offer), (c.cars[0].asking, c.cars[0].offer));
         c.keep_race_damage(0, &[10.0; crate::car_damage::ZONES]);
         assert_eq!(c.overall_damage(0), 40);
         let total: i64 = c.repair_costs(0, &shop).iter().sum();
@@ -996,7 +1052,7 @@ mod tests {
         assert_eq!(c.cars[0].mileage, career_shop::RACE_MILES);
         assert_eq!((c.market_round, c.taken.len()), (1, 0));
         let mut d = Career::new("B");
-        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0], tweak: crate::car_model::PaintTweak { package: Some(2), trim: [Some([9, 8, 7]), None] } });
+        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0], tweak: crate::car_model::PaintTweak { package: Some(2), trim: [Some([9, 8, 7]), None] }, asking: Some(5000), offer: Some(4200) });
         d.taken = vec![0, 3];
         assert_eq!(Career::parse(&d.to_text()).unwrap(), d);
         assert_eq!(Career::parse("version = 1

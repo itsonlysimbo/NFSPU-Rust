@@ -408,3 +408,16 @@ The paint shop's combos now pick the package and the trims (from the car's body 
 **Not built:** the custom colour editor, the interior colour, and the race-number decal (door numbers need text drawn on the car's texture).
 Unit tests: `the_paint_shop_tweak_changes_package_and_trims`, `paint_tweaks_round_trip_and_may_be_absent`, the career save round trip.
 Seen on screen: `NFSPU_MENU=paintshop NFSPU_CAREER=1 NFSPU_CAREER_DO="pick:OwnedCar.PackageNum=3;pick:OwnedCar.S1Colour=4" NFSPU_MENU_CAPTURE=1` (`logs/menu_paintshop.png`): the orange 356 wears package 3 stripes with a red trim 1 and the combos show `package 3` and the colour boxes. Not compared with retail pixel by pixel.
+
+## Sell-car offers
+
+Retail (FEdaTrack, run after each race for every owned car): a car flagged as listed (record +0x6a0)
+gets an offer flag (+0x692) and an offer amount (+0x694). A roll against a chance read from age and
+mileage tables (in the exe at 0x5b7c88..0x5b7dfc) decides: a hit offers the asking price (+0x68c), a
+miss offers a random lower bid, clamped to 0..asking. Accepting removes the car and adds the offer to the
+account; the garage shows "remove from market" for a listed car.
+
+Ours (guess, not compared with retail): SELLCAR lists the car at its value; after each race a listed car
+without an offer gets one (40% the full asking price, else 70-95% of it); SELLCAR with an offer pending
+accepts it; DONTSELLCAR takes the car off. Saved as the 9th field of the `car =` line. The retail chance
+tables and the owner-typed asking price (dialog 800) are not read yet. Not tested in game.

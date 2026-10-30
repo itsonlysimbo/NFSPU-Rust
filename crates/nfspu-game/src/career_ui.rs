@@ -253,8 +253,16 @@ impl ShopUi {
             v.watch.insert("DealerCar.Car".into(), name.clone());
             v.watch.insert("UsedCar.Car".into(), name);
         }
-        // Selling and "don't sell" share a place in the layout; selling is immediate here.
-        v.hidden.push("ID_REMOVEFMBUTTON".into());
+        // "Remove from market" shows only for a listed car; an offer shows beside the asking price.
+        match c.cars.get(owned_index).and_then(|o| o.asking.map(|a| (a, o.offer))) {
+            Some((ask, offer)) => {
+                v.watch.insert("OwnedCars.Car(ASKINGPRICE)".into(), money(ask));
+                if let Some(o) = offer {
+                    v.watch.insert("OwnedCars.Car(OFFER)".into(), money(o));
+                }
+            }
+            None => v.hidden.push("ID_REMOVEFMBUTTON".into()),
+        }
         v
     }
 
@@ -378,14 +386,25 @@ impl ShopUi {
             }
             "SELLCAR" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id)).map(|k| k.name.clone()).unwrap_or_default();
-                let r = c.sell(owned, &shop);
-                Some(said(r, &format!("sold the {car}"), c))
+                // A pending offer is taken; otherwise the car is listed at its value (guess: retail
+                // lets the owner type the asking price, dialog 800).
+                if c.cars.get(owned).is_some_and(|o| o.offer.is_some()) {
+                    let r = c.accept_offer(owned);
+                    return Some(said(r, &format!("sold the {car} on offer"), c));
+                }
+                let ask = c.value_of(owned, &shop);
+                let r = c.list_car(owned, ask).map(|_| ask);
+                Some(said(r, &format!("listed the {car}"), c))
             }
             "QUICKFIX" => {
                 let r = c.quick_fix(owned, &shop);
                 Some(said(r, "repaired the car", c))
             }
-            "DONTSELLCAR" | "CHANGEDECAL" => Some(format!("career: {name} (nothing to do)")),
+            "DONTSELLCAR" => {
+                c.unlist_car(owned);
+                Some("career: took the car off the market".into())
+            }
+            "CHANGEDECAL" => Some(format!("career: {name} (nothing to do)")),
             "BUYPARTCALLBACK" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id))?;
                 let fits = career_shop::parts_for(&self.parts, car, c.year);
@@ -449,6 +468,11 @@ mod tests {
         let line = ui.callback("BUYCAR", "dealership", &mut c, &cars).unwrap();
         assert!(line.contains("bought a new"), "{line}");
         assert_eq!((c.cars.len(), c.cash, c.chosen_car), (2, 300, 1));
+        assert!(ui.callback("SELLCAR", "garage", &mut c, &cars).unwrap().contains("listed"));
+        assert_eq!(c.cars.len(), 2, "listing does not sell");
+        assert!(c.cars[1].asking.is_some() && c.cars[1].offer.is_none());
+        c.roll_offers();
+        assert!(c.cars[1].offer.is_some());
         assert!(ui.callback("SELLCAR", "garage", &mut c, &cars).unwrap().contains("sold"));
         assert_eq!(c.cars.len(), 1);
         assert!(ui.callback("NOPE", "garage", &mut c, &cars).is_none());
