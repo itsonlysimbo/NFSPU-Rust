@@ -552,6 +552,29 @@ impl Career {
         Ok(total)
     }
 
+    /// Repairs only the listed parts (indices of `component_damage`) of car `i`, for their summed
+    /// cost (the advanced repair screen's accepted shopping list). All or nothing.
+    pub fn repair_parts(&mut self, i: usize, list: &[usize], shop: &Shop) -> Result<i64, ShopError> {
+        if self.cars.get(i).is_none() {
+            return Err(ShopError::UnknownItem);
+        }
+        let costs = self.repair_costs(i, shop);
+        let mut seen = [false; 9];
+        let mut total = 0;
+        for &k in list.iter().filter(|&&k| k < 9) {
+            if !std::mem::replace(&mut seen[k], true) {
+                total += costs[k];
+            }
+        }
+        self.pay(total)?;
+        for k in (0..9).filter(|&k| seen[k]) {
+            for &z in crate::car_damage::Damage::component_zones(k) {
+                self.cars[i].damage[z] = 0;
+            }
+        }
+        Ok(total)
+    }
+
     /// Keeps the race's damage on car `i` (damage never heals by itself).
     pub fn keep_race_damage(&mut self, i: usize, zones: &[f32; crate::car_damage::ZONES]) {
         if let Some(c) = self.cars.get_mut(i) {
@@ -1041,6 +1064,18 @@ mod tests {
         assert_eq!(c.sell_part(0, 3, &shop), Ok(240), "80% of 300");
         assert_eq!(c.cash, 240);
         assert_eq!(c.fit_parts(0, &[1], &shop), Ok(-220), "swapping back: 500 for the cheaper part, 720 back for the dearer");
+    }
+
+    #[test]
+    fn repairing_chosen_parts_costs_their_share_and_clears_their_zones() {
+        let mut c = Career::new("R");
+        c.cash = 1_000_000;
+        c.cars[0].damage = [30; crate::car_damage::ZONES];
+        let shop = Shop { cars: &[], parts: &[] };
+        assert_eq!(c.repair_parts(0, &[1, 1], &shop), Ok(0), "no catalogue: nothing to pay");
+        assert_eq!(c.cars[0].damage[0], 0, "brake zones cleared");
+        assert_eq!(c.cars[0].damage[3], 30);
+        assert_eq!(c.repair_parts(5, &[1], &shop), Err(ShopError::UnknownItem));
     }
 
     #[test]

@@ -28,6 +28,11 @@ pub struct ShopUi {
     pub basket_sel: usize,
     /// Part ids picked for purchase.
     pub basket: Vec<u32>,
+    /// The advanced repair screen: the highlighted damaged part, the highlighted list row, and the
+    /// parts (indices of the nine) queued for repair.
+    pub damaged_sel: usize,
+    pub repair_sel: usize,
+    pub repair_list: Vec<usize>,
     /// The test-drive popup's location (an index into `test_tracks`) and the page showing.
     pub test_track: usize,
     pub page: String,
@@ -195,6 +200,13 @@ impl ShopUi {
                     v.watch.insert(format!("OwnedCars.Car({name}DAMAGECOST)"), money(costs[k]));
                 }
                 v.watch.insert("OwnedCars.Car(OVERALLDAMAGECOST)".into(), money(costs.iter().sum()));
+                // The advanced repair screen: damaged parts, and the queued list with its total.
+                const PARTS: [&str; 9] = ["Engine", "Brakes", "Transmission", "Suspension", "Shocks", "Tires", "Swaybars", "Bodywork", "Cosmetic"];
+                let damaged: Vec<[String; 3]> = (0..9).filter(|&k| damage[k] > 0).map(|k| [PARTS[k].to_string(), format!("{}%", damage[k]), money(costs[k])]).collect();
+                v.lists.insert("Parts.OwnedDamageRepairList".into(), ListData { selected: (!damaged.is_empty()).then(|| self.damaged_sel.min(damaged.len() - 1)), rows: damaged });
+                let queued: Vec<[String; 3]> = self.repair_list.iter().map(|&k| [PARTS[k].to_string(), format!("{}%", damage[k]), money(costs[k])]).collect();
+                v.watch.insert("Parts.RepairShoppingList(TOTAL)".into(), money(self.repair_list.iter().map(|&k| costs[k]).sum()));
+                v.lists.insert("Parts.RepairShoppingList".into(), ListData { selected: (!queued.is_empty()).then(|| self.repair_sel.min(queued.len() - 1)), rows: queued });
                 let paints = self.swatches(car);
                 let at = paints.iter().position(|p| p.section == owned.paint).unwrap_or(0);
                 let swatch = |rgb: [u8; 3]| Row::Item { lead: None, text: String::new(), swatch: Some(rgb), divider: false };
@@ -354,6 +366,8 @@ impl ShopUi {
             "Parts.AllParts" => self.all_sel = index,
             "Track1.Track" => self.test_track = index,
             "Parts.ShoppingList" => self.basket_sel = index,
+            "Parts.OwnedDamageRepairList" => self.damaged_sel = index,
+            "Parts.RepairShoppingList" => self.repair_sel = index,
             _ => return false,
         }
         true
@@ -429,6 +443,34 @@ impl ShopUi {
                 let id = Self::part_at(&fits, &inventory, self.all_sel.min((fits.len() + inventory.len()).saturating_sub(1))).filter(|_| self.all_sel >= fits.len())?.id;
                 let r = c.sell_part(owned, id, &shop);
                 Some(said(r, &format!("sold part {id}"), c))
+            }
+            // The advanced repair screen (callback names are guesses from its layout's button names).
+            "FIXPARTCALLBACK" | "REPLACEPARTCALLBACK" => {
+                let damage = c.component_damage(owned);
+                let damaged: Vec<usize> = (0..9).filter(|&k| damage[k] > 0).collect();
+                let k = *damaged.get(self.damaged_sel.min(damaged.len().saturating_sub(1)))?;
+                if !self.repair_list.contains(&k) {
+                    self.repair_list.push(k);
+                }
+                Some(format!("career: queued part {k} for repair"))
+            }
+            "ACCEPTLISTCALLBACK" => {
+                let list = std::mem::take(&mut self.repair_list);
+                let r = c.repair_parts(owned, &list, &shop);
+                if r.is_err() {
+                    self.repair_list = list;
+                }
+                Some(said(r, "repaired the listed parts", c))
+            }
+            "REMOVEITEMCALLBACK" if page.to_ascii_lowercase().contains("repair") => {
+                if self.repair_sel < self.repair_list.len() {
+                    self.repair_list.remove(self.repair_sel);
+                }
+                Some("career: removed from the repair list".into())
+            }
+            "CLEARLISTCALLBACK" if page.to_ascii_lowercase().contains("repair") => {
+                self.repair_list.clear();
+                Some("career: repair list cleared".into())
             }
             "CLEARLISTCALLBACK" => {
                 self.basket.clear();

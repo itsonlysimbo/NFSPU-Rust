@@ -421,3 +421,13 @@ Ours (guess, not compared with retail): SELLCAR lists the car at its value; afte
 without an offer gets one (40% the full asking price, else 70-95% of it); SELLCAR with an offer pending
 accepts it; DONTSELLCAR takes the car off. Saved as the 9th field of the `car =` line. The retail chance
 tables and the owner-typed asking price (dialog 800) are not read yet. Not tested in game.
+
+## Advanced repair list (guess, branch `claude/evo-shops-4`)
+`advancedrepair.lay` lists: `Parts.OwnedDamageRepairList` (damaged parts: name, damage, cost) and `Parts.RepairShoppingList`
+(queued). Ours: fix/replace queues the highlighted damaged part (both the same here), accept pays the summed cost of the
+queued parts and clears the zones that make up each part (`car_damage::component_zones`; zones are shared between
+parts, so repairing one can lower another), remove/clear edit the queue. Callback names `FIXPARTCALLBACK`,
+`REPLACEPARTCALLBACK`, `ACCEPTLISTCALLBACK` are guesses from the layout's button names, and the retail replace-versus-fix
+price difference is unknown. Not tested in the window.
+Trim colour lists end with the custom palette (stand-in for the retail custom colour editor).
+Race-number decal: not built (needs digits drawn on the car texture; retail mechanism not found).
