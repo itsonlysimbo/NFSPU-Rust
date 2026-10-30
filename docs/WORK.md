@@ -29,9 +29,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | Claude (oracle-capture-3) branch claude/oracle-capture-3 (continues -2), started 2026-10-27; builds on 60a5461. Mission car decoded (stock Boxster); cases use it, but the sim is ~11% slower than retail so they stay pending: next find why (physics). *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Career shops 2: sell-car offers, repair, paint trims and decals, parts inventory, car setup | Strong | Claude (evo-shops-3) branch claude/evo-shops-3 (continues -2), started 2026-10-30. DONE: repair (damage kept from races, costs, quick fix; 7b73ccc). DONE too: parts inventory + descriptions. DONE too: paint package + trim colours carried to preview and race; sell-car listing/offers (rule from decomp, chances guessed). NEXT: custom colour editor, race-number decal, car setup table, advanced repair list; check retail offer chance tables (exe 0x5b7c88). Gaps listed in `docs/provenance/career.md`; footage `C:/Users/CB/Videos/2026-10-24 20-55-17.mp4`; retail copy `C:/Users/CB/Downloads/NFS5 - Oracle` may be launched for more |
 | Career shops 3: decals, race number, custom colour editor, advanced repair list | Strong | Claude (evo-shops-4) branch claude/evo-shops-4, started 2026-10-30. DONE: trim colour lists now end with the custom swatch palette (stand-in for retail's custom editor). NEXT: race-number decal (door numbers need text drawn on the car texture), advanced repair list (fixpart/replacepart/acceptlist/removeitem/clearlist). Paint package/trims and quick fix are in; see `docs/provenance/career.md` |
-| Car setup screen: sliders, test drive, save/load/default | Strong | Sliders listed in `docs/provenance/career.md`; feed values into the car sim |
 | Evolution career: remaining eras, race events and unlocks end to end | Strong | Claude (career-1), claude/evo-career-2, step 1 done 2026-10-30 (committed): tournament car lists read from the records (count 0xda, ids 0x30), replacing the text guess; check.sh PASS. Next: event routes/unlocks (assign_routes guess, 0xe0 bytes, modern era tracks), unlock rules. Career at 58% in `docs/progress.md`; check event lists against retail data |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
@@ -40,6 +38,8 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Car setup screen: sliders, test drive, save/load/default | merged 2026-10-30 (1bdc6b9) |
+| Career shops 2: repair, parts inventory, paint package/trims, sell-car offers | merged 2026-10-30 (evo-shops-2, -3) |
 | Save profiles: tournament progress from retail .sav | merged 2026-10-30 (fea563b); see docs/provenance |
 | Factory Driver: remaining race missions (17,19,22,28,30-33), banner and cones | merged 2026-10-30 d9ee559; headless judged, mission 19 seen on screen |
 | Collision: close edge slivers and open edges | merged 2026-10-25; edge_walls.rs wall strips, audit OPEN ~8000 -> 430; residue: coastal slice fractions, industrial PINCH; not tested in game |

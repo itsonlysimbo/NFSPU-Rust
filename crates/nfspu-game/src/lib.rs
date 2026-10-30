@@ -10,6 +10,7 @@ pub mod career_ui;
 pub mod car_damage;
 pub mod car_load;
 pub mod car_sim;
+pub mod car_tune;
 pub mod car_model;
 pub mod car_shine;
 pub mod collision;

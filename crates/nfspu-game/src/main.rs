@@ -1584,7 +1584,12 @@ fn player_car(pos: Vec3, yaw: f32, model: &str, quick: Option<&nfspu_game::race_
             if tuning != nfspu_game::car_sim::Tuning::default() {
                 log_line(&format!("physics: career parts tune the car: power x{:.3}, grip x{:.3}, brakes x{:.3}, mass x{:.3}", tuning.power, tuning.grip, tuning.brake, tuning.mass));
             }
-            Car::with_spec(pos, yaw, l.spec.tuned(&tuning), aids)
+            let mut spec = l.spec.tuned(&tuning);
+            if let Some(t) = nfspu_game::car_tune::current().filter(|t| *t != Default::default()) {
+                log_line(&format!("physics: car setup sliders {:?}", t.values));
+                spec = t.apply(spec);
+            }
+            Car::with_spec(pos, yaw, spec, aids)
         }
         Err(e) => {
             log_line(&format!("physics: {e}; driving a made-up car"));

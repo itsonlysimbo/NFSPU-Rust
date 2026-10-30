@@ -164,6 +164,8 @@ pub enum Hit {
     /// A level bar (`NFS5.GouraudIndicatorBar` with `changeable=1`): its accessor and the bar's
     /// left edge and width, so the pointer's x sets the level.
     Slider(String, i32, i32),
+    /// A car setup arrow button (`NFS5.CARSETTINGBUTTON`): the slider's accessor and its step.
+    TuneStep(String, i32),
     /// An Options tab (`NFS5.GRAPHICTABBUTTON`): show the panel it names.
     Tab(String),
     /// Select row `index` of the list box for this accessor (the parts screen's lists).
@@ -985,6 +987,33 @@ fn append_control_with(
                 screen.draw.push(Draw::Picture { file: file.clone(), index: logo * 2 + 1, pos: [x + left_w, y], flip: 0, alpha: 1.0 });
                 screen.draw.push(Draw::Picture { file, index: logo * 2, pos: [x, y], flip: 0, alpha: 1.0 });
             }
+            true
+        }
+        // Car setup slider (`CarSettingSlider.ctr`): a transparent track and a 6 x 11 knob
+        // (`weeicons.fsh` #8) at the slider's 0..=100 position; the arrow buttons beside it are
+        // `NFS5.CARSETTINGBUTTON` (13 x 13, the picture is `nonselindex`).
+        "NFS5.CarSettingSlider" => {
+            if hidden(&data) {
+                return true;
+            }
+            let (w, h) = (number("width").unwrap_or(90.0), number("height").unwrap_or(13.0));
+            let accessor = accessor_key(data.get("accessor").map(String::as_str).unwrap_or(""));
+            let value = context.session.and_then(|s| s.levels.get(&accessor)).copied().unwrap_or(50).min(100);
+            let (knob_w, _) = shape_size(game_dir, "weeicons.fsh", 8).unwrap_or((6.0, 11.0));
+            let knob_x = (x + (w - knob_w) * value as f32 / 100.0).round();
+            screen.draw.push(Draw::Target { rect: [x, y, w, h], hit: Hit::Slider(accessor, x as i32, w as i32) });
+            screen.draw.push(Draw::Picture { file: "weeicons.fsh".into(), index: 8, pos: [knob_x, y + 1.0], flip: 0, alpha: 1.0 });
+            true
+        }
+        "NFS5.CARSETTINGBUTTON" => {
+            if hidden(&data) {
+                return true;
+            }
+            let accessor = accessor_key(data.get("accessor").map(String::as_str).unwrap_or(""));
+            let step = number("step").unwrap_or(0.0) as i32;
+            let index = number("nonselindex").unwrap_or(0.0) as usize;
+            screen.draw.push(Draw::Picture { file: "weeicons.fsh".into(), index, pos: [x, y], flip: 0, alpha: 1.0 });
+            screen.draw.push(Draw::Target { rect: [x, y, 13.0, 13.0], hit: Hit::TuneStep(accessor, step) });
             true
         }
         // A level bar (`GouraudIndicatorBar.ctr`): filled from the left to its accessor's level
