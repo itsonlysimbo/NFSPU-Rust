@@ -433,3 +433,21 @@ Challenge 10; Class 3 Trophy 10; Class 2 Trophy 15; Class 1 Trophy 2 (993 and 99
 are much narrower than our text matching (e.g. 10 vs 35 cars for the 356 Challenge; "Any 911" is 4
 cars). `Tournament::allows` uses the list; the text match stays only as a fallback.
 Not tested in the game window.
+
+### Tournament routes and per-race prizes (2026-10-30, `claude/evo-career-2`)
+
+The record's real race list is at `0x39c`: `u32` race count (1..6), then one **164-byte entry per
+race** from `0x3a0`. Entry: `u32` track id (low `u16` = `nfs5.trk` id; high `u16` is a flag, 2 on the
+Monaco routes of the later eras, 5 on the three bonus races, **meaning unknown**), `u32` (0/1, unknown),
+eight `u32` prizes for 1st..8th (this race's own table), `u32` 750-1000 (unknown), `f32` 0.5..0.9
+(unknown, maybe opponent strength). Verified: 356 Challenge = [14, 8] = Normandie then Cote d'Azur
+(matches the footage); every id of all 20 records exists in `nfs5.trk`. Examples: 914 Trophy [9, 34],
+Class 1 Trophy [16, 11, 29, 12] (flags aside), 2000 911 Turbo Challenge 6 races, bonus trophies one
+Monaco race each (26, 25, 30 = 550 A, 935, GT1). The modern era has its own routes (it used the golden
+era's list before). The old `u16` list at 12 is only the **unlock** list for quick race.
+
+Per-race prize tables (356 Challenge: 4500, 3500, 3000, 2500, 2000, 1500, 1000, 500 for each of its
+two races) replace the "tournament prize / races" guess; the tournament-level table at `0xec` is
+what the screen shows. That retail pays the race table after each race is a **guess** (the 4,388
+account balance in the footage is not explained by either rule). `career::assign_routes` now only
+fills records without a route. Not tested in the game window.
