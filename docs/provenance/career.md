@@ -361,3 +361,35 @@ is far slower than the time limits, so it reports `Failed(Time)` on 30 and 32, w
 On screen (not driven by a person): mission 19 loads, races with the opponent and leaves normally.
 The banner and cones of the gate missions were seen in `logs/mission_shot.png`
 (`NFSPU_MISSION_SHOT=<seconds>`): the banner is centred at the top; cones are small orange cones on the pad.
+
+## Repair and damage (2026-10-30, branch `claude/evo-shops-2`)
+Layouts: `repair.lay` (quick fix) watches `OwnedCars.Car(<PART>DAMAGE)` / `(<PART>DAMAGECOST)` for engine, brakes, transmission,
+suspension, shocks, tires, swaybars, bodywork, cosmetic plus `OVERALLDAMAGE` / `OVERALLDAMAGECOST` and the `QUICKFIX` button;
+`advancedrepair.lay` has the shopping list (`Parts.RepairShoppingList`, `Parts.OwnedDamageRepairList`) with `fixpart`,
+`replacepart`, `acceptlist`, `removeitem`, `clearlist` (**not built**: only the quick fix is).
+**Verified by the footage table** (full-resolution frame of `2026-10-24 20-55-17.mp4`, '52 356 1500, catalogue price 12,700):
+conditions 71 65 64 81 100 100 100 63 75 -> OVERALL 80 (the **mean of the nine**), costs 889 142 353 72 0 0 0 99 341 -> OVERALL 1,896
+(the **sum**).
+Built: `OwnedCar.damage` (the ten `car_damage` zones, saved as a 7th field of the `car =` line), `Career::component_damage`
+(`Damage::components`), `overall_damage`, `repair_costs`, `quick_fix`, `keep_race_damage`; the car's value now takes the overall damage.
+After a career race the player's zones are max-merged into the raced car; career races run with damage on.
+**Guesses:** the cost of a part = car price x per-part share x damage (shares engine 24.1 %, brakes 3.2, transmission 7.7,
+suspension 3.0, tires 2.1, bodywork 10.7 of the price at 100 % damage, calibrated on that single table and so only a fit;
+shocks 2.0, sway bars 1.0, cosmetic 4.0 are invented); the zone masks of shocks, tires, sway bars, bodywork and cosmetic; a car
+starts a race without its saved damage (only the race's own damage is kept); the garage's `current value` 9,890 for the 11,000
+car still differs from our rule (9,790 for -10 % mileage, -1 % damage), so the value's damage step is **not** settled.
+Not tested in the window. Still not built: sell-car offers (instant sale remains), paint trims/decals/custom colour, parts
+inventory with resale list and transaction list, car setup sliders.
+
+## Parts screen: inventory and descriptions (2026-10-30, `claude/evo-shops-2`)
+Built: `Parts.AllParts` now lists the parts that fit the car, then an `INVENTORY` block with the fitted parts at their
+resale price (80 % of the buying price, footage: 259 -> 207); the sell button only sells inventory rows (an available row does
+nothing); the buy button only adds available rows to the shopping list (the transaction list, accept / clear / remove were
+already there). `partsdesc` gets `Parts.AllParts` (the part's name) and `Parts.AllParts(DESC)`: the description string id is the
+**name id + 500** (checked: standard carbs 5085 -> 5585, medium carbs 5086 -> 5586, lightened flywheel 5102 -> 5602, all the footage's texts).
+Guess: the inventory is a block at the end of the one list (retail shows it as a section with its own header row after
+`PARTS AVAILABLE FOR ...`); owned parts keep their `*` in the available block too.
+Not built: paint trims (package, trim 1 / 2, custom colour, race number) and sell-car offers. Paint needs a per-car colour scheme
+(`PaintScheme.stripe_package` plus four colours) carried from `OwnedCar` through the showcase and `RaceSetup` into
+`car_model` (today only a section number or one custom body colour travels), and a door-number decal; the 3D preview in the
+paint shop depends on the same path. Sell offers need evidence of when a listed car sells.

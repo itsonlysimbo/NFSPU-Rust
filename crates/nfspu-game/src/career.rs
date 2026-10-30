@@ -177,6 +177,10 @@ pub fn car_allowed(rule: &str, car: &crate::catalog::Car) -> bool {
     true
 }
 
+/// Repair cost per part in thousandths of the car's price at 100 % damage: engine, brakes,
+/// transmission, suspension, shocks, tires, sway bars, bodywork, cosmetic (see `Career::repair_costs`).
+const REPAIR_SHARE: [i64; 9] = [241, 32, 77, 30, 20, 21, 10, 107, 40];
+
 /// Money as the screens show it: `5,000`, no currency sign (retail footage; the control draws the
 /// digits with commas).
 pub fn money(amount: i64) -> String {
@@ -206,12 +210,14 @@ pub struct OwnedCar {
     pub bought_for: i64,
     /// Installed part ids (`nfs5.prt`).
     pub parts: Vec<u32>,
+    /// Damage per zone (0..100, `car_damage` zones), kept between races until repaired.
+    pub damage: [u8; crate::car_damage::ZONES],
 }
 
 impl OwnedCar {
     /// A car with nothing on it yet.
     pub fn stock(id: u16, paint: usize, bought_for: i64) -> OwnedCar {
-        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new() }
+        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new(), damage: [0; crate::car_damage::ZONES] }
     }
 }
 
@@ -316,7 +322,8 @@ impl Career {
         t += &format!("player = {}\ncash = {}\nyear = {}\n", self.player, self.cash, self.year);
         for c in &self.cars {
             let parts: Vec<String> = c.parts.iter().map(u32::to_string).collect();
-            t += &format!("car = {},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"));
+            let damage: Vec<String> = c.damage.iter().map(u8::to_string).collect();
+            t += &format!("car = {},{},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"), damage.join(";"));
         }
         t += &format!("market = {}\n", self.market_round);
         if !self.taken.is_empty() {
@@ -353,6 +360,13 @@ impl Career {
                             extras: n.get(3).copied().unwrap_or(0) as u32,
                             bought_for: n.get(4).copied().unwrap_or(0),
                             parts: fields.get(5).map(|p| p.split(';').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default(),
+                            damage: {
+                                let mut z = [0u8; crate::car_damage::ZONES];
+                                for (slot, v) in z.iter_mut().zip(fields.get(6).map(|p| p.split(';')).into_iter().flatten()) {
+                                    *slot = v.trim().parse().unwrap_or(0);
+                                }
+                                z
+                            },
                         });
                     }
                 }
@@ -471,12 +485,65 @@ impl Career {
         shop.parts.iter().find(|p| p.id == id).map_or(0, |p| career_shop::part_value(p.price, self.year - p.year))
     }
 
+    /// Damage 0..100 of car `i`'s nine repairable parts (`car_damage::Damage::components`).
+    pub fn component_damage(&self, i: usize) -> [u32; 9] {
+        let mut d = crate::car_damage::Damage { zones: [0.0; crate::car_damage::ZONES], enabled: true };
+        if let Some(c) = self.cars.get(i) {
+            for (z, v) in d.zones.iter_mut().zip(c.damage) {
+                *z = v as f32;
+            }
+        }
+        d.components().map(|v| v.round().clamp(0.0, 100.0) as u32)
+    }
+
+    /// The repair screen's overall damage: 100 minus the mean condition of the nine parts (footage:
+    /// conditions 71 65 64 81 100 100 100 63 75 showed OVERALL 80, their mean).
+    pub fn overall_damage(&self, i: usize) -> u32 {
+        let parts = self.component_damage(i);
+        (parts.iter().sum::<u32>() as f32 / 9.0).round() as u32
+    }
+
+    /// What repairing each of the nine parts of car `i` costs: its damage share of the car's
+    /// catalogue price times the part's price share. The shares for engine, brakes, transmission,
+    /// suspension, tires and bodywork come from one footage table (the 12,700 '52 356 1500 at 29,
+    /// 35, 36, 19, 37 and 25 % damage cost 889, 142, 353, 72, 99 and 341); shocks, sway bars and
+    /// cosmetic have no data, their shares are **guesses**.
+    pub fn repair_costs(&self, i: usize, shop: &Shop) -> [i64; 9] {
+        let base = self.cars.get(i).and_then(|c| self.catalogue_car(shop, c.id)).map_or(0, |c| c.price as i64);
+        let damage = self.component_damage(i);
+        let mut out = [0i64; 9];
+        for (k, cost) in out.iter_mut().enumerate() {
+            *cost = base * REPAIR_SHARE[k] * damage[k] as i64 / 100_000;
+        }
+        out
+    }
+
+    /// Repairs everything on car `i` (the repair screen's quick fix) for the summed cost.
+    pub fn quick_fix(&mut self, i: usize, shop: &Shop) -> Result<i64, ShopError> {
+        if self.cars.get(i).is_none() {
+            return Err(ShopError::UnknownItem);
+        }
+        let total: i64 = self.repair_costs(i, shop).iter().sum();
+        self.pay(total)?;
+        self.cars[i].damage = [0; crate::car_damage::ZONES];
+        Ok(total)
+    }
+
+    /// Keeps the race's damage on car `i` (damage never heals by itself).
+    pub fn keep_race_damage(&mut self, i: usize, zones: &[f32; crate::car_damage::ZONES]) {
+        if let Some(c) = self.cars.get_mut(i) {
+            for (slot, z) in c.damage.iter_mut().zip(zones) {
+                *slot = (*slot).max(z.round().clamp(0.0, 100.0) as u8);
+            }
+        }
+    }
+
     /// What owned car `i` would sell for (retail's value rule, `career_shop::car_value`).
     pub fn value_of(&self, i: usize, shop: &Shop) -> i64 {
         let Some(car) = self.cars.get(i) else { return 0 };
         let base = self.catalogue_car(shop, car.id).map_or(0, |c| c.price as i64);
         let parts: i64 = car.parts.iter().map(|p| self.installed_value(shop, *p)).sum();
-        career_shop::car_value(base, car.mileage, car.extras, 0, parts)
+        career_shop::car_value(base, car.mileage, car.extras, self.overall_damage(i), parts)
     }
 
     /// The used-car lot for now: this round's cars that are still there.
@@ -852,6 +919,36 @@ mod tests {
     }
 
     #[test]
+    fn damage_costs_money_to_repair_and_lowers_the_value() {
+        let (cars, parts) = shop_data();
+        let shop = Shop { cars: &cars, parts: &parts };
+        let mut c = Career::new("A");
+        c.cash = 100_000;
+        let price = cars.iter().find(|k| k.id == c.cars[0].id).unwrap().price as i64;
+        assert_eq!(c.repair_costs(0, &shop), [0; 9]);
+        assert_eq!(c.overall_damage(0), 0);
+        let clean = c.value_of(0, &shop);
+        c.keep_race_damage(0, &[40.0; crate::car_damage::ZONES]);
+        assert_eq!(c.component_damage(0), [40; 9]);
+        assert_eq!(c.overall_damage(0), 40);
+        // 40 % of the engine's 24.1 % share of the price (footage: 29 % cost 889 on 12,700)
+        assert_eq!(c.repair_costs(0, &shop)[0], price * 241 * 40 / 100_000);
+        assert!(c.value_of(0, &shop) < clean);
+        // damage survives the save text, and a later race never lowers it
+        let back = Career::parse(&c.to_text()).unwrap();
+        assert_eq!(back.cars[0].damage, c.cars[0].damage);
+        c.keep_race_damage(0, &[10.0; crate::car_damage::ZONES]);
+        assert_eq!(c.overall_damage(0), 40);
+        let total: i64 = c.repair_costs(0, &shop).iter().sum();
+        let before = c.cash;
+        assert_eq!(c.quick_fix(0, &shop), Ok(total));
+        assert_eq!((c.cash, c.overall_damage(0)), (before - total, 0));
+        c.keep_race_damage(0, &[40.0; crate::car_damage::ZONES]);
+        c.cash = 0;
+        assert_eq!(c.quick_fix(0, &shop), Err(ShopError::NotEnoughCash));
+    }
+
+    #[test]
     fn parts_replace_each_other_and_change_the_value_and_handling() {
         let (cars, parts) = shop_data();
         let shop = Shop { cars: &cars, parts: &parts };
@@ -883,7 +980,7 @@ mod tests {
         assert_eq!(c.cars[0].mileage, career_shop::RACE_MILES);
         assert_eq!((c.market_round, c.taken.len()), (1, 0));
         let mut d = Career::new("B");
-        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8] });
+        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0] });
         d.taken = vec![0, 3];
         assert_eq!(Career::parse(&d.to_text()).unwrap(), d);
         assert_eq!(Career::parse("version = 1

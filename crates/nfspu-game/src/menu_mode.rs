@@ -338,6 +338,8 @@ impl FrontEnd {
         setup.direction = nfspu_game::race_setup::Direction::Forward;
         setup.laps = career::CAREER_LAPS;
         setup.opponents = 7;
+        // Career races have damage on (**guess**; the repair screens only make sense with it).
+        setup.damage = true;
         // Each opponent has its own car in the tournament record (seven slots).
         setup.opponent_cars = if t.opponent_cars.is_empty() { Default::default() } else { nfspu_game::race_setup::OpponentCars::Cars(t.opponent_cars.clone()) };
         setup.car_id = car.id;
@@ -409,7 +411,7 @@ impl FrontEnd {
     }
 
     /// Back from a race: pays the place and moves the tournament on. `place` 0: not finished.
-    fn settle_career_race(&mut self, place: usize) {
+    fn settle_career_race(&mut self, place: usize, damage: [f32; nfspu_game::car_damage::ZONES]) {
         let Some(id) = self.career.pending.take() else { return };
         let place = if place == 0 { self.career.forced_place.unwrap_or(0) } else { place };
         let Some(t) = self.career.data.iter().find(|t| t.id == id).cloned() else { return };
@@ -420,6 +422,9 @@ impl FrontEnd {
             c.cash += fee;
             crate::log_line(&format!("career: race not finished, entry fee {} refunded", career::money(fee)));
         }
+        // The raced car keeps the damage it took (repaired in the garage's repair screens).
+        let raced = c.chosen_car.min(c.cars.len().saturating_sub(1));
+        c.keep_race_damage(raced, &damage);
         let payout = c.finish_race(&t, &self.career.data, place);
         crate::log_line(&format!(
             "career: race result place {} paid {} (tournament {} {}, year {}, cash {})",
@@ -1201,7 +1206,8 @@ fn enter_menu(
     // A career race that just ended is paid before the screens are rebuilt.
     if state.career.pending.is_some() {
         let place = std::mem::take(&mut result.place);
-        state.settle_career_race(place);
+        let damage = std::mem::take(&mut result.damage);
+        state.settle_career_race(place, damage);
     }
     // Screens are rebuilt (the page and popup as they were) and drawn afresh.
     state.reload();
