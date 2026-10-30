@@ -481,6 +481,8 @@ pub struct PageChoice<'a> {
     /// The colour of each band (see `tint_bands`), from the paint scheme; `None` leaves the
     /// artwork's own colours (cars without a `.clr`, such as traffic).
     pub bands: Option<[[u8; 3]; BANDS]>,
+    /// The race number for the `racedecal` tiles (see `draw_race_number`).
+    pub number: Option<u8>,
 }
 
 /// Builds every texture page of a car as the engine does: each page starts empty and each file's
@@ -540,6 +542,9 @@ pub fn build_tpages(layout: &TpgLayout, embedded: &[(u16, &[u8])], dir: &std::pa
                 tint_bands(&mut rgba, bands);
             }
             format.reduce_alpha(&mut rgba);
+            if let (false, Some(n)) = (paint, choice.number) {
+                draw_race_number(&mut rgba, page.size as usize, &archive, choice, &keep, f, dir, n);
+            }
             // paste at the file's offset; transparent texels leave what is already there
             let s = page.size as usize;
             let [ox, oy] = [file.offset[0] as usize, file.offset[1] as usize];
@@ -564,6 +569,39 @@ pub fn build_tpages(layout: &TpgLayout, embedded: &[(u16, &[u8])], dir: &std::pa
         }
     }
     pages
+}
+
+/// Draws the race number on the `racedecal` tiles of file `f` (retail loads `RaceDecal.ffn` for
+/// them: the string `%sracedecal.ffn`). The glyph placement and colour are **guesses**: the number is
+/// centred on the tile in black, one glyph pixel per texel.
+#[allow(clippy::too_many_arguments)]
+fn draw_race_number(rgba: &mut [u8], size: usize, archive: &shpi::ShpiArchive, choice: &PageChoice, keep: &[bool], f: usize, dir: &std::path::Path, number: u8) {
+    let Some(path) = find_case_insensitive(dir, "RaceDecal.ffn") else { return };
+    let Some(font) = fs::read(path).ok().and_then(|b| nfspu_formats::ffn::Font::parse(&b)) else { return };
+    let Some((_, [w, h], text)) = crate::menu::rasterise_text(&font, &number.to_string(), [0.0, 0.0, 0.0, 1.0]) else { return };
+    for (e, kept) in archive.entries.iter().zip(keep) {
+        let rule = choice.rules.tiles.get(&(f as u32 + 1, e.name.trim().to_ascii_lowercase()));
+        if !*kept || !rule.is_some_and(|r| r.race_decal) {
+            continue;
+        }
+        // centre the text image on the tile
+        let left = e.x as i32 + (e.width as i32 - w as i32) / 2;
+        let top = e.y as i32 + (e.height as i32 - h as i32) / 2;
+        for gy in 0..h as i32 {
+            for gx in 0..w as i32 {
+                let (x, y) = (left + gx, top + gy);
+                if x < 0 || y < 0 || x as usize >= size || y as usize >= size {
+                    continue;
+                }
+                let src = ((gy as u32 * w + gx as u32) * 4) as usize;
+                if text[src + 3] == 0 {
+                    continue;
+                }
+                let dst = (y as usize * size + x as usize) * 4;
+                rgba[dst..dst + 4].copy_from_slice(&[text[src], text[src + 1], text[src + 2], 255]);
+            }
+        }
+    }
 }
 
 /// A file in `dir` whose name matches `name` ignoring case (the install mixes `INTGLASS.FSH` and `Cabrio.fsh`).
@@ -659,6 +697,8 @@ pub struct CarOptions {
 pub struct PaintTweak {
     pub package: Option<u8>,
     pub trim: [Option<[u8; 3]>; 2],
+    /// The race number drawn on the doors of race-style cars (`RaceDecal.ffn`; 0..99).
+    pub number: Option<u8>,
 }
 
 impl PaintTweak {
@@ -922,7 +962,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
     let scheme = scheme.map(|s| options.tweak.apply(s));
     let bands = scheme.map(|scheme| band_colours(&scheme, &packages));
     let embedded = crp.embedded_archives();
-    model.pages = build_tpages(&layout, &embedded, &car_dir()?, &PageChoice { rules: &rules, style: &style, driver, bands });
+    model.pages = build_tpages(&layout, &embedded, &car_dir()?, &PageChoice { rules: &rules, style: &style, driver, bands, number: options.tweak.number });
     model.page_source = layout.tpages.iter().map(|t| t.source).collect();
     let has_page: Vec<bool> = model.pages.iter().map(Option::is_some).collect();
     // a material whose page is missing falls back to the page of its kind's usual file
@@ -1243,7 +1283,7 @@ mod tests {
     fn the_paint_shop_tweak_changes_package_and_trims() {
         let base = PaintScheme { colours: [[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]], stripe_package: 2 };
         assert_eq!(PaintTweak::default().apply(base), base, "no change by default");
-        let t = PaintTweak { package: Some(5), trim: [Some([9, 9, 9]), None] };
+        let t = PaintTweak { package: Some(5), trim: [Some([9, 9, 9]), None], number: None };
         let s = t.apply(base);
         assert_eq!((s.stripe_package, s.colours[1], s.colours[2]), (4, [9, 9, 9], [3, 3, 3]));
         // package 'none' falls outside the table, so the plain default bands are used

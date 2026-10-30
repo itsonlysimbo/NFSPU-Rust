@@ -166,6 +166,7 @@ impl RaceSetup {
         for (k, t) in self.tweak.trim.iter().enumerate() {
             line(if k == 0 { "trim1" } else { "trim2" }, t.map_or("none".to_string(), |[r, g, b]| format!("{r},{g},{b}")));
         }
+        line("decal_number", self.tweak.number.map_or("none".to_string(), |n| n.to_string()));
         line("damage", self.damage.to_string());
         line("difficulty", self.difficulty.to_string());
         line("player", self.player.clone());
@@ -241,7 +242,7 @@ impl RaceSetup {
                         (n.len() == 3).then(|| [n[0], n[1], n[2]])
                     })
                 };
-                crate::car_model::PaintTweak { package: get("paint_package").ok().and_then(|v| v.trim().parse().ok()), trim: [rgb("trim1"), rgb("trim2")] }
+                crate::car_model::PaintTweak { package: get("paint_package").ok().and_then(|v| v.trim().parse().ok()), trim: [rgb("trim1"), rgb("trim2")], number: get("decal_number").ok().and_then(|v| v.trim().parse().ok()) }
             },
             damage: flag("damage")?,
             difficulty: num("difficulty", get("difficulty")?)?,
@@ -276,7 +277,7 @@ mod tests {
             paint: 20,
             paint_section: 21,
             custom_colour: Some([12, 200, 99]),
-            tweak: crate::car_model::PaintTweak { package: Some(3), trim: [Some([1, 2, 3]), None] },
+            tweak: crate::car_model::PaintTweak { package: Some(3), trim: [Some([1, 2, 3]), None], number: Some(7) },
             car_style: 2,
             automatic: true,
             abs: true,
@@ -293,7 +294,7 @@ mod tests {
     fn paint_tweaks_round_trip_and_may_be_absent() {
         let s = sample();
         assert_eq!(RaceSetup::parse(&s.to_text()).unwrap().tweak, s.tweak);
-        let old: String = s.to_text().lines().filter(|l| !l.starts_with("paint_package") && !l.starts_with("trim")).map(|l| format!("{l}
+        let old: String = s.to_text().lines().filter(|l| !l.starts_with("paint_package") && !l.starts_with("trim") && !l.starts_with("decal_number")).map(|l| format!("{l}
 ")).collect();
         assert_eq!(RaceSetup::parse(&old).unwrap().tweak, Default::default());
     }
