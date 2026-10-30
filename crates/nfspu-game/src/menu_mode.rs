@@ -222,6 +222,7 @@ impl FrontEnd {
             self.session.lists = view.lists;
             self.session.hidden.extend(view.hidden);
             self.quick.showcase = view.showcase;
+            self.quick.showcase_tweak = view.showcase_tweak;
             self.session.car_logo = self.quick.car_logo();
         } else {
             self.quick.showcase = None;
@@ -349,6 +350,7 @@ impl FrontEnd {
         setup.owned_car = true;
         setup.paint_section = owned.paint;
         setup.custom_colour = None;
+        setup.tweak = owned.tweak;
         setup.difficulty = track.difficulty.clamp(0, 2) as u8;
         let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
         setup.tuning = c.tuning_of(at, &career::Shop { cars: &self.quick.cars, parts: &self.career.ui.parts });

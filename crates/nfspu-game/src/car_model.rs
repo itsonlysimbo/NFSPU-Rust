@@ -647,6 +647,34 @@ pub struct CarOptions {
     /// Soft top raised (the default). Open cars carry the top as piece 41: the style lists its up
     /// version (type 1, 3 or 5) and the matching down version is the next type (2, 4 or 6).
     pub roof_up: bool,
+    /// The paint shop's changes to the scheme (stripe package and trim colours).
+    pub tweak: PaintTweak,
+}
+
+/// The paint shop's changes to a paint scheme. `package`: `None` keeps the scheme's own stripe
+/// package; `Some(0)` is "none" (no stripes) and `Some(n)` is `[packageN]` of `packages.ini`
+/// (**guess**: the shop's combo lists none, package 1 to 7 and retail's own number for them was not
+/// read). `trim` replaces `color2` and `color3` of the scheme (trim 1 and trim 2, **guess**).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaintTweak {
+    pub package: Option<u8>,
+    pub trim: [Option<[u8; 3]>; 2],
+}
+
+impl PaintTweak {
+    /// Applies the changes to a scheme.
+    pub fn apply(&self, mut scheme: PaintScheme) -> PaintScheme {
+        if let Some(p) = self.package {
+            // none: an index past the table, which `band_colours` answers with its plain bands
+            scheme.stripe_package = if p == 0 { usize::MAX } else { p as usize - 1 };
+        }
+        for (k, t) in self.trim.iter().enumerate() {
+            if let Some(rgb) = t {
+                scheme.colours[k + 1] = *rgb;
+            }
+        }
+        scheme
+    }
 }
 
 /// The piece id of an open car's folding top (`CabrioUp` / `CabrioDown`).
@@ -662,7 +690,7 @@ impl CarOptions {
 
 impl Default for CarOptions {
     fn default() -> Self {
-        CarOptions { level: 3, style: 1, driver: 1, paint: 4, body: None, roof_up: true }
+        CarOptions { level: 3, style: 1, driver: 1, paint: 4, body: None, roof_up: true, tweak: PaintTweak::default() }
     }
 }
 
@@ -891,6 +919,7 @@ pub fn load_car(name: &str, options: &CarOptions) -> Result<CarModel, String> {
         }
         None => schemes.get(&paint).copied(),
     };
+    let scheme = scheme.map(|s| options.tweak.apply(s));
     let bands = scheme.map(|scheme| band_colours(&scheme, &packages));
     let embedded = crp.embedded_archives();
     model.pages = build_tpages(&layout, &embedded, &car_dir()?, &PageChoice { rules: &rules, style: &style, driver, bands });
@@ -1210,6 +1239,19 @@ pub fn shadow_picture() -> Result<(u32, u32, Vec<u8>), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_paint_shop_tweak_changes_package_and_trims() {
+        let base = PaintScheme { colours: [[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]], stripe_package: 2 };
+        assert_eq!(PaintTweak::default().apply(base), base, "no change by default");
+        let t = PaintTweak { package: Some(5), trim: [Some([9, 9, 9]), None] };
+        let s = t.apply(base);
+        assert_eq!((s.stripe_package, s.colours[1], s.colours[2]), (4, [9, 9, 9], [3, 3, 3]));
+        // package 'none' falls outside the table, so the plain default bands are used
+        let none = PaintTweak { package: Some(0), ..Default::default() }.apply(base);
+        let packages = [[0u8; BANDS]; 3];
+        assert_eq!(band_colours(&none, &packages)[14], base.colours[3]);
+    }
+
     use super::*;
 
     #[test]

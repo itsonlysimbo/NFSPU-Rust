@@ -45,6 +45,8 @@ pub struct View {
     pub hidden: Vec<String>,
     /// The car the 3D room shows on this page: (index into the catalogue, paint section).
     pub showcase: Option<(usize, usize)>,
+    /// The paint-shop changes that car wears.
+    pub showcase_tweak: crate::car_model::PaintTweak,
 }
 
 fn kind_label(kind: u16) -> &'static str {
@@ -193,6 +195,17 @@ impl ShopUi {
                 v.choices.insert("OwnedCar.ExtColour".into(), Choice { rows: paints.iter().map(|p| swatch(p.body)).collect(), selected: at, closed: String::new(), closed_swatch: paints.get(at).map(|p| p.body) });
                 if ["garage", "paintshop", "parts"].iter().any(|p| page.eq_ignore_ascii_case(p)) {
                     v.showcase = Some((ci, owned.paint));
+                    v.showcase_tweak = owned.tweak;
+                }
+                // The paint shop: stripe package (none, package 1-7) and the two trim colours, picked
+                // from the car's body colours.
+                let pkg = owned.tweak.package.map_or(0, |p| p as usize).min(7);
+                let pkg_rows: Vec<Row> = std::iter::once("none".to_string()).chain((1..=7).map(|n| format!("package {n}"))).map(Row::item).collect();
+                let pkg_closed = if pkg == 0 { "none".to_string() } else { format!("package {pkg}") };
+                v.choices.insert("OwnedCar.PackageNum".into(), Choice { rows: pkg_rows, selected: pkg, closed: pkg_closed, closed_swatch: None });
+                for (k, key) in ["OwnedCar.S1Colour", "OwnedCar.S2Colour"].iter().enumerate() {
+                    let at = owned.tweak.trim[k].and_then(|t| paints.iter().position(|p| p.body == t)).unwrap_or(0);
+                    v.choices.insert((*key).into(), Choice { rows: paints.iter().map(|p| swatch(p.body)).collect(), selected: at, closed: String::new(), closed_swatch: owned.tweak.trim[k].or_else(|| paints.get(at).map(|p| p.body)) });
                 }
 
                 // Parts: everything that fits the car and exists now; fitted parts carry a star.
@@ -300,7 +313,21 @@ impl ShopUi {
                     }
                 }
             }
-            "DealerCar.IntColour" | "OwnedCar.IntColour" | "OwnedCar.S1Colour" | "OwnedCar.S2Colour" | "OwnedCar.PackageNum" => {}
+            "OwnedCar.PackageNum" => {
+                let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+                if let Some(o) = c.cars.get_mut(at) {
+                    o.tweak.package = Some(index.min(7) as u8);
+                }
+            }
+            "OwnedCar.S1Colour" | "OwnedCar.S2Colour" => {
+                let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+                if let Some(car) = c.cars.get(at).and_then(|o| cars.iter().find(|k| k.id == o.id)) {
+                    if let Some(p) = self.swatches(car).get(index) {
+                        c.cars[at].tweak.trim[usize::from(accessor == "OwnedCar.S2Colour")] = Some(p.body);
+                    }
+                }
+            }
+            "DealerCar.IntColour" | "OwnedCar.IntColour" => {}
             _ => return false,
         }
         true

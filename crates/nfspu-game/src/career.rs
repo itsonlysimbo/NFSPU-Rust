@@ -212,12 +212,14 @@ pub struct OwnedCar {
     pub parts: Vec<u32>,
     /// Damage per zone (0..100, `car_damage` zones), kept between races until repaired.
     pub damage: [u8; crate::car_damage::ZONES],
+    /// The paint shop's stripe package and trim colours.
+    pub tweak: crate::car_model::PaintTweak,
 }
 
 impl OwnedCar {
     /// A car with nothing on it yet.
     pub fn stock(id: u16, paint: usize, bought_for: i64) -> OwnedCar {
-        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new(), damage: [0; crate::car_damage::ZONES] }
+        OwnedCar { id, paint, mileage: 0, extras: 0, bought_for, parts: Vec::new(), damage: [0; crate::car_damage::ZONES], tweak: Default::default() }
     }
 }
 
@@ -323,7 +325,9 @@ impl Career {
         for c in &self.cars {
             let parts: Vec<String> = c.parts.iter().map(u32::to_string).collect();
             let damage: Vec<String> = c.damage.iter().map(u8::to_string).collect();
-            t += &format!("car = {},{},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"), damage.join(";"));
+            let rgb = |t: Option<[u8; 3]>| t.map_or("-".to_string(), |[r, g, b]| format!("{r:02x}{g:02x}{b:02x}"));
+            let tweak = format!("{};{};{}", c.tweak.package.map_or("-".to_string(), |p| p.to_string()), rgb(c.tweak.trim[0]), rgb(c.tweak.trim[1]));
+            t += &format!("car = {},{},{},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"), damage.join(";"), tweak);
         }
         t += &format!("market = {}\n", self.market_round);
         if !self.taken.is_empty() {
@@ -334,6 +338,16 @@ impl Career {
         }
         t += &format!("chosen = {},{}\n", self.chosen_tournament, self.chosen_car);
         t
+    }
+
+    /// `package;trim1;trim2` as written by `to_text` (`-` for unset, trims as six hex digits).
+    fn parse_tweak(text: &str) -> crate::car_model::PaintTweak {
+        let part: Vec<&str> = text.split(';').collect();
+        let rgb = |s: Option<&&str>| {
+            let s = s?.trim();
+            (s.len() == 6).then(|| [0usize, 2, 4].map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap_or(0)))
+        };
+        crate::car_model::PaintTweak { package: part.first().and_then(|p| p.trim().parse().ok()), trim: [rgb(part.get(1)), rgb(part.get(2))] }
     }
 
     pub fn parse(text: &str) -> Option<Career> {
@@ -367,6 +381,7 @@ impl Career {
                                 }
                                 z
                             },
+                            tweak: fields.get(7).map(|t| Self::parse_tweak(t)).unwrap_or_default(),
                         });
                     }
                 }
@@ -937,6 +952,7 @@ mod tests {
         // damage survives the save text, and a later race never lowers it
         let back = Career::parse(&c.to_text()).unwrap();
         assert_eq!(back.cars[0].damage, c.cars[0].damage);
+        assert_eq!(back.cars[0].tweak, c.cars[0].tweak);
         c.keep_race_damage(0, &[10.0; crate::car_damage::ZONES]);
         assert_eq!(c.overall_damage(0), 40);
         let total: i64 = c.repair_costs(0, &shop).iter().sum();
@@ -980,7 +996,7 @@ mod tests {
         assert_eq!(c.cars[0].mileage, career_shop::RACE_MILES);
         assert_eq!((c.market_round, c.taken.len()), (1, 0));
         let mut d = Career::new("B");
-        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0] });
+        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0], tweak: crate::car_model::PaintTweak { package: Some(2), trim: [Some([9, 8, 7]), None] } });
         d.taken = vec![0, 3];
         assert_eq!(Career::parse(&d.to_text()).unwrap(), d);
         assert_eq!(Career::parse("version = 1

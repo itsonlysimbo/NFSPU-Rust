@@ -98,6 +98,8 @@ pub struct RaceSetup {
     /// A custom body colour picked in the colour list's palette (replaces the section's `color1`),
     /// or `None` for the section's own colours. Written as `custom_colour = r,g,b` or `none`.
     pub custom_colour: Option<[u8; 3]>,
+    /// The owned car's paint-shop changes (`paint_package`, `trim1`, `trim2`; each `none` when unset).
+    pub tweak: crate::car_model::PaintTweak,
     /// Body style in the model's `.tpg` (`[styleN]`, 1-based; `car_model::CarOptions::style`),
     /// from the catalogue record: the 356 1100 Cabriolet is 2 ("Cabrio").
     pub car_style: usize,
@@ -120,7 +122,7 @@ impl RaceSetup {
     /// The player's car model options in the race: the setup's body style and paint section (the
     /// ones the garage showed), exterior detail, a driver in the seat.
     pub fn car_options(&self) -> crate::car_model::CarOptions {
-        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, body: self.custom_colour, roof_up: self.roof_up, ..Default::default() }
+        crate::car_model::CarOptions { style: self.car_style.max(1), paint: self.paint_section, body: self.custom_colour, roof_up: self.roof_up, tweak: self.tweak, ..Default::default() }
     }
 
     /// `key = value` lines, one per field, in a fixed order.
@@ -160,6 +162,10 @@ impl RaceSetup {
         line("abs", self.abs.to_string());
         line("traction_control", self.traction_control.to_string());
         line("roof_up", self.roof_up.to_string());
+        line("paint_package", self.tweak.package.map_or("none".to_string(), |p| p.to_string()));
+        for (k, t) in self.tweak.trim.iter().enumerate() {
+            line(if k == 0 { "trim1" } else { "trim2" }, t.map_or("none".to_string(), |[r, g, b]| format!("{r},{g},{b}")));
+        }
         line("damage", self.damage.to_string());
         line("difficulty", self.difficulty.to_string());
         line("player", self.player.clone());
@@ -228,6 +234,15 @@ impl RaceSetup {
             abs: flag("abs")?,
             traction_control: flag("traction_control")?,
             roof_up: flag("roof_up")?,
+            tweak: {
+                let rgb = |k: &str| {
+                    get(k).ok().and_then(|v| {
+                        let n: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                        (n.len() == 3).then(|| [n[0], n[1], n[2]])
+                    })
+                };
+                crate::car_model::PaintTweak { package: get("paint_package").ok().and_then(|v| v.trim().parse().ok()), trim: [rgb("trim1"), rgb("trim2")] }
+            },
             damage: flag("damage")?,
             difficulty: num("difficulty", get("difficulty")?)?,
             player: map.get("player").copied().unwrap_or("").to_string(),
@@ -261,6 +276,7 @@ mod tests {
             paint: 20,
             paint_section: 21,
             custom_colour: Some([12, 200, 99]),
+            tweak: crate::car_model::PaintTweak { package: Some(3), trim: [Some([1, 2, 3]), None] },
             car_style: 2,
             automatic: true,
             abs: true,
@@ -271,6 +287,15 @@ mod tests {
             player: "3Greg".into(),
             tuning: crate::car_sim::Tuning { power: 1.1, grip: 1.05, brake: 1.0, mass: 0.98 },
         }
+    }
+
+    #[test]
+    fn paint_tweaks_round_trip_and_may_be_absent() {
+        let s = sample();
+        assert_eq!(RaceSetup::parse(&s.to_text()).unwrap().tweak, s.tweak);
+        let old: String = s.to_text().lines().filter(|l| !l.starts_with("paint_package") && !l.starts_with("trim")).map(|l| format!("{l}
+")).collect();
+        assert_eq!(RaceSetup::parse(&old).unwrap().tweak, Default::default());
     }
 
     #[test]

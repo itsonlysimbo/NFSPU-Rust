@@ -81,6 +81,8 @@ pub struct QuickRace {
     pub player: String,
     /// A car the career's shop screens show instead of the chosen one: (catalogue index, paint section).
     pub showcase: Option<(usize, usize)>,
+    /// The paint-shop changes the showcase car wears (an owned car's package and trims).
+    pub showcase_tweak: crate::car_model::PaintTweak,
     // Choices, as dropdown positions.
     pub car: usize,
     /// Dropdown position of the car compare screen's second car.
@@ -471,6 +473,7 @@ impl QuickRace {
             paint: self.colour.min(255) as u8,
             paint_section,
             custom_colour: self.custom_colour(),
+            tweak: Default::default(),
             car_style,
             automatic: self.transmission == 1,
             abs: self.abs == 1,

@@ -393,3 +393,18 @@ Not built: paint trims (package, trim 1 / 2, custom colour, race number) and sel
 (`PaintScheme.stripe_package` plus four colours) carried from `OwnedCar` through the showcase and `RaceSetup` into
 `car_model` (today only a section number or one custom body colour travels), and a door-number decal; the 3D preview in the
 paint shop depends on the same path. Sell offers need evidence of when a listed car sells.
+
+## Paint shop: package and trims (2026-10-30, `claude/evo-shops-3`)
+`paintshop.lay` accessors: `OwnedCar.PackageNum` (combo), `OwnedCar.S1Colour` / `S2Colour` (trim 1 / 2 colour boxes), `OwnedCar.ExtColour`,
+`OwnedCar.IntColour`, `CHANGEDECAL` (race number). Footage: the package combo lists none, package 1 to 7; picking one stripes the 3D car at once;
+trim colours come from a swatch list with a `custom...` entry (the custom colour editor); the decal prompt "Please enter decal number" puts
+the number on both doors.
+Built: `car_model::PaintTweak` (package override and two trim colours) applied to the paint scheme before the bands are made, carried
+`OwnedCar.tweak` (saved as the 8th field of the `car =` line) -> `View.showcase_tweak` -> `quick.showcase_tweak` -> garage preview
+(`wanted_car`) and `RaceSetup.tweak` (`paint_package`, `trim1`, `trim2` lines, optional when read) -> the race car's `CarOptions`.
+The paint shop's combos now pick the package and the trims (from the car's body colours), and the choice sticks on the car.
+**Guesses:** combo entry `package N` is `[packageN]` of `packages.ini` (stripe index N - 1) and `none` is no stripes; trim 1 / 2 replace the scheme's
+`color2` / `color3`; the shop shows `none` for a car that never picked a package even if its own scheme has stripes.
+**Not built:** the custom colour editor, the interior colour, and the race-number decal (door numbers need text drawn on the car's texture).
+Unit tests: `the_paint_shop_tweak_changes_package_and_trims`, `paint_tweaks_round_trip_and_may_be_absent`, the career save round trip.
+Not seen on screen (not tested in the window).
