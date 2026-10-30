@@ -49,6 +49,13 @@ pub struct Tournament {
     /// record holds the real list; 356 Challenge: 10 cars, Mixed Class Challenge: 15). Empty only
     /// when a record has none, then the rule text is matched instead ([`car_allowed`]).
     pub cars: Vec<u16>,
+    /// The races, in order: `u32` count at 0x39c, then entries 164 bytes apart from 0x3a0 whose
+    /// low `u16` is the track id (the 356 Challenge reads Normandie 14, Cote d'Azur 8, as in the
+    /// footage). Empty only for hand-made records; then [`assign_routes`] guesses.
+    pub route: Vec<i16>,
+    /// Each race's own prize table for 1st..8th place (`u32` x 8 at entry + 8; 356 Challenge pays
+    /// 4500 .. 500 per race). Whether retail pays these per race is a **guess**.
+    pub race_prizes: Vec<[u32; PLACES]>,
     /// Prize money for 1st..8th place (`u32` x 8 from 0xec).
     pub prizes: [u32; PLACES],
     /// The opponents' catalogue car ids, one per opponent (the first car id of each of the seven
@@ -66,6 +73,13 @@ pub struct Tournament {
 }
 
 const RECORD: usize = crate::catalog::TOURNAMENT_RECORD;
+
+const ROUTE_AT: usize = 0x39c;
+const ENTRY: usize = 164;
+
+fn route_len(r: &[u8]) -> usize {
+    u32_at(r, ROUTE_AT).min(16) as usize
+}
 
 fn u16_at(b: &[u8], at: usize) -> u16 {
     b.get(at..at + 2).map_or(0, |s| u16::from_le_bytes([s[0], s[1]]))
@@ -96,6 +110,8 @@ pub fn parse_tournaments(data: &[u8]) -> Vec<Tournament> {
                 name: u32_at(r, 0x24),
                 description: u32_at(r, 0x28),
                 restriction: u32_at(r, 0x2c),
+                route: (0..route_len(r)).map(|n| u16_at(r, ROUTE_AT + 4 + ENTRY * n) as i16).collect(),
+                race_prizes: (0..route_len(r)).map(|n| std::array::from_fn(|p| u32_at(r, ROUTE_AT + 4 + ENTRY * n + 8 + 4 * p))).collect(),
                 cars: (0..u16_at(r, 0xda).min(85) as usize).map(|n| u16_at(r, 0x30 + 2 * n)).collect(),
                 prizes,
                 opponent_cars,
@@ -113,7 +129,7 @@ pub fn parse_tournaments(data: &[u8]) -> Vec<Tournament> {
 /// Cote d'Azur. **Guess** for the rule: the tracks the front end never locks (not the skid pad)
 /// that are no harder than the tournament, highest id first (Normandie 14, Cote d'Azur 8).
 pub fn assign_routes(all: &mut [Tournament], tracks: &[crate::catalog::Track]) {
-    for t in all.iter_mut() {
+    for t in all.iter_mut().filter(|t| t.route.is_empty()) {
         let mut ids: Vec<i16> = tracks.iter().filter(|k| k.locked == 0 && k.file != "skidpad" && k.difficulty <= t.difficulty as i16).map(|k| k.id).collect();
         ids.sort_unstable_by(|a, b| b.cmp(a));
         if !ids.is_empty() {
@@ -457,6 +473,9 @@ impl Career {
     /// The tracks a tournament races on, in order. The modern era's records list none; those use
     /// the 1970 era's six (**guess**).
     pub fn race_tracks(t: &Tournament, all: &[Tournament]) -> Vec<i16> {
+        if !t.route.is_empty() {
+            return t.route.clone();
+        }
         if !t.tracks.is_empty() {
             return t.tracks.clone();
         }
@@ -465,7 +484,10 @@ impl Career {
 
     /// Money for finishing `place` (1-based) in one race of `t`: the place's prize shared over the
     /// tournament's races (**guess**: retail's payout timing was not found).
-    pub fn race_prize(t: &Tournament, races: usize, place: usize) -> u32 {
+    pub fn race_prize(t: &Tournament, race: usize, races: usize, place: usize) -> u32 {
+        if let Some(table) = t.race_prizes.get(race).filter(|p| p.iter().any(|v| *v > 0)) {
+            return place.checked_sub(1).and_then(|p| table.get(p)).copied().unwrap_or(0);
+        }
         match place.checked_sub(1).and_then(|p| t.prizes.get(p)) {
             Some(prize) => prize / races.max(1) as u32,
             None => 0,
@@ -479,7 +501,7 @@ impl Career {
             return Payout { place, amount: 0, tournament_done: false, new_year: None };
         }
         let races = Self::race_tracks(t, all).len();
-        let amount = Self::race_prize(t, races, place);
+        let amount = Self::race_prize(t, self.progress(t.id).races_done as usize, races, place);
         self.cash += amount as i64;
         // The raced car gains miles and the used-car lot gets new stock.
         let at = self.chosen_car.min(self.cars.len().saturating_sub(1));
@@ -938,7 +960,7 @@ mod tests {
         assert!(p.tournament_done);
         assert_eq!((c.progress(1).completed, c.progress(1).races_done, c.progress(1).best_place), (1, 0, 1));
         assert_eq!(c.finish_race(&t[1], &t, 0).amount, 0, "an unfinished race pays nothing");
-        assert_eq!(Career::race_prize(&t[0], 2, 9), 0, "ninth place is not paid");
+        assert_eq!(Career::race_prize(&t[0], 0, 2, 9), 0, "ninth place is not paid");
     }
 
     #[test]
@@ -1080,6 +1102,33 @@ car = 76,19").unwrap().cars[0], OwnedCar::stock(76, 19, 0), "first-slice files s
     fn years_map_to_eras() {
         assert_eq!((era_of_year(1950), era_of_year(1975), era_of_year(1989), era_of_year(2000)), (521, 522, 523, 523));
         assert_eq!((next_year(1950), next_year(1970), next_year(1989)), (1970, 1989, END_YEAR));
+    }
+
+    /// The install's own `nfs5.trn`, when at hand: the footage's 356 Challenge route.
+    #[test]
+    fn the_real_routes_read_as_recorded() {
+        let Some(dir) = std::env::var_os("NFSPU_GAME_DIR") else { return };
+        let Ok(b) = std::fs::read(std::path::Path::new(&dir).join("FEData").join("Data").join("nfs5.trn")) else { return };
+        let all = parse_tournaments(&b);
+        assert_eq!(all[0].route, vec![14, 8]);
+        assert_eq!(all[0].race_prizes[0][0], 4500);
+        assert!(all.iter().all(|t| !t.route.is_empty()));
+    }
+
+    #[test]
+    fn the_record_route_and_race_prizes() {
+        let mut r = vec![0u8; RECORD];
+        r[4..8].copy_from_slice(&521u32.to_le_bytes());
+        r[ROUTE_AT..ROUTE_AT + 4].copy_from_slice(&2u32.to_le_bytes());
+        for (n, (track, first)) in [(14u32, 4500u32), (0x2001a, 3000)].into_iter().enumerate() {
+            let at = ROUTE_AT + 4 + ENTRY * n;
+            r[at..at + 4].copy_from_slice(&track.to_le_bytes());
+            r[at + 8..at + 12].copy_from_slice(&first.to_le_bytes());
+        }
+        let t = parse_tournaments(&r);
+        assert_eq!(t[0].route, vec![14, 26], "the high half is a flag, not part of the id");
+        assert_eq!(Career::race_prize(&t[0], 0, 2, 1), 4500);
+        assert_eq!(Career::race_prize(&t[0], 1, 2, 1), 3000);
     }
 
     #[test]
