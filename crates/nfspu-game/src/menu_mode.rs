@@ -86,6 +86,8 @@ struct FrontEnd {
     audio: AudioSettings,
     audio_changed: bool,
     dragging: Option<(String, i32, i32)>,
+    /// The car setup sliders (`nfspu_game::car_tune`); the race's car reads them through `set_current`.
+    tune: nfspu_game::car_tune::Tune,
     /// Help tips: the hover clock and the tip last drawn (`nfspu_game::menu_help`).
     help: nfspu_game::menu_help::HelpTimer,
     tip: Vec<Draw>,
@@ -175,6 +177,11 @@ impl FrontEnd {
         // Showcase: only the chosen statistics panel shows (the general one first).
         let shown = menu::showcase_panel(&panel);
         self.session.hidden.extend(menu::SHOWCASE_PANELS.iter().filter(|p| **p != shown).map(|p| p.to_string()));
+        for (a, v) in nfspu_game::car_tune::ACCESSORS.iter().zip(self.tune.values) {
+            self.session.levels.insert(a.to_string(), v);
+            // the downforce and tyre pressure rows show their numbers (`AccessorWatch`)
+            self.session.watch.insert(a.to_string(), v.to_string());
+        }
         for a in audio_settings::ACCESSORS {
             let level = self.audio.level(a).unwrap_or(audio_settings::MAX_LEVEL);
             self.session.levels.insert(a.to_string(), level);
@@ -453,6 +460,14 @@ impl FrontEnd {
     /// Sets a level bar from the pointer's x and keeps it (our settings file, never the save).
     fn drag_level(&mut self, accessor: &str, left: i32, width: i32, x: f32) {
         let t = ((x - left as f32) / width.max(1) as f32).clamp(0.0, 1.0);
+        if nfspu_game::car_tune::Tune::index(accessor).is_some() {
+            let v = (t * nfspu_game::car_tune::MAX as f32).round() as u32;
+            if self.tune.get(accessor) != Some(v) {
+                self.tune.set(accessor, v);
+                self.tune_changed();
+            }
+            return;
+        }
         let level = (t * audio_settings::MAX_LEVEL as f32).round() as u32;
         if self.audio.level(accessor) == Some(level) {
             return;
@@ -462,6 +477,23 @@ impl FrontEnd {
         self.reload();
         self.stack();
         self.dirty = true;
+    }
+
+    /// A setup slider moved: the next race's car uses it, and the screen redraws.
+    fn tune_changed(&mut self) {
+        let t = self.tune;
+        nfspu_game::car_tune::set_current((t != Default::default()).then_some(t));
+        self.reload();
+        self.stack();
+        self.dirty = true;
+    }
+
+    /// The name the setup files are kept under: the picked car of the career garage.
+    fn tune_car_name(&self) -> String {
+        let c = self.career.career.as_ref();
+        c.and_then(|c| self.career.ui.test_drive(c, &self.quick.cars, &self.quick.tracks, &[], "testdrivecarsetup"))
+            .and_then(|d| self.quick.cars.get(d.car).map(|c| c.name.clone()))
+            .unwrap_or_else(|| "car".into())
     }
 
     /// Reloads the page and popup, so controls that show the profiles pick up a change.
@@ -1077,6 +1109,17 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
         audio: AudioSettings::default(),
         audio_changed: true,
         dragging: None,
+        // `NFSPU_TUNE=RideHeight=80,BrakeBias=20` starts with moved sliders (tests)
+        tune: {
+            let mut t = nfspu_game::car_tune::Tune::default();
+            for kv in std::env::var("NFSPU_TUNE").unwrap_or_default().split(',') {
+                if let Some((k, v)) = kv.split_once('=') {
+                    t.set(k.trim(), v.trim().parse().unwrap_or(50));
+                }
+            }
+            nfspu_game::car_tune::set_current((t != Default::default()).then_some(t));
+            t
+        },
         help: Default::default(),
         tip: Vec::new(),
         quick: Default::default(),
@@ -1496,6 +1539,10 @@ fn click(
             return;
         }
         state.dragging = None;
+        if nfspu_game::car_tune::Tune::index(&accessor).is_some() {
+            crate::log_line(&format!("menu: car setup {accessor} = {:?}", state.tune.get(&accessor)));
+            return;
+        }
         let level = state.audio.level(&accessor);
         match state.audio.save() {
             Ok(()) => crate::log_line(&format!("menu: {accessor} = {level:?}, saved {}", AudioSettings::path().display())),
@@ -1617,6 +1664,14 @@ fn click(
             state.scroll_combo(&accessor, rows);
             return;
         }
+        Hit::TuneStep(accessor, step) => {
+            sounds.play(SOUND_SELECT, &mut commands, &mut audio);
+            if state.tune.step(&accessor, step) {
+                crate::log_line(&format!("menu: car setup {accessor} = {:?}", state.tune.get(&accessor)));
+                state.tune_changed();
+            }
+            return;
+        }
         Hit::Slider(accessor, left, width) => {
             sounds.play(SOUND_SELECT, &mut commands, &mut audio);
             state.drag_level(&accessor, left, width, pointer.x);
@@ -1722,6 +1777,31 @@ fn click(
                 }
                 // The car-setup screen's test drive opens the location popup; its button, and the
                 // dealership's and used-car lot's (reached through their own popups), start the drive.
+                "SAVESETTINGS" | "LOADSETTINGS" | "DEFAULTSETTINGS" => {
+                    let car = state.tune_car_name();
+                    let dir = nfspu_game::car_tune::Tune::dir();
+                    match name.as_str() {
+                        "SAVESETTINGS" => match state.tune.save_to(&dir, &car) {
+                            Ok(()) => crate::log_line(&format!("menu: car setup of '{car}' saved to {}", nfspu_game::car_tune::Tune::path_in(&dir, &car).display())),
+                            Err(e) => crate::log_line(&format!("menu: could not save the car setup: {e}")),
+                        },
+                        "LOADSETTINGS" => {
+                            match nfspu_game::car_tune::Tune::load_from(&dir, &car) {
+                                Some(t) => {
+                                    state.tune = t;
+                                    crate::log_line(&format!("menu: car setup of '{car}' loaded {:?}", t.values));
+                                }
+                                None => crate::log_line(&format!("menu: no saved car setup for '{car}'")),
+                            }
+                            state.tune_changed();
+                        }
+                        _ => {
+                            state.tune = Default::default();
+                            crate::log_line("menu: car setup back to the default");
+                            state.tune_changed();
+                        }
+                    }
+                }
                 "TESTDRIVECHECK" => {
                     let Some(next) = state.load("testdrivecarsetup") else { return };
                     state.note_page("testdrivecarsetup");

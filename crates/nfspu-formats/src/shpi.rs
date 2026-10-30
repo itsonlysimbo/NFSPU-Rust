@@ -258,8 +258,14 @@ pub fn decode_rgba8(data: &[u8], entry: &ShpiEntry) -> Option<Vec<u8>> {
             // first byte gives the entry type: 0x2A = 4 bytes B, G, R, A; 0x29 = 16-bit RGB565
             // (front-end driver faces in `ALLdrivr.fsh`; checked by eye on the rendered faces).
             let indices = data.get(at..at + pixels)?;
-            let kind = *data.get(at + pixels)?;
-            let palette_at = at + pixels + 16;
+            // The header follows the pixels at once, or (small icons such as `weeicons.fsh`'s
+            // buttons and slider knobs) at the next 16-byte boundary counted from the entry start.
+            let mut header = at + pixels;
+            if !matches!(data.get(header), Some(0x29) | Some(0x2A)) {
+                header = entry.offset + (16 + pixels).div_ceil(16) * 16;
+            }
+            let kind = *data.get(header)?;
+            let palette_at = header + 16;
             let mut out = Vec::with_capacity(pixels * 4);
             match kind {
                 0x2A => {

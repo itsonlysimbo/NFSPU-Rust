@@ -421,3 +421,21 @@ Ours (guess, not compared with retail): SELLCAR lists the car at its value; afte
 without an offer gets one (40% the full asking price, else 70-95% of it); SELLCAR with an offer pending
 accepts it; DONTSELLCAR takes the car off. Saved as the 9th field of the `car =` line. The retail chance
 tables and the owner-typed asking price (dialog 800) are not read yet. Not tested in game.
+
+### Car setup screen (2026-10-30, branch `claude/car-setup`)
+`carsetup.lay` has nine setting accessors: `RideHeight`, `ShockRate` (the "stiffness" row), `Suspension` ("travel"),
+`SteeringToe`, `BrakeBias` (rear to front) as sliders (`CarSettingSlider.ctr`: transparent track, 6 x 11 knob =
+`weeicons.fsh` #8, hover #34, down #35; `scrollmax` 100, `scrollpos` default 50), and `FDownForce`/`RDownForce`,
+`FTirePressure`/`RTirePressure` as number rows (`AccessorWatch`, footage: 50/50 and 30/30). Each row has 13 x 13
+arrow buttons (`CARSETTINGBUTTON`, `step` -1 / +1, `weeicons` #0-5 minus and plus pictures; #0/#3 normal). The buttons
+`save`, `load`, `default` (callbacks `SAVESETTINGS`, `LOADSETTINGS`, `DEFAULTSETTINGS`) and `test drive`
+(`TESTDRIVECHECK`) come with the same layout. **Format finding**: the 8-bit icons in `weeicons.fsh` (0x7B) put the
+palette header at the next 16-byte boundary from the entry start, not straight after the pixels
+(`shpi::decode_rgba8` now handles both).
+Ours (`car_tune.rs`, `menu_mode.rs`): sliders 0-100 (click or drag; the arrows move 5, **guess**), saved per car in
+`settings/car_tune/<car>.txt`, loaded and reset by the buttons; the test drive (and any later race) builds the car with
+`Tune::apply`. **Effects are guesses**, centred so the defaults leave the car stock: ride height scales weight transfer
+height, stiffness scales transfer stiffness and lean, travel scales lean spring/damper, toe up to 5 steering units,
+brake balance moves 15 % of braking front/rear, downforce scales per-axle downforce (plus a little drag), tyre
+pressure peaks grip near 60 (+4 %, stock at 30). Not built: the gear-ratio bars, the part inventory list on this
+screen, hover/pressed arrow pictures. `NFSPU_TUNE=RideHeight=80,BrakeBias=20` starts with moved sliders (tests).
