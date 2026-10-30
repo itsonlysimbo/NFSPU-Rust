@@ -45,6 +45,10 @@ pub struct Tournament {
     pub name: u32,
     pub description: u32,
     pub restriction: u32,
+    /// The cars the tournament accepts: `u16` count at 0xda, catalogue car ids from 0x30 (the
+    /// record holds the real list; 356 Challenge: 10 cars, Mixed Class Challenge: 15). Empty only
+    /// when a record has none, then the rule text is matched instead ([`car_allowed`]).
+    pub cars: Vec<u16>,
     /// Prize money for 1st..8th place (`u32` x 8 from 0xec).
     pub prizes: [u32; PLACES],
     /// The opponents' catalogue car ids, one per opponent (the first car id of each of the seven
@@ -92,6 +96,7 @@ pub fn parse_tournaments(data: &[u8]) -> Vec<Tournament> {
                 name: u32_at(r, 0x24),
                 description: u32_at(r, 0x28),
                 restriction: u32_at(r, 0x2c),
+                cars: (0..u16_at(r, 0xda).min(85) as usize).map(|n| u16_at(r, 0x30 + 2 * n)).collect(),
                 prizes,
                 opponent_cars,
                 bonus: (31..=33).contains(&id),
@@ -125,6 +130,17 @@ pub fn next_year(year: i32) -> i32 {
 /// The era code a career year is in (1950 -> 521 ... 1989 and later -> 523).
 pub fn era_of_year(year: i32) -> u32 {
     ERAS.iter().rev().find(|e| e.1 <= year).map_or(ERAS[0].0, |e| e.0)
+}
+
+impl Tournament {
+    /// Whether `car` may enter: it is on the record's own car list, or (no list) it meets the rule text.
+    pub fn allows(&self, rule: &str, car: &crate::catalog::Car) -> bool {
+        if self.cars.is_empty() {
+            car_allowed(rule, car)
+        } else {
+            self.cars.contains(&car.id)
+        }
+    }
 }
 
 /// Whether `car` meets a tournament's car rule, given the rule's English text (festrings
@@ -1064,6 +1080,20 @@ car = 76,19").unwrap().cars[0], OwnedCar::stock(76, 19, 0), "first-slice files s
     fn years_map_to_eras() {
         assert_eq!((era_of_year(1950), era_of_year(1975), era_of_year(1989), era_of_year(2000)), (521, 522, 523, 523));
         assert_eq!((next_year(1950), next_year(1970), next_year(1989)), (1970, 1989, END_YEAR));
+    }
+
+    #[test]
+    fn the_record_car_list_decides_entry() {
+        let mut r = vec![0u8; RECORD];
+        r[4..8].copy_from_slice(&521u32.to_le_bytes());
+        r[0xda..0xdc].copy_from_slice(&2u16.to_le_bytes());
+        r[0x30..0x32].copy_from_slice(&76u16.to_le_bytes());
+        r[0x32..0x34].copy_from_slice(&78u16.to_le_bytes());
+        let t = &parse_tournaments(&r)[0];
+        assert_eq!(t.cars, vec![76, 78]);
+        let car = |id| crate::catalog::Car { id, name: "'50 356 1100 Cabriolet".into(), ..Default::default() };
+        assert!(t.allows("356 models only", &car(76)));
+        assert!(!t.allows("356 models only", &car(77)));
     }
 
     #[test]
