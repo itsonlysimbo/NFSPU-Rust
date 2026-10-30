@@ -393,3 +393,31 @@ Not built: paint trims (package, trim 1 / 2, custom colour, race number) and sel
 (`PaintScheme.stripe_package` plus four colours) carried from `OwnedCar` through the showcase and `RaceSetup` into
 `car_model` (today only a section number or one custom body colour travels), and a door-number decal; the 3D preview in the
 paint shop depends on the same path. Sell offers need evidence of when a listed car sells.
+
+## Paint shop: package and trims (2026-10-30, `claude/evo-shops-3`)
+`paintshop.lay` accessors: `OwnedCar.PackageNum` (combo), `OwnedCar.S1Colour` / `S2Colour` (trim 1 / 2 colour boxes), `OwnedCar.ExtColour`,
+`OwnedCar.IntColour`, `CHANGEDECAL` (race number). Footage: the package combo lists none, package 1 to 7; picking one stripes the 3D car at once;
+trim colours come from a swatch list with a `custom...` entry (the custom colour editor); the decal prompt "Please enter decal number" puts
+the number on both doors.
+Built: `car_model::PaintTweak` (package override and two trim colours) applied to the paint scheme before the bands are made, carried
+`OwnedCar.tweak` (saved as the 8th field of the `car =` line) -> `View.showcase_tweak` -> `quick.showcase_tweak` -> garage preview
+(`wanted_car`) and `RaceSetup.tweak` (`paint_package`, `trim1`, `trim2` lines, optional when read) -> the race car's `CarOptions`.
+The paint shop's combos now pick the package and the trims (from the car's body colours), and the choice sticks on the car.
+**Guesses:** combo entry `package N` is `[packageN]` of `packages.ini` (stripe index N - 1) and `none` is no stripes; trim 1 / 2 replace the scheme's
+`color2` / `color3`; the shop shows `none` for a car that never picked a package even if its own scheme has stripes.
+**Not built:** the custom colour editor, the interior colour, and the race-number decal (door numbers need text drawn on the car's texture).
+Unit tests: `the_paint_shop_tweak_changes_package_and_trims`, `paint_tweaks_round_trip_and_may_be_absent`, the career save round trip.
+Seen on screen: `NFSPU_MENU=paintshop NFSPU_CAREER=1 NFSPU_CAREER_DO="pick:OwnedCar.PackageNum=3;pick:OwnedCar.S1Colour=4" NFSPU_MENU_CAPTURE=1` (`logs/menu_paintshop.png`): the orange 356 wears package 3 stripes with a red trim 1 and the combos show `package 3` and the colour boxes. Not compared with retail pixel by pixel.
+
+## Sell-car offers
+
+Retail (FEdaTrack, run after each race for every owned car): a car flagged as listed (record +0x6a0)
+gets an offer flag (+0x692) and an offer amount (+0x694). A roll against a chance read from age and
+mileage tables (in the exe at 0x5b7c88..0x5b7dfc) decides: a hit offers the asking price (+0x68c), a
+miss offers a random lower bid, clamped to 0..asking. Accepting removes the car and adds the offer to the
+account; the garage shows "remove from market" for a listed car.
+
+Ours (guess, not compared with retail): SELLCAR lists the car at its value; after each race a listed car
+without an offer gets one (40% the full asking price, else 70-95% of it); SELLCAR with an offer pending
+accepts it; DONTSELLCAR takes the car off. Saved as the 9th field of the `car =` line. The retail chance
+tables and the owner-typed asking price (dialog 800) are not read yet. Not tested in game.

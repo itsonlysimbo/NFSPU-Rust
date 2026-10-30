@@ -80,7 +80,7 @@ pub(super) struct Garage {
     pub(super) look: Option<RoomLook>,
     pub(super) root: Option<Entity>,
     /// The car on show: (model, paint section, body style, custom colour) and its entity.
-    car: Option<(String, usize, usize, Option<[u8; 3]>, bool)>,
+    car: Option<(String, usize, usize, Option<[u8; 3]>, bool, nfspu_game::car_model::PaintTweak)>,
     car_root: Option<Entity>,
     /// The car's box on the page, in layout units.
     car_box: Option<[f32; 4]>,
@@ -296,8 +296,8 @@ fn blend(
 
 /// The car on the page, from the quick-race choice: (model file, paint section, body style,
 /// custom body colour). The same value goes into `RaceSetup`, so the race drives what the garage shows.
-fn wanted_car(state: &FrontEnd) -> Option<(String, usize, usize, Option<[u8; 3]>, bool)> {
-    state.quick.car_look().map(|(model, paint, style)| (model, paint, style, state.quick.custom_colour(), state.quick.roof == 0))
+fn wanted_car(state: &FrontEnd) -> Option<(String, usize, usize, Option<[u8; 3]>, bool, nfspu_game::car_model::PaintTweak)> {
+    state.quick.car_look().map(|(model, paint, style)| (model, paint, style, state.quick.custom_colour(), state.quick.roof == 0, if state.quick.showcase.is_some() { state.quick.showcase_tweak } else { Default::default() }))
 }
 
 fn layout_path(game_dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
@@ -362,7 +362,7 @@ fn stage(
         garage.front_lights = Default::default();
         garage.rear_lights = Default::default();
         garage.doors = Default::default();
-        if let (Some((model, paint, style, body, roof_up)), Some(root)) = (&want, garage.root) {
+        if let (Some((model, paint, style, body, roof_up, tweak)), Some(root)) = (&want, garage.root) {
             // The car's origin is at ground level, on the pit (the room's floor is at 0). No driver
             // in the showroom (retail frames).
             let holder = commands.spawn((Transform::default(), Visibility::default())).id();
@@ -370,7 +370,7 @@ fn stage(
             // Levels 1 (the garage model) and 2 have the doors as separate parts; level 3 bakes them
             // into the body. `NFSPU_GARAGE_LOD` overrides for tests.
             let level = std::env::var("NFSPU_GARAGE_LOD").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(SHOW_CAR_LEVEL);
-            let options = CarOptions { level, driver: 0, paint: *paint, style: *style, body: *body, roof_up: *roof_up };
+            let options = CarOptions { level, driver: 0, paint: *paint, style: *style, body: *body, roof_up: *roof_up, tweak: *tweak };
             let started = std::time::Instant::now();
             spawn_show_car(&mut commands, &mut meshes, &mut materials, &mut images, holder, model, &options);
             crate::log_line(&format!("garage: car '{model}' paint section {paint} style {style} built in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0));

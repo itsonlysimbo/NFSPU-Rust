@@ -45,6 +45,8 @@ pub struct View {
     pub hidden: Vec<String>,
     /// The car the 3D room shows on this page: (index into the catalogue, paint section).
     pub showcase: Option<(usize, usize)>,
+    /// The paint-shop changes that car wears.
+    pub showcase_tweak: crate::car_model::PaintTweak,
 }
 
 fn kind_label(kind: u16) -> &'static str {
@@ -193,6 +195,17 @@ impl ShopUi {
                 v.choices.insert("OwnedCar.ExtColour".into(), Choice { rows: paints.iter().map(|p| swatch(p.body)).collect(), selected: at, closed: String::new(), closed_swatch: paints.get(at).map(|p| p.body) });
                 if ["garage", "paintshop", "parts"].iter().any(|p| page.eq_ignore_ascii_case(p)) {
                     v.showcase = Some((ci, owned.paint));
+                    v.showcase_tweak = owned.tweak;
+                }
+                // The paint shop: stripe package (none, package 1-7) and the two trim colours, picked
+                // from the car's body colours.
+                let pkg = owned.tweak.package.map_or(0, |p| p as usize).min(7);
+                let pkg_rows: Vec<Row> = std::iter::once("none".to_string()).chain((1..=7).map(|n| format!("package {n}"))).map(Row::item).collect();
+                let pkg_closed = if pkg == 0 { "none".to_string() } else { format!("package {pkg}") };
+                v.choices.insert("OwnedCar.PackageNum".into(), Choice { rows: pkg_rows, selected: pkg, closed: pkg_closed, closed_swatch: None });
+                for (k, key) in ["OwnedCar.S1Colour", "OwnedCar.S2Colour"].iter().enumerate() {
+                    let at = owned.tweak.trim[k].and_then(|t| paints.iter().position(|p| p.body == t)).unwrap_or(0);
+                    v.choices.insert((*key).into(), Choice { rows: paints.iter().map(|p| swatch(p.body)).collect(), selected: at, closed: String::new(), closed_swatch: owned.tweak.trim[k].or_else(|| paints.get(at).map(|p| p.body)) });
                 }
 
                 // Parts: everything that fits the car and exists now; fitted parts carry a star.
@@ -240,8 +253,16 @@ impl ShopUi {
             v.watch.insert("DealerCar.Car".into(), name.clone());
             v.watch.insert("UsedCar.Car".into(), name);
         }
-        // Selling and "don't sell" share a place in the layout; selling is immediate here.
-        v.hidden.push("ID_REMOVEFMBUTTON".into());
+        // "Remove from market" shows only for a listed car; an offer shows beside the asking price.
+        match c.cars.get(owned_index).and_then(|o| o.asking.map(|a| (a, o.offer))) {
+            Some((ask, offer)) => {
+                v.watch.insert("OwnedCars.Car(ASKINGPRICE)".into(), money(ask));
+                if let Some(o) = offer {
+                    v.watch.insert("OwnedCars.Car(OFFER)".into(), money(o));
+                }
+            }
+            None => v.hidden.push("ID_REMOVEFMBUTTON".into()),
+        }
         v
     }
 
@@ -300,7 +321,21 @@ impl ShopUi {
                     }
                 }
             }
-            "DealerCar.IntColour" | "OwnedCar.IntColour" | "OwnedCar.S1Colour" | "OwnedCar.S2Colour" | "OwnedCar.PackageNum" => {}
+            "OwnedCar.PackageNum" => {
+                let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+                if let Some(o) = c.cars.get_mut(at) {
+                    o.tweak.package = Some(index.min(7) as u8);
+                }
+            }
+            "OwnedCar.S1Colour" | "OwnedCar.S2Colour" => {
+                let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+                if let Some(car) = c.cars.get(at).and_then(|o| cars.iter().find(|k| k.id == o.id)) {
+                    if let Some(p) = self.swatches(car).get(index) {
+                        c.cars[at].tweak.trim[usize::from(accessor == "OwnedCar.S2Colour")] = Some(p.body);
+                    }
+                }
+            }
+            "DealerCar.IntColour" | "OwnedCar.IntColour" => {}
             _ => return false,
         }
         true
@@ -351,14 +386,25 @@ impl ShopUi {
             }
             "SELLCAR" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id)).map(|k| k.name.clone()).unwrap_or_default();
-                let r = c.sell(owned, &shop);
-                Some(said(r, &format!("sold the {car}"), c))
+                // A pending offer is taken; otherwise the car is listed at its value (guess: retail
+                // lets the owner type the asking price, dialog 800).
+                if c.cars.get(owned).is_some_and(|o| o.offer.is_some()) {
+                    let r = c.accept_offer(owned);
+                    return Some(said(r, &format!("sold the {car} on offer"), c));
+                }
+                let ask = c.value_of(owned, &shop);
+                let r = c.list_car(owned, ask).map(|_| ask);
+                Some(said(r, &format!("listed the {car}"), c))
             }
             "QUICKFIX" => {
                 let r = c.quick_fix(owned, &shop);
                 Some(said(r, "repaired the car", c))
             }
-            "DONTSELLCAR" | "CHANGEDECAL" => Some(format!("career: {name} (nothing to do)")),
+            "DONTSELLCAR" => {
+                c.unlist_car(owned);
+                Some("career: took the car off the market".into())
+            }
+            "CHANGEDECAL" => Some(format!("career: {name} (nothing to do)")),
             "BUYPARTCALLBACK" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id))?;
                 let fits = career_shop::parts_for(&self.parts, car, c.year);
@@ -422,6 +468,11 @@ mod tests {
         let line = ui.callback("BUYCAR", "dealership", &mut c, &cars).unwrap();
         assert!(line.contains("bought a new"), "{line}");
         assert_eq!((c.cars.len(), c.cash, c.chosen_car), (2, 300, 1));
+        assert!(ui.callback("SELLCAR", "garage", &mut c, &cars).unwrap().contains("listed"));
+        assert_eq!(c.cars.len(), 2, "listing does not sell");
+        assert!(c.cars[1].asking.is_some() && c.cars[1].offer.is_none());
+        c.roll_offers();
+        assert!(c.cars[1].offer.is_some());
         assert!(ui.callback("SELLCAR", "garage", &mut c, &cars).unwrap().contains("sold"));
         assert_eq!(c.cars.len(), 1);
         assert!(ui.callback("NOPE", "garage", &mut c, &cars).is_none());
