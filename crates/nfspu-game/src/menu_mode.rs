@@ -331,7 +331,7 @@ impl FrontEnd {
         // The tournament's car rule (**guess**: retail blocks entry with a message; here the race
         // simply does not start and the log says why).
         let rule = self.locale.text(t.restriction, 0).unwrap_or_default();
-        if !career::car_allowed(&rule, &car) {
+        if !t.allows(&rule, &car) {
             crate::log_line(&format!("career: '{}' does not meet the rule '{}' of tournament {}", car.name, rule.trim(), t.id));
             return None;
         }

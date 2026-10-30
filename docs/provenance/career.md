@@ -421,3 +421,15 @@ Ours (guess, not compared with retail): SELLCAR lists the car at its value; afte
 without an offer gets one (40% the full asking price, else 70-95% of it); SELLCAR with an offer pending
 accepts it; DONTSELLCAR takes the car off. Saved as the 9th field of the `car =` line. The retail chance
 tables and the owner-typed asking price (dialog 800) are not read yet. Not tested in game.
+
+## Tournament car lists (2026-10-30, branch `claude/evo-career-2`)
+
+**Correction to the rule-text guess above:** each `nfs5.trn` record holds the *real* list of cars it
+accepts: `u16` count at `0xda`, then that many `u16` catalogue car ids from `0x30` (so `0xda` is not
+a mystery field). 356 Challenge: 10 cars (76, 78, 173, 80, 82, 77, 79, 174, 81, 83); Mixed Class
+Challenge 10; Class 3 Trophy 10; Class 2 Trophy 15; Class 1 Trophy 2 (993 and 996 Turbo); Carrera RS
+2.7 1; bonus trophies 1 each (168, 169, 170). The names of every list agree with its rule text
+(`cargo run -p nfspu-game --example career_rules --release`, `logs/career_rules.txt`), but the lists
+are much narrower than our text matching (e.g. 10 vs 35 cars for the 356 Challenge; "Any 911" is 4
+cars). `Tournament::allows` uses the list; the text match stays only as a fallback.
+Not tested in the game window.

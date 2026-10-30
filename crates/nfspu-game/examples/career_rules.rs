@@ -17,9 +17,10 @@ fn main() {
     let mut out = String::new();
     for t in career::parse_tournaments(&trn) {
         let rule = text(t.restriction);
-        let allowed: Vec<&catalog::Car> = cars.iter().filter(|c| career::car_allowed(&rule, c)).collect();
-        let _ = writeln!(out, "{} (id {}, era {}, difficulty {}, fee {}, 1st {}): rule \"{rule}\" -> {} of {} cars", text(t.name), t.id, t.era, t.difficulty, t.entry_fee, t.prizes[0], allowed.len(), cars.len());
-        let names: Vec<String> = allowed.iter().take(14).map(|c| c.name.clone()).collect();
+        let allowed: Vec<&catalog::Car> = cars.iter().filter(|c| t.allows(&rule, c)).collect();
+        let guess = cars.iter().filter(|c| career::car_allowed(&rule, c)).count();
+        let _ = writeln!(out, "{} (id {}, era {}, difficulty {}, fee {}, 1st {}): rule \"{rule}\" -> {} of {} cars (record list {}; the text guess alone would allow {guess})", text(t.name), t.id, t.era, t.difficulty, t.entry_fee, t.prizes[0], allowed.len(), cars.len(), t.cars.len());
+        let names: Vec<String> = allowed.iter().take(16).map(|c| c.name.clone()).collect();
         let _ = writeln!(out, "    e.g. {}", names.join("; "));
     }
     print!("{out}");
