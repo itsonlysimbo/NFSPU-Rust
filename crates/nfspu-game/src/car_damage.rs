@@ -134,6 +134,26 @@ impl Damage {
         1.0 - self.zones[if left { 2 } else { 0 }] / 512.0
     }
 
+    /// Damage 0..100 of the nine parts the repair screens list, in the order engine, brakes,
+    /// transmission, suspension, shocks, tires, sway bars, bodywork, cosmetic. Engine, brakes,
+    /// transmission and suspension use the zone masks above; the other five are **guesses**
+    /// (shocks follow the suspension, tires the four corners, sway bars the two sides, bodywork
+    /// and cosmetic the whole ring).
+    pub fn components(&self) -> [f32; 9] {
+        let ring = self.average(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        [
+            self.engine(),
+            self.average(BRAKE_ZONES),
+            self.average(GEARBOX_ZONES),
+            self.suspension(),
+            self.suspension(),
+            self.average(&[0, 2, 4, 6]),
+            self.average(&[3, 7]),
+            ring,
+            ring,
+        ]
+    }
+
     /// Any damage at all (for drawing).
     pub fn any(&self) -> bool {
         self.zones.iter().any(|&z| z > 0.0)

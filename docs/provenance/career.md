@@ -345,3 +345,22 @@ that it uses the same rate).
 - *Car setup:* the part-inventory table with INSTALLED / UNINSTALLED per part and `uninstall part`;
   the sliders (ride height, stiffness, travel, toe-in, brake balance, downforce, tyre pressure, gear
   ratios) with `test drive`, `save`, `load`, `default`.
+
+## Repair and damage (2026-10-30, branch `claude/evo-shops-2`)
+Layouts: `repair.lay` (quick fix) watches `OwnedCars.Car(<PART>DAMAGE)` / `(<PART>DAMAGECOST)` for engine, brakes, transmission,
+suspension, shocks, tires, swaybars, bodywork, cosmetic plus `OVERALLDAMAGE` / `OVERALLDAMAGECOST` and the `QUICKFIX` button;
+`advancedrepair.lay` has the shopping list (`Parts.RepairShoppingList`, `Parts.OwnedDamageRepairList`) with `fixpart`,
+`replacepart`, `acceptlist`, `removeitem`, `clearlist` (**not built**: only the quick fix is).
+**Verified by the footage table** (full-resolution frame of `2026-10-24 20-55-17.mp4`, '52 356 1500, catalogue price 12,700):
+conditions 71 65 64 81 100 100 100 63 75 -> OVERALL 80 (the **mean of the nine**), costs 889 142 353 72 0 0 0 99 341 -> OVERALL 1,896
+(the **sum**).
+Built: `OwnedCar.damage` (the ten `car_damage` zones, saved as a 7th field of the `car =` line), `Career::component_damage`
+(`Damage::components`), `overall_damage`, `repair_costs`, `quick_fix`, `keep_race_damage`; the car's value now takes the overall damage.
+After a career race the player's zones are max-merged into the raced car; career races run with damage on.
+**Guesses:** the cost of a part = car price x per-part share x damage (shares engine 24.1 %, brakes 3.2, transmission 7.7,
+suspension 3.0, tires 2.1, bodywork 10.7 of the price at 100 % damage, calibrated on that single table and so only a fit;
+shocks 2.0, sway bars 1.0, cosmetic 4.0 are invented); the zone masks of shocks, tires, sway bars, bodywork and cosmetic; a car
+starts a race without its saved damage (only the race's own damage is kept); the garage's `current value` 9,890 for the 11,000
+car still differs from our rule (9,790 for -10 % mileage, -1 % damage), so the value's damage step is **not** settled.
+Not tested in the window. Still not built: sell-car offers (instant sale remains), paint trims/decals/custom colour, parts
+inventory with resale list and transaction list, car setup sliders.

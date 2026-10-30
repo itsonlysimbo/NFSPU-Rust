@@ -179,7 +179,14 @@ impl ShopUi {
                 v.watch.insert("OwnedCars.Car".into(), car.name.clone());
                 v.watch.insert("OwnedCars.Car(CURRENTVALUE)".into(), money(c.value_of(owned_index, &shop)));
                 v.watch.insert("OwnedCars.Car(PURCHASEPRICE)".into(), money(owned.bought_for));
-                v.watch.insert("OwnedCars.Car(OVERALLDAMAGE)".into(), "0%".into());
+                // The repair screens: per-part damage and cost, overall damage and the quick-fix total.
+                v.watch.insert("OwnedCars.Car(OVERALLDAMAGE)".into(), format!("{}%", c.overall_damage(owned_index)));
+                let (damage, costs) = (c.component_damage(owned_index), c.repair_costs(owned_index, &shop));
+                for (k, name) in ["ENGINE", "BRAKES", "TRANSMISSION", "SUSPENSION", "SHOCKS", "TIRES", "SWAYBARS", "BODYWORK", "COSMETIC"].iter().enumerate() {
+                    v.watch.insert(format!("OwnedCars.Car({name}DAMAGE)"), format!("{}%", damage[k]));
+                    v.watch.insert(format!("OwnedCars.Car({name}DAMAGECOST)"), money(costs[k]));
+                }
+                v.watch.insert("OwnedCars.Car(OVERALLDAMAGECOST)".into(), money(costs.iter().sum()));
                 let paints = self.swatches(car);
                 let at = paints.iter().position(|p| p.section == owned.paint).unwrap_or(0);
                 let swatch = |rgb: [u8; 3]| Row::Item { lead: None, text: String::new(), swatch: Some(rgb), divider: false };
@@ -325,6 +332,10 @@ impl ShopUi {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id)).map(|k| k.name.clone()).unwrap_or_default();
                 let r = c.sell(owned, &shop);
                 Some(said(r, &format!("sold the {car}"), c))
+            }
+            "QUICKFIX" => {
+                let r = c.quick_fix(owned, &shop);
+                Some(said(r, "repaired the car", c))
             }
             "DONTSELLCAR" | "CHANGEDECAL" => Some(format!("career: {name} (nothing to do)")),
             "BUYPARTCALLBACK" => {

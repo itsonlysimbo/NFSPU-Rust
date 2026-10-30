@@ -305,10 +305,13 @@ pub fn leave_results(
 #[derive(Resource, Default)]
 pub struct LastResult {
     pub place: usize,
+    /// The player's car damage zones at the end of the race (the career keeps them).
+    pub damage: [f32; nfspu_game::car_damage::ZONES],
 }
 
-fn record_result(status: Res<nfspu_game::race::RaceStatus>, mut result: ResMut<LastResult>) {
+fn record_result(status: Res<nfspu_game::race::RaceStatus>, car: Option<Res<super::CarRes>>, mut result: ResMut<LastResult>) {
     result.place = if status.finished { status.position } else { 0 };
+    result.damage = car.map(|c| c.car.sim.damage.zones).unwrap_or_default();
     log_line(&format!("flow: race result, finished {}, place {}", status.finished, result.place));
 }
 
