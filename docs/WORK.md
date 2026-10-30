@@ -30,7 +30,6 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | Claude (oracle-capture-3) branch claude/oracle-capture-3 (continues -2), started 2026-10-27; builds on 60a5461. Mission car decoded (stock Boxster); cases use it, but the sim is ~11% slower than retail so they stay pending: next find why (physics). *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
 | Career shops 2: sell-car offers, repair, paint trims and decals, parts inventory, car setup | Strong | Claude (evo-shops-2) branch claude/evo-shops-2, started 2026-10-30. DONE: repair (damage kept from races, costs, quick fix; 7b73ccc). DONE too: parts inventory + descriptions. NEXT: paint trims/decal/custom colour (paintshop.lay), sell-car offer listing (needs retail evidence of when it sells), car setup table; advanced repair list. Gaps listed in `docs/provenance/career.md`; footage `C:/Users/CB/Videos/2026-10-24 20-55-17.mp4`; retail copy `C:/Users/CB/Downloads/NFS5 - Oracle` may be launched for more |
-| Save profiles: decode tournament progress in retail .sav | Mid | `save_import.rs` reads year, cash, cars; tournament progress undecoded (read-only saves) |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 
@@ -38,6 +37,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Save profiles: tournament progress from retail .sav | merged 2026-10-30 (fea563b); see docs/provenance |
 | Factory Driver: remaining race missions (17,19,22,28,30-33), banner and cones | merged 2026-10-30 d9ee559; headless judged, mission 19 seen on screen |
 | Collision: close edge slivers and open edges | merged 2026-10-25; edge_walls.rs wall strips, audit OPEN ~8000 -> 430; residue: coastal slice fractions, industrial PINCH; not tested in game |
 | Career: later eras, prize tables, era progression | merged 2026-10-25; car rules enforced at race start, era-by-era prize/opponent check; not tested in game |
