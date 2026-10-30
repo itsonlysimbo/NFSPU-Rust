@@ -202,10 +202,21 @@ impl ShopUi {
                     if n.is_empty() { p.category.clone() } else { n }
                 };
                 let label = |p: &Part| if p.category.is_empty() { kind_label(p.kind).to_string() } else { p.category.clone() };
-                let all: Vec<[String; 3]> = fits
+                let mut all: Vec<[String; 3]> = fits
                     .iter()
                     .map(|p| [label(p), format!("{}{}", if owned.parts.contains(&p.id) { "* " } else { "" }, name(p)), money(c.part_price(&shop, p.id))])
                     .collect();
+                // The parts inventory follows the available parts: what the car carries, at the price
+                // the sell button pays (footage: carbs bought for 259 listed at 207).
+                let inventory = Self::inventory(&fits, owned);
+                all.extend(inventory.iter().map(|p| ["INVENTORY".to_string(), name(p), money(career_shop::part_resale(c.part_price(&shop, p.id)))]));
+                // The description popup: the part's name and its text (string id = name id + 500,
+                // checked on the standard and medium carbs and the lightened flywheel).
+                let shown = Self::part_at(&fits, &inventory, self.all_sel);
+                if let Some(p) = shown {
+                    v.watch.insert("Parts.AllParts".into(), name(p));
+                    v.watch.insert("Parts.AllParts(DESC)".into(), s(p.name + 500));
+                }
                 v.lists.insert("Parts.AllParts".into(), ListData { selected: (!all.is_empty()).then(|| self.all_sel.min(all.len() - 1)), rows: all });
                 let basket: Vec<[String; 3]> = self.basket.iter().filter_map(|id| fits.iter().find(|p| p.id == *id)).map(|p| [label(p), name(p), money(c.part_price(&shop, p.id))]).collect();
                 let total: i64 = self.basket.iter().map(|id| c.part_price(&shop, *id)).sum();
@@ -232,6 +243,16 @@ impl ShopUi {
         // Selling and "don't sell" share a place in the layout; selling is immediate here.
         v.hidden.push("ID_REMOVEFMBUTTON".into());
         v
+    }
+
+    /// The fitted parts of a car among those that fit it, in list order.
+    fn inventory<'a>(fits: &[&'a Part], owned: &crate::career::OwnedCar) -> Vec<&'a Part> {
+        fits.iter().copied().filter(|p| owned.parts.contains(&p.id)).collect()
+    }
+
+    /// The part a row of the parts list stands for (available parts first, then the inventory).
+    fn part_at<'a>(fits: &[&'a Part], inventory: &[&'a Part], row: usize) -> Option<&'a Part> {
+        fits.get(row).or_else(|| inventory.get(row.checked_sub(fits.len())?)).copied()
     }
 
     /// The car a test-drive popup opened from `page` drives: its shown name and the car.
@@ -341,7 +362,7 @@ impl ShopUi {
             "BUYPARTCALLBACK" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id))?;
                 let fits = career_shop::parts_for(&self.parts, car, c.year);
-                let part = fits.get(self.all_sel.min(fits.len().saturating_sub(1)))?;
+                let part = fits.get(self.all_sel)?;
                 if !self.basket.contains(&part.id) && !c.cars[owned].parts.contains(&part.id) {
                     self.basket.push(part.id);
                 }
@@ -350,7 +371,9 @@ impl ShopUi {
             "SELLPARTCALLBACK" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id))?;
                 let fits = career_shop::parts_for(&self.parts, car, c.year);
-                let id = fits.get(self.all_sel.min(fits.len().saturating_sub(1)))?.id;
+                let inventory = Self::inventory(&fits, &c.cars[owned]);
+                // Only inventory rows can be sold; a row of the available list does nothing.
+                let id = Self::part_at(&fits, &inventory, self.all_sel.min((fits.len() + inventory.len()).saturating_sub(1))).filter(|_| self.all_sel >= fits.len())?.id;
                 let r = c.sell_part(owned, id, &shop);
                 Some(said(r, &format!("sold part {id}"), c))
             }
@@ -402,6 +425,30 @@ mod tests {
         assert!(ui.callback("SELLCAR", "garage", &mut c, &cars).unwrap().contains("sold"));
         assert_eq!(c.cars.len(), 1);
         assert!(ui.callback("NOPE", "garage", &mut c, &cars).is_none());
+    }
+
+    #[test]
+    fn bought_parts_appear_in_the_inventory_and_sell_at_resale() {
+        let cars = cars();
+        let mut ui = ShopUi::default();
+        ui.parts = vec![Part { id: 7, name: 100, group: "356".into(), kind: 1, category: "Carbs".into(), year: 1950, price: 250 }];
+        let mut c = Career::new("T");
+        c.year = 1956;
+        c.cash = 10_000;
+        let (before, price) = (c.cash, career_shop::part_value(250, 6));
+        assert!(ui.callback("BUYPARTCALLBACK", "parts", &mut c, &cars).unwrap().contains("shopping list"));
+        assert!(ui.callback("PURCHASECALLBACK", "parts", &mut c, &cars).unwrap().contains("bought"));
+        assert_eq!(c.cash, before - price);
+        let loc = Locale::default();
+        let v = ui.view(&c, &cars, &[], &[], &loc, 0, "parts");
+        let rows = &v.lists["Parts.AllParts"].rows;
+        assert_eq!(rows.len(), 2, "the part and its inventory entry");
+        assert_eq!(rows[1][2], money(career_shop::part_resale(price)));
+        // an available row cannot be sold; the inventory row can, at 80 %
+        assert!(ui.callback("SELLPARTCALLBACK", "parts", &mut c, &cars).is_none());
+        ui.all_sel = 1;
+        assert!(ui.callback("SELLPARTCALLBACK", "parts", &mut c, &cars).unwrap().contains("sold"));
+        assert_eq!(c.cash, before - price + career_shop::part_resale(price));
     }
 
     #[test]
