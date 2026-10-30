@@ -154,6 +154,20 @@ impl Damage {
         ]
     }
 
+    /// The zones whose damage makes up repairable part `k` (the order of `components`); repairing
+    /// the part clears them (a **guess**: retail's per-part repair is not read).
+    pub fn component_zones(k: usize) -> &'static [usize] {
+        match k {
+            0 => &[1, 4, 5, 6],
+            1 => BRAKE_ZONES,
+            2 => GEARBOX_ZONES,
+            3 | 4 => SUSPENSION_ZONES,
+            5 => &[0, 2, 4, 6],
+            6 => &[3, 7],
+            _ => &[0, 1, 2, 3, 4, 5, 6, 7],
+        }
+    }
+
     /// Any damage at all (for drawing).
     pub fn any(&self) -> bool {
         self.zones.iter().any(|&z| z > 0.0)
