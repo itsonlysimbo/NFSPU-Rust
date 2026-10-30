@@ -450,6 +450,9 @@ impl FrontEnd {
         if let Err(e) = c.save_to(&self.career.dir) {
             crate::log_line(&format!("career: could not save: {e}"));
         }
+        if let Some(id) = payout.prize_car {
+            crate::log_line(&format!("career: bonus race won, prize car {id} is in the garage"));
+        }
         if payout.new_year.is_some() {
             c.chosen_tournament = 0;
             self.career.era_message = true;
@@ -1159,10 +1162,10 @@ fn front_end(game_dir: PathBuf, start: &str) -> Option<FrontEnd> {
                 let st = &mut state;
                 let Some(c) = st.career.career.as_mut() else { break };
                 if step == "ERA" {
-                    // Completes every regular tournament of the era (test hook for era progression).
+                    // Completes every tournament of the era, the bonus race last (test hook for era progression).
                     let data = st.career.data.clone();
                     let era = career::era_of_year(c.year);
-                    for t in data.iter().filter(|t| t.era == era && !t.bonus) {
+                    for t in data.iter().filter(|t| t.era == era).filter(|t| !t.bonus).chain(data.iter().filter(|t| t.era == era && t.bonus)) {
                         for _ in 0..career::Career::race_tracks(t, &data).len() {
                             let p = c.finish_race(t, &data, 1);
                             if let Some(y) = p.new_year {

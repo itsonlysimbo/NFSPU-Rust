@@ -294,6 +294,8 @@ pub struct Payout {
     pub tournament_done: bool,
     /// The career year if this race finished the era (the era changed).
     pub new_year: Option<i32>,
+    /// The prize car a won bonus race adds to the garage (catalogue id).
+    pub prize_car: Option<u16>,
 }
 
 /// One player's career.
@@ -498,7 +500,7 @@ impl Career {
     /// was not finished (no pay, no progress).
     pub fn finish_race(&mut self, t: &Tournament, all: &[Tournament], place: usize) -> Payout {
         if place == 0 {
-            return Payout { place, amount: 0, tournament_done: false, new_year: None };
+            return Payout { place, amount: 0, tournament_done: false, new_year: None, prize_car: None };
         }
         let races = Self::race_tracks(t, all).len();
         let amount = Self::race_prize(t, self.progress(t.id).races_done as usize, races, place);
@@ -519,15 +521,26 @@ impl Career {
             p.races_done = 0;
             p.completed += 1;
         }
-        // The era ends when all its regular tournaments are complete (**guess**).
+        // The era's bonus race is offered "for completing the era" (festring 2107), so the era ends
+        // after it: when the regular tournaments are done and the bonus race (if the era has one)
+        // has been raced, win or lose (**guess**: what a lost bonus race does is not known).
         let era = era_of_year(self.year);
+        let mut prize_car = None;
+        if done && t.bonus && place == 1 {
+            prize_car = t.cars.first().copied();
+            if let Some(id) = prize_car.filter(|id| !self.cars.iter().any(|c| c.id == *id)) {
+                self.cars.push(OwnedCar::stock(id, 0, 0));
+            }
+        }
         let mut new_year = None;
-        if done && self.year < END_YEAR && all.iter().filter(|o| o.era == era && !o.bonus).all(|o| self.progress(o.id).completed > 0) {
+        let regulars_done = all.iter().filter(|o| o.era == era && !o.bonus).all(|o| self.progress(o.id).completed > 0);
+        let bonus_done = all.iter().filter(|o| o.era == era && o.bonus).all(|o| self.progress(o.id).completed > 0);
+        if done && self.year < END_YEAR && regulars_done && bonus_done {
             let year = next_year(self.year);
             self.year = year;
             new_year = Some(year);
         }
-        Payout { place, amount, tournament_done: done, new_year }
+        Payout { place, amount, tournament_done: done, new_year, prize_car }
     }
 
     /// The race the player enters next in `t` (0-based into its tracks).
@@ -995,9 +1008,27 @@ mod tests {
         assert_eq!(c.year, 1950, "tournament 2 is still open");
         assert_eq!(c.open_tournaments(&t).iter().map(|t| t.id).collect::<Vec<_>>(), vec![1, 2]);
         let p = c.finish_race(&t[1], &t, 4);
+        assert_eq!(p.new_year, None, "the era's bonus race comes first");
+        assert_eq!(c.open_tournaments(&t).iter().map(|t| t.id).collect::<Vec<_>>(), vec![1, 2, 31]);
+        let p = c.finish_race(&t[2], &t, 1);
         assert_eq!(p.new_year, Some(1970));
-        assert_eq!(c.year, 1970);
+        assert_eq!((c.year, p.prize_car), (1970, None), "the test record lists no prize car");
         assert_eq!(c.open_tournaments(&t).iter().map(|t| t.id).collect::<Vec<_>>(), vec![3]);
+    }
+
+    #[test]
+    fn a_won_bonus_race_adds_its_prize_car_once() {
+        let mut data = record(31, 521, &[9], 0);
+        data[0xda..0xdc].copy_from_slice(&1u16.to_le_bytes());
+        data[0x30..0x32].copy_from_slice(&168u16.to_le_bytes());
+        let t = parse_tournaments(&data);
+        let mut c = Career::new("A");
+        let lost = c.finish_race(&t[0], &t, 3);
+        assert_eq!((lost.prize_car, c.cars.len()), (None, 1));
+        let won = c.finish_race(&t[0], &t, 1);
+        assert_eq!((won.prize_car, c.cars.len(), c.cars[1].id), (Some(168), 2, 168));
+        c.finish_race(&t[0], &t, 1);
+        assert_eq!(c.cars.len(), 2, "owned already");
     }
 
     #[test]

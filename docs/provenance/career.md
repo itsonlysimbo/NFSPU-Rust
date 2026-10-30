@@ -1336,3 +1336,7 @@ parts, so repairing one can lower another), remove/clear edit the queue. Callbac
 price difference is unknown. Not tested in the window.
 Trim colour lists end with the custom palette (stand-in for the retail custom colour editor).
 Race-number decal: not built (needs digits drawn on the car texture; retail mechanism not found).
+
+### Unlocks: bonus race and era end (2026-10-30, `claude/evo-career-2`)
+
+Festring 2107 says the 550 A race is "a bonus for completing the Classic Era" and 2109 calls the GT1 "the last bonus race", so each era's bonus race (ids 31, 32, 33) is raced **before** the year moves on. Before, the year advanced at the last regular tournament and the old era's bonus vanished. Now the era ends when its regular tournaments are done **and** its bonus race has been raced (win or lose: **guess**). Winning (1st) puts the record's single listed car (168 / 169 / 170) in the garage for free, once. The quick-race track unlock (the `u16` list at 12, by era year) is unchanged. Not tested in the game window.
