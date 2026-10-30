@@ -407,4 +407,4 @@ The paint shop's combos now pick the package and the trims (from the car's body 
 `color2` / `color3`; the shop shows `none` for a car that never picked a package even if its own scheme has stripes.
 **Not built:** the custom colour editor, the interior colour, and the race-number decal (door numbers need text drawn on the car's texture).
 Unit tests: `the_paint_shop_tweak_changes_package_and_trims`, `paint_tweaks_round_trip_and_may_be_absent`, the career save round trip.
-Not seen on screen (not tested in the window).
+Seen on screen: `NFSPU_MENU=paintshop NFSPU_CAREER=1 NFSPU_CAREER_DO="pick:OwnedCar.PackageNum=3;pick:OwnedCar.S1Colour=4" NFSPU_MENU_CAPTURE=1` (`logs/menu_paintshop.png`): the orange 356 wears package 3 stripes with a red trim 1 and the combos show `package 3` and the colour boxes. Not compared with retail pixel by pixel.
