@@ -6,6 +6,7 @@
 use crate::flow::{AppState, ReturnToMenu};
 use crate::race_mode::RaceHold;
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use nfspu_game::factory::{self, Run, Sample, Status};
 use nfspu_game::factory_live::{self, Verdict};
 
@@ -46,11 +47,15 @@ pub fn mission(
     mut transforms: Query<&mut Transform>,
     mut texts: Query<(&mut Text, &mut TextColor)>,
     mut test: Option<ResMut<crate::flow::FlowTest>>,
+    mut shot: Local<bool>,
 ) {
     let Some(mut car) = car else { return };
     let Some(mut live) = live else {
         // first frame of a mission race: place the car, stand the cones up, open the banner
         let Some(active) = factory_live::active() else { return };
+        if active.is_race() {
+            return;
+        }
         let Some(scene) = active.scene.clone() else { return };
         if !hold.0 {
             return;
@@ -73,6 +78,7 @@ pub fn mission(
                 Text::new(""),
                 TextFont { font_size: FontSize::Px(22.0), ..default() },
                 TextColor(Color::WHITE),
+                TextLayout::justify(Justify::Center),
                 Node { position_type: PositionType::Absolute, top: Val::Px(70.0), left: Val::Px(0.0), right: Val::Px(0.0), justify_self: JustifySelf::Center, ..default() },
                 DespawnOnExit(AppState::Race),
             ))
@@ -142,6 +148,16 @@ pub fn mission(
             }
         }
     }
+    // `NFSPU_MISSION_SHOT=<seconds>` saves a window picture that many mission seconds after GO
+    // (`logs/mission_shot.png`), to see the banner and the cones
+    if !*shot && !hold.0 && std::env::var("NFSPU_MISSION_SHOT").ok().and_then(|v| v.parse::<f32>().ok()).is_some_and(|t| live.run.ticks() as f32 / factory::TICK_HZ >= t) {
+        *shot = true;
+        let path = crate::log_path().with_file_name("mission_shot.png");
+        commands.spawn(Screenshot::primary_window()).observe(move |captured: On<ScreenshotCaptured>| {
+            let saved = captured.image.clone().try_into_dynamic().map_err(|e| e.to_string()).and_then(|i| i.to_rgb8().save(&path).map_err(|e| e.to_string()));
+            crate::log_line(&format!("mission: picture {saved:?}"));
+        });
+    }
     let status = live.run.status();
     let limit = m.time_limit.map_or(String::new(), |l| format!(" / {l}"));
     let (line, colour) = match status {
@@ -160,4 +176,30 @@ pub fn mission(
         log(&format!("mission {} verdict {status:?}, {} gates, {} cones, {:.2} s", m.index, live.run.gates_passed(), live.run.cones_hit(), live.run.score_time(&m)));
         live.ended_for = Some(0.0);
     }
+}
+
+/// Remembers that the verdict of a race mission has been handed over.
+#[derive(Default)]
+pub struct RaceJudged(bool);
+
+/// A race mission (opponents and a minimum place, or timed laps on a circuit): the race runs as
+/// any quick race and, when the player finishes, `Run::finish_race` judges the place, the time and
+/// the damage. The results screen then closes the race as usual and the menu settles the verdict.
+pub fn race_mission(car: Option<Res<crate::CarRes>>, status: Res<nfspu_game::race::RaceStatus>, mut judged: Local<RaceJudged>) {
+    let Some(active) = factory_live::active().filter(|a| a.is_race()) else {
+        judged.0 = false;
+        return;
+    };
+    if !status.finished || judged.0 {
+        return;
+    }
+    judged.0 = true;
+    let Some(car) = car else { return };
+    let zones = &car.car.sim.damage.zones;
+    let damage = zones.iter().sum::<f32>() / zones.len().max(1) as f32;
+    let ticks = (status.race_time * factory::TICK_HZ).round() as u32;
+    let mut run = Run::new(None);
+    let verdict = run.finish_race(&active.mission, status.position as u16, ticks, damage);
+    log(&format!("{} ({}) race verdict {verdict:?}: place {} of {}, {:.2} s, damage {:.1}", active.mission.index, active.mission.stem, status.position, status.cars, status.race_time, damage));
+    factory_live::set_verdict(Verdict { index: active.mission.index, status: verdict, outcome: run.outcome() });
 }

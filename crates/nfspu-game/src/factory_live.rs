@@ -12,6 +12,14 @@ pub struct Active {
     pub scene: Option<Scene>,
 }
 
+impl Active {
+    /// A mission judged by the race itself (place, time, damage) rather than by gates: the race
+    /// missions with opponents and the timed laps on a circuit.
+    pub fn is_race(&self) -> bool {
+        self.mission.min_place.is_some() || self.scene.is_none()
+    }
+}
+
 /// What a finished mission left behind.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Verdict {
@@ -30,6 +38,11 @@ pub fn set_active(a: Option<Active>) {
 /// The mission the race in progress is for.
 pub fn active() -> Option<Active> {
     ACTIVE.lock().unwrap().clone()
+}
+
+/// Whether a gate mission (a scene the car is driven through, off the road's rules) is running.
+pub fn gate_mission_active() -> bool {
+    ACTIVE.lock().unwrap().as_ref().is_some_and(|a| !a.is_race())
 }
 
 pub fn set_verdict(v: Verdict) {

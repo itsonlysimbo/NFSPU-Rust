@@ -94,29 +94,33 @@ impl FactoryMode {
     }
 
     /// The race of the current mission, and hands the mission to the race side. `None` when there is
-    /// nothing to play or the mission is not playable yet (race missions).
+    /// nothing to play.
     pub fn start(&mut self, quick: &QuickRace, locale: &Locale, language: u8, player: &str) -> Option<RaceSetup> {
         let m = self.current()?.clone();
         self.promoted = false;
-        let Some(scene) = factory::load_scene(&self.game_dir, &self.tracks, &m) else {
-            crate::log_line(&format!("factory: mission {} ({}) has no scene file: race missions are not built yet", m.index, m.stem));
-            return None;
-        };
-        if m.min_place.is_some() {
-            crate::log_line(&format!("factory: mission {} ({}) is a race against {} driver(s): not built yet", m.index, m.stem, m.opponents.len()));
-            return None;
-        }
+        let scene = factory::load_scene(&self.game_dir, &self.tracks, &m);
+        let race = m.min_place.is_some() || scene.is_none();
         let track = self.tracks.iter().find(|k| k.id == m.track)?.clone();
         let mut setup = quick.setup(locale, language);
         setup.track = track.file.clone();
         setup.track_id = track.id;
         setup.track_name = Self::text(locale, language, track.name_string, player);
         setup.direction = Direction::Forward;
-        // a long lap count keeps the road race from ending before the mission does
-        setup.laps = 8;
-        setup.opponents = 0;
+        if race {
+            // judged by the race: the drivers the record names (their cars are not matched yet),
+            // three laps where the briefing says so (mission 30), else two (**guess**)
+            setup.laps = if m.index == 30 { 3 } else { 2 };
+            setup.opponents = m.opponents.len().min(7) as u8;
+            setup.difficulty = 1;
+        } else {
+            // a long lap count keeps the road race from ending before the mission does
+            setup.laps = 8;
+            setup.opponents = 0;
+        }
         setup.traffic = 0;
-        setup.difficulty = 0;
+        if !race {
+            setup.difficulty = 0;
+        }
         if let Some(car) = quick.cars.iter().find(|c| c.id == m.car) {
             setup.car_id = car.id;
             setup.car_model = car.model.clone();
@@ -128,8 +132,8 @@ impl FactoryMode {
         } else {
             crate::log_line(&format!("factory: mission car {} is not in the catalogue, using the picked car", m.car));
         }
-        crate::log_line(&format!("factory: mission {} ({}) on '{}' in '{}', {} gates, {} cones", m.index, m.stem, track.file, setup.car_name, scene.gates.len(), scene.cones.len()));
-        factory_live::set_active(Some(Active { mission: m, scene: Some(scene) }));
+        crate::log_line(&format!("factory: mission {} ({}) on '{}' in '{}', {} gates, {} cones, race {race}", m.index, m.stem, track.file, setup.car_name, scene.as_ref().map_or(0, |s| s.gates.len()), scene.as_ref().map_or(0, |s| s.cones.len())));
+        factory_live::set_active(Some(Active { mission: m, scene }));
         Some(setup)
     }
 

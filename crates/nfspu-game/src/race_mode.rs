@@ -180,7 +180,7 @@ impl Plugin for RacePlugin {
         // direct start) has run `setup`.
         app.add_systems(
             Update,
-            (start_race, race_tick, place_opponents, place_traffic, place_cops, pursuit_hud, results_screen, leave_results, crate::race_mission::mission)
+            (start_race, race_tick, place_opponents, place_traffic, place_cops, pursuit_hud, results_screen, leave_results, crate::race_mission::mission, crate::race_mission::race_mission)
                 .chain()
                 .after(crate::drive_car)
                 .run_if(crate::flow::in_race_scene)
@@ -792,7 +792,7 @@ fn race_tick(
     // road (the skidpad): the road's crash reset, stuck/out-of-bounds watch and wrong-way test do not
     // apply, or the car is put back on the road before it can reach the first gate. A car left alone
     // is set upright where it is by the physics.
-    let mission = nfspu_game::factory_live::active().is_some();
+    let mission = nfspu_game::factory_live::gate_mission_active();
     run.slice = run.track.path.track(run.slice, pos);
     if car.car.wants_recover && !mission {
         let (p, yaw) = ai::reset_pose(&run.track.path, &run.line, run.slice, run.track.dir);

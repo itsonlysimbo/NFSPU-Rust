@@ -127,6 +127,8 @@ fn wrap(a: f32) -> f32 {
 
 /// The last race's running order (race cars first to last), for the knockout series.
 static LAST_ORDER: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+/// The player's finish time in ticks and average zone damage after the last drive (race missions).
+static LAST_PLAYER: std::sync::Mutex<(Option<u32>, f32)> = std::sync::Mutex::new((None, 0.0));
 
 fn drive(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty: u8, out: &mut String) -> bool {
     drive_ko(name, dir, laps, opponents, difficulty, false, out)
@@ -520,6 +522,7 @@ fn drive_ko(name: &str, dir: Direction, laps: u32, opponents: usize, difficulty:
         let _ = writeln!(out, "   FAILED: the player car was stuck, fell through or left the world {lost_count} time(s)");
     }
     *LAST_ORDER.lock().unwrap() = r.order();
+    *LAST_PLAYER.lock().unwrap() = (r.cars[0].finish_time, car.sim.damage.zones.iter().sum::<f32>() / car.sim.damage.zones.len().max(1) as f32);
     if knockout_quick {
         // exactly one car out per lap before the last, and the rest out when the winner finishes
         let outs = r.cars.iter().filter(|c| c.state == race::CarState::Out).count();
@@ -600,8 +603,25 @@ fn main() {
         let tracks = std::fs::read(game.join("FEData").join("Data").join("nfs5.trk")).map(|d| nfspu_game::catalog::parse_tracks(&d)).unwrap_or_default();
         let r = nfspu_game::factory::drive_all(&game, &missions, &tracks);
         let _ = std::fs::write(log_file().with_file_name("factory_drive.txt"), &r.text);
-        print!("{}", r.text);
-        println!("{}", if r.ok && !missions.is_empty() { "ALL OK" } else { "SOME FAILED" });
+        let mut text = r.text.clone();
+        let mut ok = r.ok && !missions.is_empty();
+        // race missions: the autopilot drives the race and the mission rules judge it
+        for m in missions.iter().filter(|m| m.min_place.is_some() || m.scene == 0) {
+            let Some(track) = tracks.iter().find(|t| t.id == m.track) else { continue };
+            let (laps, opponents) = (if m.index == 30 { 3 } else { 2 }, m.opponents.len());
+            let mut o = String::new();
+            let ran = drive(&track.file.to_ascii_lowercase(), Direction::Forward, laps, opponents, 1, &mut o);
+            let (finish, damage) = *LAST_PLAYER.lock().unwrap();
+            let place = LAST_ORDER.lock().unwrap().iter().position(|&c| c == 0).map_or(0, |p| p + 1) as u16;
+            let mut run = nfspu_game::factory::Run::new(None);
+            let verdict = finish.map(|t| run.finish_race(m, place, t, damage));
+            let _ = writeln!(text, "race mission {:2} {:5} on {} ({laps} laps, {opponents} opponent(s)): drive {} (the mission needs only the player home), place {place}, time {:.1}s, damage {damage:.1}, verdict {verdict:?}", m.index, m.stem, track.file, if ran { "ok" } else { "FAILED" }, finish.unwrap_or(0) as f32 / 64.0);
+            // the autopilot may leave an opponent stuck after the player is home (not a mission matter)
+            ok &= verdict.is_some();
+        }
+        print!("{text}");
+        let _ = std::fs::write(log_file().with_file_name("factory_drive.txt"), &text);
+        println!("{}", if ok { "ALL OK" } else { "SOME FAILED" });
         return;
     }
     if let Some(name) = a.first() {

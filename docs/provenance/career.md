@@ -345,3 +345,19 @@ that it uses the same rate).
 - *Car setup:* the part-inventory table with INSTALLED / UNINSTALLED per part and `uninstall part`;
   the sliders (ride height, stiffness, travel, toe-in, brake balance, downforce, tyre pressure, gear
   ratios) with `test drive`, `save`, `load`, `default`.
+
+### Race missions (2026-10-30, branch `claude/factory-missions-f3406f`)
+Eight records are judged by the race, not by gates: 17, 19, 22, 28 (point-to-point roads: foothills, foothills,
+canyon, foothills; the scene file only holds the start and the finish gate; one to three opponents, minimum
+place 1) and 30-33 (Monaco circuits: monaco2, monaco1, monaco5, monaco3; no scene file). 30 and 32 have no
+opponents but a time limit (220 s, 150 s) and the damage limit 5; 31 has four opponents, 33 one (Stephanie).
+Our reading: the race is a quick race on the record's track with the record's opponent count (their cars and
+driver ids are not matched yet; difficulty 1 is a **guess**), 3 laps for mission 30 (its briefing says so),
+2 laps elsewhere (**guess**; roads run once). The place, the race time and the average zone damage at the
+finish go to `Run::finish_race`, the same rules as the gate missions (`race_mission::race_mission`). The route
+code (2, 3) of 30-33 is not decoded: we race the track forward. Headless: `RACE_DRIVE_FACTORY=1` also drives
+each of the eight with the autopilot and judges it (`logs/factory_drive.txt`); the autopilot (about 80 km/h)
+is far slower than the time limits, so it reports `Failed(Time)` on 30 and 32, which shows the judge works.
+On screen (not driven by a person): mission 19 loads, races with the opponent and leaves normally.
+The banner and cones of the gate missions were seen in `logs/mission_shot.png`
+(`NFSPU_MISSION_SHOT=<seconds>`): the banner is centred at the top; cones are small orange cones on the pad.
