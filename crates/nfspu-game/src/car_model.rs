@@ -521,7 +521,13 @@ pub fn build_tpages(layout: &TpgLayout, embedded: &[(u16, &[u8])], dir: &std::pa
             continue;
         }
         let style = if is_driver { &driver_style } else { choice.style };
-        let keep = tile_flags(&archive, choice.rules, f as u16, style);
+        let mut keep = tile_flags(&archive, choice.rules, f as u16, style);
+        if choice.number.is_some() {
+            // a race number brings its decal tiles even on road styles (matches `DOOR_DECALS`)
+            for (k, e) in keep.iter_mut().zip(&archive.entries) {
+                *k |= choice.rules.tiles.get(&(f as u32 + 1, e.name.trim().to_ascii_lowercase())).is_some_and(|r| r.race_decal);
+            }
+        }
         // which kept tiles get painted: the tile's own `tint=` or else the file's
         let format = layout.tpages[t].format;
         let tinted: Vec<bool> = archive
@@ -720,10 +726,18 @@ impl PaintTweak {
 /// The piece id of an open car's folding top (`CabrioUp` / `CabrioDown`).
 const FOLDING_TOP: u32 = 41;
 
+/// The piece id of the door and hood decals (`DecalDoorL`, `DecalDoorR`, `DecalHoodR`; type 1).
+const DOOR_DECALS: u32 = 10;
+
 impl CarOptions {
     /// The type of piece `geometry` to draw for `style`, honouring the roof setting.
     pub fn piece_type(&self, style: &Style, geometry: u32) -> u32 {
         let t = style.geometry_type(geometry);
+        // The door and hood number decals are piece 10 type 1, which no style lists; a race number
+        // turns them on (**guess**: retail's trigger was not found).
+        if geometry == DOOR_DECALS && self.tweak.number.is_some() {
+            return 1;
+        }
         if geometry == FOLDING_TOP && !self.roof_up && t % 2 == 1 { t + 1 } else { t }
     }
 }
