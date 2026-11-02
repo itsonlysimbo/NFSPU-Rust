@@ -26,6 +26,9 @@ pub const STARTER_PAINT: usize = 19;
 pub const START_CASH: u32 = 0;
 /// Laps per career race. **Guess**: the quick-race default.
 pub const CAREER_LAPS: u8 = 2;
+
+/// Laps of a bonus (prize car) race.
+pub const BONUS_LAPS: u8 = 5;
 /// How many places pay (the prize table has eight entries).
 pub const PLACES: usize = 8;
 
@@ -149,6 +152,16 @@ pub fn era_of_year(year: i32) -> u32 {
 }
 
 impl Tournament {
+    /// Laps per race: the bonus races are five lap races (festring 2108 says so for the 935; the
+    /// 550 A and GT1 are **guessed** the same), the others use [`CAREER_LAPS`].
+    pub fn laps(&self) -> u8 {
+        if self.bonus {
+            BONUS_LAPS
+        } else {
+            CAREER_LAPS
+        }
+    }
+
     /// Whether `car` may enter: it is on the record's own car list, or (no list) it meets the rule text.
     pub fn allows(&self, rule: &str, car: &crate::catalog::Car) -> bool {
         if self.cars.is_empty() {
@@ -296,6 +309,9 @@ pub struct Payout {
     pub new_year: Option<i32>,
     /// The prize car a won bonus race adds to the garage (catalogue id).
     pub prize_car: Option<u16>,
+    /// The era's bonus race just opened (its regular tournaments are all complete); the victory
+    /// message offers it.
+    pub bonus_open: bool,
 }
 
 /// One player's career.
@@ -500,7 +516,7 @@ impl Career {
     /// was not finished (no pay, no progress).
     pub fn finish_race(&mut self, t: &Tournament, all: &[Tournament], place: usize) -> Payout {
         if place == 0 {
-            return Payout { place, amount: 0, tournament_done: false, new_year: None, prize_car: None };
+            return Payout { place, amount: 0, tournament_done: false, new_year: None, prize_car: None, bonus_open: false };
         }
         let races = Self::race_tracks(t, all).len();
         let amount = Self::race_prize(t, self.progress(t.id).races_done as usize, races, place);
@@ -535,12 +551,13 @@ impl Career {
         let mut new_year = None;
         let regulars_done = all.iter().filter(|o| o.era == era && !o.bonus).all(|o| self.progress(o.id).completed > 0);
         let bonus_done = all.iter().filter(|o| o.era == era && o.bonus).all(|o| self.progress(o.id).completed > 0);
+        let bonus_open = done && !t.bonus && regulars_done && !bonus_done;
         if done && self.year < END_YEAR && regulars_done && bonus_done {
             let year = next_year(self.year);
             self.year = year;
             new_year = Some(year);
         }
-        Payout { place, amount, tournament_done: done, new_year, prize_car }
+        Payout { place, amount, tournament_done: done, new_year, prize_car, bonus_open }
     }
 
     /// The race the player enters next in `t` (0-based into its tracks).
@@ -855,10 +872,17 @@ impl Career {
         // era's text (header, the prize car offer, the bonus race at Monaco); the other eras reuse
         // them with their own name in the header (**guess**: only golden's strings exist).
         let era = era_of_year(self.year);
-        let header = if era == 522 { s(19001) } else { format!("YOU HAVE PROGRESSED INTO {}!", s(era)) };
+        // The message appears when the era's bonus race opens. The golden era keeps retail's own
+        // pairing (19001 and the Monaco offer); the others use the bonus tournament's description
+        // (festrings 2107 / 2109) under a header of ours (**guess**).
+        let bonus = all.iter().find(|o| o.era == era && o.bonus);
+        let header = if era == 522 { s(19001) } else { format!("YOU HAVE COMPLETED THE {}!", s(era).to_uppercase()) };
         out.insert("Tournament.Data(ENDERAHEADER)".into(), header);
-        let text: Vec<String> = [19005, 19002, 19003, 19004, 19006, 19000].iter().map(|id| if *id == 19004 { format!("{}.", s(*id)) } else { s(*id) }).collect();
-        out.insert("Tournament.Data(ENDERADESCRIP)".into(), text.join(" "));
+        let text = match bonus {
+            Some(b) if era != 522 => s(b.description),
+            _ => [19005, 19002, 19003, 19004, 19006, 19000].iter().map(|id| if *id == 19004 { format!("{}.", s(*id)) } else { s(*id) }).collect::<Vec<_>>().join(" "),
+        };
+        out.insert("Tournament.Data(ENDERADESCRIP)".into(), text);
         let open = self.open_tournaments(all);
         let Some(t) = open.get(self.chosen_tournament.min(open.len().saturating_sub(1))) else { return out };
         out.insert("Tournament.Tournament".into(), s(t.name));
@@ -1008,10 +1032,12 @@ mod tests {
         assert_eq!(c.year, 1950, "tournament 2 is still open");
         assert_eq!(c.open_tournaments(&t).iter().map(|t| t.id).collect::<Vec<_>>(), vec![1, 2]);
         let p = c.finish_race(&t[1], &t, 4);
-        assert_eq!(p.new_year, None, "the era's bonus race comes first");
+        assert_eq!((p.new_year, p.bonus_open), (None, true), "the era's bonus race comes first");
         assert_eq!(c.open_tournaments(&t).iter().map(|t| t.id).collect::<Vec<_>>(), vec![1, 2, 31]);
         let p = c.finish_race(&t[2], &t, 1);
         assert_eq!(p.new_year, Some(1970));
+        assert!(!p.bonus_open);
+        assert_eq!((t[2].laps(), t[0].laps()), (BONUS_LAPS, CAREER_LAPS));
         assert_eq!((c.year, p.prize_car), (1970, None), "the test record lists no prize car");
         assert_eq!(c.open_tournaments(&t).iter().map(|t| t.id).collect::<Vec<_>>(), vec![3]);
     }

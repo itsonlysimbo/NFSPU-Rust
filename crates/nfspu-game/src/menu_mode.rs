@@ -200,6 +200,7 @@ impl FrontEnd {
             // and record time (a tournament race runs the career's laps, so the record is the lap
             // record times the laps; the footage shows 02:44.00 for Cote d'Azur, twice 01:22).
             let open = c.open_tournaments(&self.career.data);
+            let laps = open.get(c.chosen_tournament.min(open.len().saturating_sub(1))).map_or(career::CAREER_LAPS, |t| t.laps());
             let remaining: Vec<i16> = open
                 .get(c.chosen_tournament.min(open.len().saturating_sub(1)))
                 .map(|t| career::Career::race_tracks(t, &self.career.data).into_iter().skip(c.next_race(t)).collect())
@@ -212,7 +213,7 @@ impl FrontEnd {
                 }
                 let upper = self.locale.text(track.name_string + 60, self.language).map(|t| t.trim().to_string()).unwrap_or_default();
                 self.session.watch.insert("Tournament.Tournament(LOCATION)".into(), upper);
-                let record = self.quick.record_of(track.id).map(|t| nfspu_game::catalog::format_ticks(t * career::CAREER_LAPS as u32)).unwrap_or_else(|| "--:--.--".into());
+                let record = self.quick.record_of(track.id).map(|t| nfspu_game::catalog::format_ticks(t * laps as u32)).unwrap_or_else(|| "--:--.--".into());
                 self.session.watch.insert("Tournament.Tournament(RECORDTIME)".into(), record);
                 if let Some(choice) = self.session.choices.get_mut("Tournament.RemainingTracks") {
                     choice.selected = pick;
@@ -347,7 +348,7 @@ impl FrontEnd {
         setup.track_id = track.id;
         setup.track_name = self.locale.text(track.name_string, self.language).unwrap_or_default().trim().to_string();
         setup.direction = nfspu_game::race_setup::Direction::Forward;
-        setup.laps = career::CAREER_LAPS;
+        setup.laps = t.laps();
         setup.opponents = 7;
         // Career races have damage on (**guess**; the repair screens only make sense with it).
         setup.damage = true;
@@ -453,7 +454,7 @@ impl FrontEnd {
         if let Some(id) = payout.prize_car {
             crate::log_line(&format!("career: bonus race won, prize car {id} is in the garage"));
         }
-        if payout.new_year.is_some() {
+        if payout.bonus_open || payout.new_year.is_some() {
             c.chosen_tournament = 0;
             self.career.era_message = true;
         }

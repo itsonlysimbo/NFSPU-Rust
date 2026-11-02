@@ -30,6 +30,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | Claude (oracle-capture-3) branch claude/oracle-capture-3 (continues -2), started 2026-10-27; builds on 60a5461. Mission car decoded (stock Boxster); cases use it, but the sim is ~11% slower than retail so they stay pending: next find why (physics). *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
+| Evolution career: bonus race offer, laps, remaining unknowns | Strong | Claude (career-1), claude/evo-career-3, 2026-11-02: victory message opens when the bonus race opens, bonus races run 5 laps (festring 2108); check PASS. Left: retail prize-car screen (VictoryRoom), meaning of route entry fields (flag hi half, f32 0.5-0.9, 750-1000), lost-bonus rule, payout timing; needs playtest |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 

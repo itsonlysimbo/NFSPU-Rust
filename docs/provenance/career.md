@@ -1362,3 +1362,11 @@ banner shows time / gates / cones with the mission's own limit. **Not compared w
 Factory Driver missions exists in `C:/Users/CB/Videos`, so the HUD (we still show the race minimap "lap 1/1" and
 "position 1/1"; retail's mission HUD is unknown), the cone size (0.3 m base, 0.7 m tall) and the banner style stay
 guesses. Next time retail footage of a mission is recorded: compare these three first.
+Seen (2026-11-01): `cargo run -p nfspu-game --example car_pages -- 993 8 0 4 27` (993 GT2 Racecar style) draws "27" in black on the
+`decr` tile (72x48 at 32,80 on page 1; the tile's own art is empty). The number has to be drawn in the tile's tinted or plain
+pass, whichever the tile is in (first version only drew in the plain pass and showed nothing: fixed). Not checked on the car
+body in 3D; colour and size are still guesses.
+
+### Bonus race offer and laps (2026-11-02, `claude/evo-career-3`)
+
+Festring 2108: "Completing the Golden Era gives you the opportunity to win a 1978 Porsche 935. Win this **five lap** race", so the bonus races run 5 laps (`Tournament::laps`; 550 A and GT1 **guessed** the same). The victory message (`VictoryMessage`) now opens when the era's bonus race opens (all regular tournaments done), not when the year changes: golden keeps retail's own strings 19001..19006, the other eras use the bonus tournament's description (2107 / 2109) under our header "YOU HAVE COMPLETED THE ... ERA!" (**guess**). Not tested in the game window.
