@@ -2,6 +2,7 @@
 //! loads each car (an optional `/style` picks the body style, a further `/N` the `.clr` paint
 //! section or `/#rrggbb` a custom body colour), takes a screenshot from the chase, cockpit and four
 //! orbit views, saves them as `logs/car_<name>_s<style>[_p<paint>]_<view>.png` and exits.
+//! `NFSPU_CAR_NUMBER=27` puts a race number on cars whose style draws it (race styles).
 //! Normal play is unaffected when the variable is not set.
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
@@ -110,7 +111,7 @@ pub fn update(
         commands.entity(holder.model).despawn();
         name.0 = car.clone();
         style.0 = car_style;
-        let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, roof_up: !roof_down(), ..Default::default() };
+        let options = nfspu_game::car_model::CarOptions { style: car_style, driver: driver.0, paint: entry.paint.unwrap_or(paint.0), body: entry.body, roof_up: !roof_down(), tweak: nfspu_game::car_model::PaintTweak { number: std::env::var("NFSPU_CAR_NUMBER").ok().and_then(|v| v.trim().parse().ok()), ..Default::default() }, ..Default::default() };
         let (model, lean, count) = super::spawn_car_model(&mut commands, &mut meshes, &mut materials, &mut paints, &mut images, holder.root, &car, &options);
         holder.model = model;
         holder.lean = lean;

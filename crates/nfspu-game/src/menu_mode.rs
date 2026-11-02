@@ -1527,6 +1527,24 @@ fn click(
     if state.transition.is_some() {
         return;
     }
+    // The paint shop's race number: digit keys type it (retail's "Please enter decal number" box;
+    // ours has no text field, so the keys edit the number directly, Delete clears it).
+    if state.career.on && state.page.name.eq_ignore_ascii_case("paintshop") {
+        let digit = [KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9]
+            .iter()
+            .position(|k| keys.just_pressed(*k));
+        let clear_number = keys.just_pressed(KeyCode::Delete);
+        if digit.is_some() || clear_number {
+            let st = &mut *state;
+            if let Some(c) = st.career.career.as_mut() {
+                st.career.ui.type_decal_digit(c, digit.map(|d| d as u8));
+                crate::log_line(&format!("career: race number now {:?}", c.cars.get(c.chosen_car).and_then(|o| o.tweak.number)));
+            }
+            state.save_career();
+            state.sync_quick();
+            return;
+        }
+    }
     // The mouse wheel scrolls an open list, three rows a notch (**guess**: the retail list scrolls
     // by its arrows; wheel support is not traced).
     if wheel.delta.y != 0.0 {

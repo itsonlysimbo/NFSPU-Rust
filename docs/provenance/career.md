@@ -1370,3 +1370,10 @@ body in 3D; colour and size are still guesses.
 ### Bonus race offer and laps (2026-11-02, `claude/evo-career-3`)
 
 Festring 2108: "Completing the Golden Era gives you the opportunity to win a 1978 Porsche 935. Win this **five lap** race", so the bonus races run 5 laps (`Tournament::laps`; 550 A and GT1 **guessed** the same). The victory message (`VictoryMessage`) now opens when the era's bonus race opens (all regular tournaments done), not when the year changes: golden keeps retail's own strings 19001..19006, the other eras use the bonus tournament's description (2107 / 2109) under our header "YOU HAVE COMPLETED THE ... ERA!" (**guess**). Not tested in the game window.
+### Race number checks (2026-11-02, branch `claude/evo-shops-5`)
+- 3D: `NFSPU_CAR_CAPTURE=993/8 NFSPU_CAR_NUMBER=27` shows a black "27" on the door of the GT2 Racecar (`logs/car_993_s8_side.png`).
+  The door decals are articles `DecalDoorL/R` and `DecalHoodR` (piece 10, type 1), which no style lists, so a race number turns
+  piece 10 type 1 on (**guess**; retail's trigger not found) and keeps the `racedecal` tiles for any style, so road styles
+  show it too (`993/1`, a "7"). Digits are black; size and place are as the tile gives them.
+- Entry: retail's prompt (string "Please enter decal number", an exe-built dialog, no `.lay`) has no counterpart here; on the paint
+  shop page the digit keys type the number (last two digits kept) and Delete clears it. The `CHANGEDECAL` button still steps it.
