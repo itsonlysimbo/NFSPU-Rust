@@ -1377,3 +1377,16 @@ Festring 2108: "Completing the Golden Era gives you the opportunity to win a 197
   show it too (`993/1`, a "7"). Digits are black; size and place are as the tile gives them.
 - Entry: retail's prompt (string "Please enter decal number", an exe-built dialog, no `.lay`) has no counterpart here; on the paint
   shop page the digit keys type the number (last two digits kept) and Delete clears it. The `CHANGEDECAL` button still steps it.
+
+### Career run-through (2026-11-02, branch `claude/career-runthrough`)
+`cargo run -p nfspu-game --example career_runthrough` (`RUN_PLACE=n` sets every finishing place; log
+`logs/career_runthrough.txt`) plays Evolution from 1950 to 2000 through the career rules only (the races are not
+driven; `race_drive` covers the tracks): it picks a tournament the garage qualifies for, buys the cheapest allowed car
+when none does, sells spare cars when short, pays the entry fee, finishes every race at that place and replays a
+completed tournament when it cannot afford the next. Results: **place 1, 3 and 5 finish the career** (2000; 91, 130 and
+201 races; 8, 18 and 36 replays); **every race last (8th) is a dead end** in 1970: one car, 8,000 cash, the
+'Carrera RS 2.7 Challenge' wants a 10,000 fee. Nothing in the rules code broke; the dead end is the economy (prizes
+for last place do not cover the fees). Whether retail lets a player stall the same way is not known. Findings worth a look:
+the starter car cannot win the 1950 money in one tournament (11,400 car vs 9,000 from the 356 Challenge, so a replay
+or a used-car purchase is needed first), and the 935 Trophy/GT1 bonus races need a 450,000/750,000 purchase only to
+enter (the run buys them; retail may hand the car over).
