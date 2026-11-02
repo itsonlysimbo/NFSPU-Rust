@@ -361,6 +361,15 @@ impl ShopUi {
         true
     }
 
+    /// Types a digit into the race number (`None` clears it): the last two digits typed are kept
+    /// (0..99), so 4 then 2 gives 42 and a third digit pushes the first out.
+    pub fn type_decal_digit(&mut self, c: &mut Career, digit: Option<u8>) {
+        let at = c.chosen_car.min(c.cars.len().saturating_sub(1));
+        if let Some(o) = c.cars.get_mut(at) {
+            o.tweak.number = digit.map(|d| ((o.tweak.number.unwrap_or(0) % 10) * 10 + d) % 100);
+        }
+    }
+
     /// A list row click on the parts screen.
     pub fn list_pick(&mut self, accessor: &str, index: usize) -> bool {
         match accessor {
@@ -538,6 +547,20 @@ mod tests {
         assert!(ui.callback("SELLCAR", "garage", &mut c, &cars).unwrap().contains("sold"));
         assert_eq!(c.cars.len(), 1);
         assert!(ui.callback("NOPE", "garage", &mut c, &cars).is_none());
+    }
+
+    #[test]
+    fn typed_digits_build_the_race_number() {
+        let mut ui = ShopUi::default();
+        let mut c = Career::new("T");
+        for d in [4, 2] {
+            ui.type_decal_digit(&mut c, Some(d));
+        }
+        assert_eq!(c.cars[0].tweak.number, Some(42));
+        ui.type_decal_digit(&mut c, Some(7));
+        assert_eq!(c.cars[0].tweak.number, Some(27));
+        ui.type_decal_digit(&mut c, None);
+        assert_eq!(c.cars[0].tweak.number, None);
     }
 
     #[test]
