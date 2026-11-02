@@ -1340,3 +1340,11 @@ Race-number decal: not built (needs digits drawn on the car texture; retail mech
 ### Unlocks: bonus race and era end (2026-10-30, `claude/evo-career-2`)
 
 Festring 2107 says the 550 A race is "a bonus for completing the Classic Era" and 2109 calls the GT1 "the last bonus race", so each era's bonus race (ids 31, 32, 33) is raced **before** the year moves on. Before, the year advanced at the last regular tournament and the old era's bonus vanished. Now the era ends when its regular tournaments are done **and** its bonus race has been raced (win or lose: **guess**). Winning (1st) puts the record's single listed car (168 / 169 / 170) in the garage for free, once. The quick-race track unlock (the `u16` list at 12, by era year) is unchanged. Not tested in the game window.
+## Race-number decal (branch `claude/evo-shops-4`)
+Retail (exe strings `%sracedecal.ffn`, `racedecal`, `OwnedCar.DecalNum`): the car loader reads `RaceDecal.ffn` (CarModel) and
+draws text onto the tiles whose `.tpg` rule has `racedecal=1` (`[file1.decr]` on the 356, 550, 901, 914, 928, 930, 935, 944 ...).
+Those tiles are drawn only for body styles with "race" in their name, so road styles never show a number.
+Ours: `PaintTweak.number` (0..99) travels with the owned car, the race setup (`decal_number`) and the save (4th part of the
+tweak field); `car_model::draw_race_number` rasterises the digits with `RaceDecal.ffn` onto each kept racedecal tile.
+**Guesses:** black digits centred on the tile; the decal button steps the number (none, 1..99) because there is no text
+prompt; which style the paint shop preview uses (a road style shows no number). Not seen on screen.

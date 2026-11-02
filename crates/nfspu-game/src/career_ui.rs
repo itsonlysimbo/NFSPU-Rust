@@ -217,6 +217,7 @@ impl ShopUi {
                 }
                 // The paint shop: stripe package (none, package 1-7) and the two trim colours, picked
                 // from the car's body colours.
+                v.watch.insert("OwnedCar.DecalNum".into(), owned.tweak.number.map_or(String::new(), |n| n.to_string()));
                 let pkg = owned.tweak.package.map_or(0, |p| p as usize).min(7);
                 let pkg_rows: Vec<Row> = std::iter::once("none".to_string()).chain((1..=7).map(|n| format!("package {n}"))).map(Row::item).collect();
                 let pkg_closed = if pkg == 0 { "none".to_string() } else { format!("package {pkg}") };
@@ -425,7 +426,19 @@ impl ShopUi {
                 c.unlist_car(owned);
                 Some("career: took the car off the market".into())
             }
-            "CHANGEDECAL" => Some(format!("career: {name} (nothing to do)")),
+            // Retail prompts "Please enter decal number" (0..99); there is no text box here, so the
+            // button steps the number up (guess): none, 1, 2 ... 99, none.
+            "CHANGEDECAL" => {
+                if let Some(o) = c.cars.get_mut(owned) {
+                    o.tweak.number = match o.tweak.number {
+                        None => Some(1),
+                        Some(n) if n >= 99 => None,
+                        Some(n) => Some(n + 1),
+                    };
+                    return Some(format!("career: race number {:?}", o.tweak.number));
+                }
+                None
+            }
             "BUYPARTCALLBACK" => {
                 let car = c.cars.get(owned).and_then(|o| cars.iter().find(|k| k.id == o.id))?;
                 let fits = career_shop::parts_for(&self.parts, car, c.year);

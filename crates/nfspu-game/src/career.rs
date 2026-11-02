@@ -364,7 +364,7 @@ impl Career {
             let parts: Vec<String> = c.parts.iter().map(u32::to_string).collect();
             let damage: Vec<String> = c.damage.iter().map(u8::to_string).collect();
             let rgb = |t: Option<[u8; 3]>| t.map_or("-".to_string(), |[r, g, b]| format!("{r:02x}{g:02x}{b:02x}"));
-            let tweak = format!("{};{};{}", c.tweak.package.map_or("-".to_string(), |p| p.to_string()), rgb(c.tweak.trim[0]), rgb(c.tweak.trim[1]));
+            let tweak = format!("{};{};{};{}", c.tweak.package.map_or("-".to_string(), |p| p.to_string()), rgb(c.tweak.trim[0]), rgb(c.tweak.trim[1]), c.tweak.number.map_or("-".to_string(), |n| n.to_string()));
             let listing = format!("{};{}", c.asking.map_or("-".to_string(), |a| a.to_string()), c.offer.map_or("-".to_string(), |a| a.to_string()));
             t += &format!("car = {},{},{},{},{},{},{},{},{}\n", c.id, c.paint, c.mileage, c.extras, c.bought_for, parts.join(";"), damage.join(";"), tweak, listing);
         }
@@ -386,7 +386,7 @@ impl Career {
             let s = s?.trim();
             (s.len() == 6).then(|| [0usize, 2, 4].map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap_or(0)))
         };
-        crate::car_model::PaintTweak { package: part.first().and_then(|p| p.trim().parse().ok()), trim: [rgb(part.get(1)), rgb(part.get(2))] }
+        crate::car_model::PaintTweak { package: part.first().and_then(|p| p.trim().parse().ok()), trim: [rgb(part.get(1)), rgb(part.get(2))], number: part.get(3).and_then(|n| n.trim().parse().ok()) }
     }
 
     pub fn parse(text: &str) -> Option<Career> {
@@ -1156,7 +1156,7 @@ mod tests {
         assert_eq!(c.cars[0].mileage, career_shop::RACE_MILES);
         assert_eq!((c.market_round, c.taken.len()), (1, 0));
         let mut d = Career::new("B");
-        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0], tweak: crate::car_model::PaintTweak { package: Some(2), trim: [Some([9, 8, 7]), None] }, asking: Some(5000), offer: Some(4200) });
+        d.cars.push(OwnedCar { id: 5, paint: 2, mileage: 123, extras: 4, bought_for: 900, parts: vec![7, 8], damage: [0, 0, 0, 5, 0, 0, 0, 0, 0, 0], tweak: crate::car_model::PaintTweak { package: Some(2), trim: [Some([9, 8, 7]), None], number: Some(42) }, asking: Some(5000), offer: Some(4200) });
         d.taken = vec![0, 3];
         assert_eq!(Career::parse(&d.to_text()).unwrap(), d);
         assert_eq!(Career::parse("version = 1
