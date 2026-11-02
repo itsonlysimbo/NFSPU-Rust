@@ -542,8 +542,8 @@ pub fn build_tpages(layout: &TpgLayout, embedded: &[(u16, &[u8])], dir: &std::pa
                 tint_bands(&mut rgba, bands);
             }
             format.reduce_alpha(&mut rgba);
-            if let (false, Some(n)) = (paint, choice.number) {
-                draw_race_number(&mut rgba, page.size as usize, &archive, choice, &keep, f, dir, n);
+            if let Some(n) = choice.number {
+                draw_race_number(&mut rgba, page.size as usize, &archive, choice, &these, f, dir, n);
             }
             // paste at the file's offset; transparent texels leave what is already there
             let s = page.size as usize;

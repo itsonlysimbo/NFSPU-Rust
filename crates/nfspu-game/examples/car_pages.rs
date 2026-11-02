@@ -1,6 +1,6 @@
 //! Writes every assembled texture page of a car (as the viewer builds them, `tpage1`, ...) to `extracted/` as
 //! .png images (transparent texels shown magenta) so they can be looked at.
-//! Run: `cargo run -p nfspu-game --example car_pages -- 993 [style] [driver] [paint]`
+//! Run: `cargo run -p nfspu-game --example car_pages -- 993 [style] [driver] [paint] [race number]`
 
 use nfspu_game::car_model::{self, CarOptions, Page};
 
@@ -26,7 +26,7 @@ fn main() {
     let a: Vec<String> = std::env::args().collect();
     let name = a.get(1).cloned().unwrap_or_else(|| "993".to_string());
     let get = |i: usize, d: usize| a.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
-    let o = CarOptions { style: get(2, 1), driver: get(3, 1) as u8, paint: get(4, 4), ..Default::default() };
+    let o = CarOptions { style: get(2, 1), driver: get(3, 1) as u8, paint: get(4, 4), tweak: car_model::PaintTweak { number: a.get(5).and_then(|s| s.parse().ok()), ..Default::default() }, ..Default::default() };
     let m = car_model::load_car(&name, &o).expect("load car");
     println!("style '{}', {} triangles", m.style_name, m.triangles());
     // every page as the .tpg numbers it (tpage1 = index 0)

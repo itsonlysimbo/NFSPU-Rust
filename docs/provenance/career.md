@@ -1348,3 +1348,7 @@ Ours: `PaintTweak.number` (0..99) travels with the owned car, the race setup (`d
 tweak field); `car_model::draw_race_number` rasterises the digits with `RaceDecal.ffn` onto each kept racedecal tile.
 **Guesses:** black digits centred on the tile; the decal button steps the number (none, 1..99) because there is no text
 prompt; which style the paint shop preview uses (a road style shows no number). Not seen on screen.
+Seen (2026-11-01): `cargo run -p nfspu-game --example car_pages -- 993 8 0 4 27` (993 GT2 Racecar style) draws "27" in black on the
+`decr` tile (72x48 at 32,80 on page 1; the tile's own art is empty). The number has to be drawn in the tile's tinted or plain
+pass, whichever the tile is in (first version only drew in the plain pass and showed nothing: fixed). Not checked on the car
+body in 3D; colour and size are still guesses.
