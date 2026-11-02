@@ -1336,3 +1336,13 @@ parts, so repairing one can lower another), remove/clear edit the queue. Callbac
 price difference is unknown. Not tested in the window.
 Trim colour lists end with the custom palette (stand-in for the retail custom colour editor).
 Race-number decal: not built (needs digits drawn on the car texture; retail mechanism not found).
+
+### On-screen pass over the Factory Driver missions (2026-11-01, branch `claude/factory-screen`)
+`NFSPU_MISSION_SHOT=2` with `NFSPU_FACTORY_MISSION=<n>` captured the start of every gate mission (26 pictures,
+`logs/factory_shots/m<n>.png`, listed with gate and cone counts in `list.txt`; the eight race missions have no
+scene to photograph and start as quick races). All 26 load on the right track and weather (e.g. mission 4 on the
+wet autobahn, mission 20 on the castle's dirt road), the car stands at the scene start facing along the road, the
+banner shows time / gates / cones with the mission's own limit. **Not compared with retail**: no footage of the
+Factory Driver missions exists in `C:/Users/CB/Videos`, so the HUD (we still show the race minimap "lap 1/1" and
+"position 1/1"; retail's mission HUD is unknown), the cone size (0.3 m base, 0.7 m tall) and the banner style stay
+guesses. Next time retail footage of a mission is recorded: compare these three first.
