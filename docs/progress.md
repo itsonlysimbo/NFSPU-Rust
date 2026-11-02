@@ -34,8 +34,8 @@ Hand-kept estimates of how much of each retail feature is recreated. `cargo run 
 | HUD | Retail HUD, minimap, positions | Done | 90 |  |
 | Sound | Menu music | Done | 95 |  |
 | Sound | In-race sound: engine, announcer, skids, ambience | Partial | 75 | All channels merged; mix tuned to a retail recording (sound.md); needs an ear |
-| Career | Evolution career (eras, money, upgrades) | Partial | 58 | Slices 1-3 plus later eras: car rules enforced at race start, opponents drive the tournament car, era prize notes; not playtested |
-| Career | Factory Driver mode | Partial | 35 | Screens and live missions merged (missions 0, 1, 12 with promotion, 16 verified headless); not playtested |
-| Career | Used cars, dealership, parts, paint shop | Partial | 67 | Dealership, used lot, parts, tuning, paint shop and test drive merged; showcase texts and car compare bars use real data; car setup sliders and gear bars open; parts sell back at 80% (retail footage); sell-car offers, repair, paint trims and decals still open |
-| Career | Save profiles (load/save .sav) | Partial | 50 | Our own career format; a retail .sav starts a career from its year, cash and cars (read-only); tournament progress still undecoded |
+| Career | Evolution career (eras, money, upgrades) | Partial | 72 | Slices 1-3 plus later eras: real tournament routes, per-race prize tables and per-tournament car lists from `nfs5.trn`, bonus race before the era ends (prize car on a win), five lap bonus races; offers and some rules are guesses; not playtested |
+| Career | Factory Driver mode | Partial | 60 | Screens, on-screen pass and live missions merged (circuit and gate missions, race missions 17, 19, 22, 28, 30-33 judged at the finish; headless checks); pass numbers partly guessed; not playtested |
+| Career | Used cars, dealership, parts, paint shop | Partial | 85 | Dealership, used lot, parts with inventory and descriptions, tuning and car setup sliders (save/load/default), test drive, repair (per-part damage, quick fix, advanced list), sell-car listing and offers, paint package and trim colours with a custom palette, race number decal (RaceDecal.ffn); offer chances, repair callback names and number colour are guesses; interior colour open; not playtested |
+| Career | Save profiles (load/save .sav) | Partial | 65 | Our own career format; a retail .sav starts a career from its year, cash, cars, mission records and tournament progress (read-only); writing retail saves not built |
 | Online | Multiplayer (new netcode, no EA services) | Not started | 0 | Long-term; ask first |

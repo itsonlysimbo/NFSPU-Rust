@@ -29,7 +29,7 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | Claude (oracle-capture-3) branch claude/oracle-capture-3 (continues -2), started 2026-10-27; builds on 60a5461. Mission car decoded (stock Boxster); cases use it, but the sim is ~11% slower than retail so they stay pending: next find why (physics). *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
+| Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-11-02 (claude/progress-upkeep-2): career rows (evolution, factory, shops, save profiles) |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 
 ## Done (recent)
