@@ -29,8 +29,6 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 | Task | Tier | Notes |
 |---|---|---|
 | Oracle retail capture: record reference traces from retail in a copy of the install | Strong | Claude (oracle-capture-3) branch claude/oracle-capture-3 (continues -2), started 2026-10-27; builds on 60a5461. Mission car decoded (stock Boxster); cases use it, but the sim is ~11% slower than retail so they stay pending: next find why (physics). *oracle* task. Stop and ask if it needs an unsigned tool or patch. `docs/ORACLE.md` |
-| Career shops 3: decals, race number, custom colour editor, advanced repair list | Strong | Claude (evo-shops-4) branch claude/evo-shops-4, started 2026-10-30. DONE: trim colour lists now end with the custom swatch palette (stand-in for retail's custom editor). DONE: advanced repair list (guessed callbacks), race-number decal (RaceDecal.ffn on racedecal tiles, race-style bodies only; number seen on the 993 GT2 texture page). NEXT: number text prompt; check colour/size on the 3D car. Paint package/trims and quick fix are in; see `docs/provenance/career.md` |
-| Evolution career: remaining eras, race events and unlocks end to end | Strong | Career at 58% in `docs/progress.md`; check event lists against retail data |
 | Keep `docs/progress.md` current and rerun the progress tool | Light | After each merge. Last done 2026-10-25 (claude/progress-upkeep): collision, career eras, save profiles, handling, pursuit/career/factory screens |
 | Menu button light, cockpit hands, pause menu: confirm by playtest | User | `docs/PLAYTEST.md` |
 
@@ -38,6 +36,8 @@ Highest first. The coordinator hands these to finished sessions automatically (A
 
 | Task | Merged as |
 |---|---|
+| Evolution career: tournament car lists, routes, prizes, era bonus races | merged 2026-11-02 (81fd490, 8acf958, a027104) |
+| Career shops 3: custom colour palette, advanced repair list, race-number decal | merged 2026-11-02 (claude/evo-shops-4) |
 | Car setup screen: sliders, test drive, save/load/default | merged 2026-10-30 (1bdc6b9) |
 | Career shops 2: repair, parts inventory, paint package/trims, sell-car offers | merged 2026-10-30 (evo-shops-2, -3) |
 | Save profiles: tournament progress from retail .sav | merged 2026-10-30 (fea563b); see docs/provenance |
